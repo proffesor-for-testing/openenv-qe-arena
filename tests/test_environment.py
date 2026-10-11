@@ -135,7 +135,7 @@ def test_run_tests_reports_and_is_capped():
     env = QEEnvironment()
     env.reset(seed=9, task_id=task.task_id)
     first = env.step(QEAction(op="run_tests"))
-    assert "FAIL" in first.content and "visible tests passed" in first.content
+    assert first.content.startswith("3/3 visible tests passed")  # visible tests pass; the fault hides
     for _ in range(MAX_TEST_RUNS - 1):
         assert not env.step(QEAction(op="run_tests")).error
     assert "no test runs left" in env.step(QEAction(op="run_tests")).error

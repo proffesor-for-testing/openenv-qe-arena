@@ -21,6 +21,7 @@ DOMAIN = "software engineering"
 TASK_IDS = [f"{family}-d{level}" for family in FAMILIES for level in (1, 2, 3)]
 
 HIDDEN_INPUTS = 48
+SUBTLE_RATE = 0.15  # a fault or mutant that at most this share of hidden inputs reveals
 MAX_TESTS = {1: 1, 2: 1, 3: 3}
 MAX_ARGS_BYTES = 2048
 MODULE = "module.py"
@@ -146,8 +147,8 @@ def _make_bugfix(task_id: str, level: int, seed: int, rng: random.Random) -> Tas
         reference = _outputs(original, item.entry, inputs)
         if not _usable(reference):
             continue
-        chosen, buggy, killed = [], original, []
-        for site in _candidate_sites(original, rng)[:16]:
+        chosen, buggy, killed, subtle = [], original, [], False
+        for site in _candidate_sites(original, rng)[:20]:
             try:
                 trial = mutation.apply(original, [site] + chosen)
             except ValueError:
@@ -155,6 +156,10 @@ def _make_bugfix(task_id: str, level: int, seed: int, rng: random.Random) -> Tas
             single = _killing(reference, _outputs(mutation.apply(original, [site]), item.entry, inputs))
             if not single:
                 continue
+            is_subtle = len(single) <= SUBTLE_RATE * len(inputs)
+            if level == 3 and chosen and not (subtle or is_subtle):
+                continue  # d3 needs at least one fault that few inputs reveal
+            subtle = subtle or is_subtle
             outputs = _outputs(trial, item.entry, inputs)
             kills = _killing(reference, outputs)
             if not kills:
@@ -164,19 +169,14 @@ def _make_bugfix(task_id: str, level: int, seed: int, rng: random.Random) -> Tas
                 break
         if len(chosen) != (2 if level == 3 else 1):
             continue
-        buggy_out = _outputs(buggy, item.entry, inputs)
         passing = [i for i in range(len(inputs)) if i not in killed]
-        visible_idx = rng.sample(passing, min(2, len(passing)))
-        if level == 2:
-            report_idx = killed[0]
-            report = (f"A user reports a wrong result for {_call_text(item.entry, inputs[report_idx])} "
+        visible_idx = rng.sample(passing, min(3, len(passing)))
+        if level == 1:
+            report = (f"A user reports a wrong result for {_call_text(item.entry, inputs[killed[0]])} "
                       "(the correct value is not given; derive it from the docstring). The visible tests all pass.")
         else:
-            report_idx = killed[0]
-            visible_idx = [report_idx] + visible_idx
-            report = (f"For {_call_text(item.entry, inputs[report_idx])} the function returns "
-                      f"{_result_text(buggy_out[report_idx])}, but the specification requires "
-                      f"{_result_text(reference[report_idx])}.")
+            report = ("Hidden tests fail but the visible tests all pass, so no failing input is known. "
+                      "Compare the code with the docstring line by line to find the fault.")
         visible = [{"args": inputs[i], "expected": reference[i]} for i in visible_idx]
         shown = [f"  {_call_text(item.entry, v['args'])} == {_result_text(v['expected'])}" for v in visible]
         return Task(
@@ -213,7 +213,7 @@ def _make_mutant_kill(task_id: str, level: int, seed: int, rng: random.Random) -
                 continue  # possibly equivalent: never shown
             if level == 1 and rate < 0.25:
                 continue
-            if level == 2 and rate > 0.15:
+            if level in (2, 3) and rate > SUBTLE_RATE:
                 continue
             mutants.append({"source": mutant, "site": site.description, "random_kill_rate": rate})
             if len(mutants) == wanted:

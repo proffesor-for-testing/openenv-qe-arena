@@ -36,9 +36,12 @@ visible tests. It can read files, run the visible tests, edit with an exact stri
 
 | Level | What the model gets |
 |---|---|
-| d1 | One mutation. A visible failing test showing input, expected and actual output |
-| d2 | One mutation. A bug report in words plus visible tests that all pass (the failing case is hidden) |
-| d3 | Two mutations in the same function. One visible failing test |
+| d1 | One fault. An input that the bug breaks, without its expected value (derive it from the docstring). Visible tests pass |
+| d2 | One fault. No failing input at all: compare the code with the docstring to find it |
+| d3 | Two faults, at least one subtle (at most 15% of hidden inputs reveal it). No failing input |
+
+Calibration v1 (thinking off, 8 episodes per cell) showed that giving the expected value of a failing test made
+the task trivial (d1 and the old d3 both 8/8), so no level shows an expected value for a failing input.
 
 Reward: **1.0 only if every hidden differential test passes** (edge cases plus seeded random inputs,
 compared against the original function's outputs). Otherwise 0. Unchanged code is 0. Partial credit is
@@ -53,7 +56,7 @@ The model sees the original function and a mutant as a unified diff. It submits 
 |---|---|
 | d1 | One mutant that random inputs kill often |
 | d2 | One mutant that random inputs rarely kill (the input must be chosen deliberately) |
-| d3 | Three mutants. Submit up to three test cases; credit is the fraction of mutants killed |
+| d3 | Three subtle mutants (each revealed by at most 15% of random inputs). Up to three test cases; credit is the mean over mutants |
 
 Reward per mutant (best over the submitted tests): 0.5 if `original(args) != mutant(args)` (the input
 distinguishes them), and 1.0 if it also has `expected == original(args)` exactly (the model computed the
