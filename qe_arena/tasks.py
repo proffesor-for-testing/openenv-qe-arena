@@ -8,6 +8,7 @@ the sandbox, so the oracle and the candidate share one execution semantics.
 
 from __future__ import annotations
 
+import itertools
 import json
 import random
 import re
@@ -24,6 +25,7 @@ HIDDEN_INPUTS = 48
 SUBTLE_RATE = 0.15  # a fault or mutant that at most this share of hidden inputs reveals
 FAULTS = {1: 1, 2: 2, 3: 3}  # qe_bugfix faults per level; the prompt never states the count
 MIN_SUBTLE = {1: 0, 2: 1, 3: 2}
+MIN_REVEALING_D1 = 3  # distinct hidden calls that reveal a d1 fault; the bug report names one of them
 MAX_TESTS = {1: 1, 2: 1, 3: 3}
 MAX_ARGS_BYTES = 2048
 MODULE = "module.py"
@@ -65,24 +67,64 @@ def _call_text(entry: str, args: list) -> str:
     return f"{entry}({', '.join(_show(a) for a in args)})"
 
 
+MAX_SHOWN = 200  # characters of any one value shown in an observation
+
+
+def _clip(text: str) -> str:
+    return text if len(text) <= MAX_SHOWN else text[:MAX_SHOWN] + f"... ({len(text)} chars)"
+
+
 def _result_text(result: sandbox.CallResult) -> str:
     if result.kind == "ok":
-        return _show(result.value)
+        return _clip(_show(result.value))
     if result.kind == "exc":
-        return f"raises {result.value}"
+        return f"raises {_clip(str(result.value))}"
     return result.kind
 
 
+SETTLED = ("ok", "exc")
+
+
 def _outputs(source: str, entry: str, calls: list[list]) -> list[sandbox.CallResult]:
-    return sandbox.run_calls(source, entry, calls)
+    """Run calls so that machine load cannot decide an outcome.
+
+    A timeout is re-probed alone with a 400x margin over the corpus's 5 ms
+    budget. Code that still times out really loops; otherwise the batch is
+    rerun with generous limits. Callers treat any unsettled result (timeout,
+    crash) as unusable, never as a behavioural difference.
+    """
+    results = sandbox.run_calls(source, entry, calls)
+    timed_out = [i for i, r in enumerate(results) if r.kind == "timeout"]
+    if not timed_out:
+        return results
+    probe = sandbox.run_calls(source, entry, [calls[timed_out[0]]], timeout_s=4.0, per_call_timeout_s=2.0)
+    if probe and probe[0].kind == "timeout":
+        return results
+    return sandbox.run_calls(source, entry, calls, timeout_s=30.0, per_call_timeout_s=2.0)
 
 
 def _killing(reference: list, outputs: list) -> list[int]:
-    return [i for i, (r, o) in enumerate(zip(reference, outputs)) if not sandbox.compare(r, o)]
+    """Inputs on which both sides settled and their results differ."""
+    return [i for i, (r, o) in enumerate(zip(reference, outputs))
+            if r.kind in SETTLED and o.kind in SETTLED and not sandbox.compare(r, o)]
 
 
-def _usable(reference: list) -> bool:
-    return all(r.kind in ("ok", "exc") for r in reference)
+def _usable(results: list) -> bool:
+    return all(r.kind in SETTLED for r in results)
+
+
+def _subsets_all_fail(original: str, sites: list, entry: str, inputs: list, reference: list) -> bool:
+    """Every non-empty proper subset of the faults must still fail some hidden input.
+
+    Otherwise fixing the complement passes the hidden tests: faults that cancel
+    each other on the hidden inputs would pay a partial fix 1.0.
+    """
+    for size in range(1, len(sites)):
+        for subset in itertools.combinations(sites, size):
+            outputs = _outputs(mutation.apply(original, list(subset)), entry, inputs)
+            if not _usable(outputs) or not _killing(reference, outputs):
+                return False
+    return True
 
 
 REPLY_FORMAT = (
@@ -122,7 +164,8 @@ def _kill_prompt(entry: str, level: int, diffs: list[str]) -> str:
         "for your input, and expected must be exactly what the ORIGINAL returns.",
         f"Submit at most {count} test case{'s' if count > 1 else ''}. Each test is "
         '{"args": [positional arguments as JSON], "expected": <original return value as JSON>}. '
-        'If the original raises an exception, use "expected": {"raises": "ValueError"}.',
+        'If the original raises an exception, use "expected": {"raises": "ValueError"}. '
+        f"Keep each test under {MAX_ARGS_BYTES} characters of JSON.",
         "Scoring per mutant: half for an input that tells them apart, half more when expected is also exact.",
         "",
         REPLY_FORMAT,
@@ -152,15 +195,21 @@ def _make_bugfix(task_id: str, level: int, seed: int, rng: random.Random) -> Tas
                 trial = mutation.apply(original, [site] + chosen)
             except ValueError:
                 continue  # overlaps an already chosen fault
-            single = _killing(reference, _outputs(mutation.apply(original, [site]), item.entry, inputs))
-            if not single:
-                continue  # equivalent on the hidden inputs: never a fault
+            alone = _outputs(mutation.apply(original, [site]), item.entry, inputs)
+            single = _killing(reference, alone)
+            if not _usable(alone) or not single:
+                continue  # loops, crashes, or is equivalent on the hidden inputs: never a fault
             is_subtle = len(single) <= SUBTLE_RATE * len(inputs)
+            if level == 1 and len({json.dumps(inputs[i], sort_keys=True) for i in single}) < MIN_REVEALING_D1:
+                continue  # special-casing the one reported input must not pass every hidden test
             if not is_subtle and MIN_SUBTLE[level] - subtle >= FAULTS[level] - len(chosen):
                 continue  # the remaining slots are reserved for subtle faults
-            kills = _killing(reference, _outputs(trial, item.entry, inputs))
-            if not kills:
-                continue  # faults that cancel each other out
+            combined = _outputs(trial, item.entry, inputs)
+            kills = _killing(reference, combined)
+            if not _usable(combined) or not kills:
+                continue
+            if chosen and not _subsets_all_fail(original, chosen + [site], item.entry, inputs, reference):
+                continue  # some faults cancel out: a partial fix would pass
             chosen, buggy, killed, subtle = chosen + [site], trial, kills, subtle + is_subtle
             if len(chosen) == FAULTS[level]:
                 break
@@ -205,7 +254,10 @@ def _make_mutant_kill(task_id: str, level: int, seed: int, rng: random.Random) -
         mutants = []
         for site in _candidate_sites(original, rng)[:24]:
             mutant = mutation.apply(original, [site])
-            rate = _kill_rate(reference, _outputs(mutant, item.entry, inputs))
+            outputs = _outputs(mutant, item.entry, inputs)
+            if not _usable(outputs):
+                continue  # loops or crashes: its kill rate cannot be measured reliably
+            rate = _kill_rate(reference, outputs)
             if rate == 0:
                 continue  # possibly equivalent: never shown
             if level == 1 and rate < 0.25:
@@ -245,7 +297,7 @@ def run_visible(task: Task, source: str) -> str:
     """Visible-test report for the bugfix working copy (shown to the model)."""
     p = task.private
     calls = [v["args"] for v in p["visible"]]
-    results = sandbox.run_calls(source, p["entry"], calls)
+    results = _outputs(source, p["entry"], calls)
     if results and all(r.kind == "rejected" for r in results):
         return "REJECTED: " + "; ".join(sandbox.static_gate(source))[:400]
     lines = []
@@ -261,17 +313,32 @@ def grade_bugfix(task: Task, source: str) -> float:
     p = task.private
     if source.strip() == p["buggy"].strip():
         return 0.0
-    results = sandbox.run_calls(source, p["entry"], p["inputs"])
+    results = _outputs(source, p["entry"], p["inputs"])
     return 1.0 if len(results) == len(p["reference"]) and all(
         sandbox.compare(r, o) for r, o in zip(p["reference"], results)) else 0.0
 
 
+def _as_actual_types(expected: Any, actual: Any) -> Any:
+    """JSON writes 2.0 as 2: read an int as a float wherever the original returned a float."""
+    if type(expected) is int and type(actual) is float:
+        return float(expected)
+    if type(expected) is list and type(actual) is list and len(expected) == len(actual):
+        return [_as_actual_types(e, a) for e, a in zip(expected, actual)]
+    if type(expected) is dict and type(actual) is dict:
+        return {k: _as_actual_types(v, actual[k]) if k in actual else v for k, v in expected.items()}
+    return expected
+
+
 def _expected_matches(expected: Any, actual: sandbox.CallResult) -> bool:
-    if isinstance(expected, dict) and set(expected) == {"raises"}:
-        return actual.kind == "exc" and actual.value == expected["raises"]
-    if actual.kind == "ok" and isinstance(actual.value, float) and type(expected) is int:
-        expected = float(expected)  # JSON writes 2.0 as 2; the model should not lose for that
-    return sandbox.compare(sandbox.CallResult(kind="ok", value=expected), actual)
+    """Exact match against what the original actually did; never raises."""
+    try:
+        if actual.kind == "exc":
+            return type(expected) is dict and set(expected) == {"raises"} and expected["raises"] == actual.value
+        if actual.kind != "ok":
+            return False
+        return sandbox.compare(sandbox.CallResult(kind="ok", value=_as_actual_types(expected, actual.value)), actual)
+    except (OverflowError, ValueError, TypeError, RecursionError):
+        return False
 
 
 def grade_mutant_kill(task: Task, answer: Any) -> float:
@@ -287,14 +354,12 @@ def grade_mutant_kill(task: Task, answer: Any) -> float:
             return 0.0
         calls.append(test["args"])
         expecteds.append(test["expected"])
-    reference = sandbox.run_calls(p["original"], p["entry"], calls)
+    reference = _outputs(p["original"], p["entry"], calls)
     scores = []
     for m in p["mutants"]:
-        outputs = sandbox.run_calls(m["source"], p["entry"], calls)
+        outputs = _outputs(m["source"], p["entry"], calls)
         best = 0.0
-        for ref, out, exp in zip(reference, outputs, expecteds):
-            if ref.kind not in ("ok", "exc") or sandbox.compare(ref, out):
-                continue
-            best = max(best, 1.0 if _expected_matches(exp, ref) else 0.5)
+        for i in _killing(reference, outputs):  # only settled, differing results count as a kill
+            best = max(best, 1.0 if _expected_matches(expecteds[i], reference[i]) else 0.5)
         scores.append(best)
     return sum(scores) / len(scores)

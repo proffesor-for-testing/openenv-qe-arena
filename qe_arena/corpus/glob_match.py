@@ -44,7 +44,7 @@ def glob_match(pattern, path):
     including "/"; "*" matches any run of characters except "/"; "?" matches exactly
     one character except "/". Every other character matches itself literally.
     """
-    return re.fullmatch(glob_to_regex(pattern), path) is not None
+    return re.fullmatch(glob_to_regex(pattern), path, re.DOTALL) is not None
 
 
 def gen_inputs(rng, n):

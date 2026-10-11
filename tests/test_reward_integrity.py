@@ -306,17 +306,17 @@ def test_edit_and_answer_caps_are_inclusive():
 
 GOLDEN = {
     "qe_bugfix-d1:0": "e34b9e60b8509bc2", "qe_bugfix-d1:1": "be06e9e7f36d1a97",
-    "qe_bugfix-d1:2": "f497b2d7050fcb7f", "qe_bugfix-d1:3": "ea7889ef76396f8d",
+    "qe_bugfix-d1:2": "f497b2d7050fcb7f", "qe_bugfix-d1:3": "564160a102acec10",
     "qe_bugfix-d2:0": "8f06d3e97319b140", "qe_bugfix-d2:1": "9f160e92b04c6d4e",
     "qe_bugfix-d2:2": "75c27e30ed593569", "qe_bugfix-d2:3": "2f2eb2b5088bcbbd",
     "qe_bugfix-d3:0": "9fcba1b61b997e9d", "qe_bugfix-d3:1": "3095d1c9805bb293",
     "qe_bugfix-d3:2": "a3120a33c426a4b3", "qe_bugfix-d3:3": "945e02cc0a556ee1",
-    "qe_mutant_kill-d1:0": "b03628efcbe38f9e", "qe_mutant_kill-d1:1": "d4e6aec12b0f79e9",
-    "qe_mutant_kill-d1:2": "8cb82420c16f3ea8", "qe_mutant_kill-d1:3": "fbfb64533bad44bf",
-    "qe_mutant_kill-d2:0": "9622615a81fc8bfc", "qe_mutant_kill-d2:1": "b5cf5e1a9370c111",
-    "qe_mutant_kill-d2:2": "ce825fc847fa712a", "qe_mutant_kill-d2:3": "f50c9f86cf670103",
-    "qe_mutant_kill-d3:0": "1f02d7349627b6b6", "qe_mutant_kill-d3:1": "b427bbcedeb54d2f",
-    "qe_mutant_kill-d3:2": "6940eee50e1ebf54", "qe_mutant_kill-d3:3": "d6ff24c1e7d569d1",
+    "qe_mutant_kill-d1:0": "2c18117ee463689c", "qe_mutant_kill-d1:1": "8bfe4fb2a811ab6b",
+    "qe_mutant_kill-d1:2": "a29fa8404c66b6ff", "qe_mutant_kill-d1:3": "7579e245d91a9739",
+    "qe_mutant_kill-d2:0": "0b352307ed8023d3", "qe_mutant_kill-d2:1": "1ea3d0f1e672b099",
+    "qe_mutant_kill-d2:2": "df7e55e364e1dac7", "qe_mutant_kill-d2:3": "ecfc7229e35dcbaa",
+    "qe_mutant_kill-d3:0": "cde1438f42f6d784", "qe_mutant_kill-d3:1": "b639dafcf5ee48c1",
+    "qe_mutant_kill-d3:2": "bfbcc2137649b001", "qe_mutant_kill-d3:3": "39acd34c29d9620f",
 }
 
 

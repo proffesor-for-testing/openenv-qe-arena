@@ -31,7 +31,7 @@ Native task IDs follow `<family>-d<1|2|3>`, for example `qe_bugfix-d2`.
 
 ### `qe_bugfix`: repair an injected bug
 
-A corpus function gets one mutation (two at d3). The model sees the buggy module, a short spec and
+A corpus function gets 1, 2 or 3 injected faults (by level). The model sees the buggy module, a short spec and
 visible tests. It can read files, run the visible tests, edit with an exact string replacement, and submit.
 
 | Level | What the model gets |
@@ -89,10 +89,15 @@ The oracle never runs in the same process as model-influenced code.
 
 1. **Reference outputs** come from running the original corpus function in the sandbox. Calls are JSON
    in, JSON out.
-2. **Candidate code** (a `qe_bugfix` working copy) runs in a separate `python3 -I -S` subprocess:
-   - empty environment and a temporary working directory;
-   - rlimits on CPU, address space, file size (0), open files and processes;
-   - a wall-clock timeout.
+2. **Candidate code** (a `qe_bugfix` working copy) runs in a separate child process (`python -S -s -P` with
+   `PYTHONHASHSEED=0`; `-I` is not used because it ignores the hash seed, and set ordering would then differ
+   between the reference and the candidate):
+   - an environment set entirely by the parent, and a temporary working directory;
+   - rlimits on CPU, address space, file size (0), open files and core dumps, set by the child on itself
+     before any candidate code is compiled. There is no process-count limit, because RLIMIT_NPROC is
+     per-user; the static gate makes forking unreachable;
+   - stdout and stderr redirected away, and results returned on a private channel tagged with a nonce;
+   - per-call and per-batch wall-clock timeouts.
    The child returns only the outputs for the given inputs. Expected values never enter the child.
 3. **A static gate runs before execution.** It rejects imports outside an allowlist (`math`, `re`,
    `itertools`, `functools`, `collections`, `string`, `bisect`, `heapq`, `statistics`, `decimal`,
@@ -100,9 +105,27 @@ The oracle never runs in the same process as model-influenced code.
    `__import__`, `globals`, `locals`, `vars`, `getattr`, `setattr`, `delattr`, `breakpoint`, `input`, `help`
    and `memoryview`. Code runs with a restricted builtins map. This stops the obvious hack: reading the
    reference implementation from the image.
-4. **Results are compared in the parent.** Values must be JSON-equal; floats match to `1e-9` relative.
-   An exception compares by type name, so a function that is specified to raise `ValueError` must keep
-   raising it.
+4. **Results are compared in the parent.** Values must be JSON-equal with strict types (bool is not int,
+   int is not float). Floats match to `1e-9` relative or `1e-12` absolute. An exception compares by type
+   name, so a function that is specified to raise `ValueError` must keep raising it. In `qe_mutant_kill`, an
+   int `expected` is read as a float wherever the original returned a float, at any depth, because JSON
+   writes `2.0` as `2`. Whether `{"raises": ...}` means an exception depends on what the original actually
+   did.
+5. **Machine load never decides an outcome.** A timed-out call is re-probed alone with a 400x margin over
+   the corpus's 5 ms budget. Only code that still times out is treated as looping; otherwise the batch is
+   rerun with generous limits. A timeout or crash is never a behavioural difference: it is never a fault,
+   never a kill, and never makes generation fall through to another function.
+6. **No partial credit by accident.** Every non-empty proper subset of a task's faults must still fail some
+   hidden input, so faults that cancel each other out can never let a partial fix pass. A d1 fault must be
+   revealed by at least 3 distinct hidden calls, so special-casing the one reported call cannot pass.
+7. **What the model sees is by design.** Visible tests and the d1 report are drawn from the hidden pool
+   (they pass, or are named without their expected value). In mutant-kill, the original plus the diff is
+   the mutant. Values echoed by `run_tests` are capped at 200 characters each.
+
+Items 4 to 7 came from independent review of the grader: an adversarial Codex review, a red team that built
+exploits, and mutation testing of the verifier (305 mutants; the first suite caught 72.1%, the hardened
+suite 97.5%). Each confirmed finding has a regression test in `tests/test_review_findings.py` or
+`tests/test_reward_integrity.py`.
 
 ## Corpus contract
 

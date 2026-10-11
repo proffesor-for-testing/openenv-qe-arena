@@ -106,7 +106,11 @@ class QEEnvironment(Environment[QEAction, QEObservation, State]):
         if count != 1:
             return self._observe(error=f"old occurs {count} times; it must occur exactly once")
         updated = text.replace(action.old, action.new, 1)
-        if len(updated.encode()) > MAX_FILE_BYTES:
+        try:
+            size = len(updated.encode("utf-8"))
+        except UnicodeEncodeError:
+            return self._observe(error="edit text must be valid UTF-8")
+        if size > MAX_FILE_BYTES:
             return self._observe(error="file too large after edit")
         self._files[MODULE] = updated
         return self._observe(content=f"edited {MODULE}; {len(updated.splitlines())} lines")
@@ -120,7 +124,7 @@ class QEEnvironment(Environment[QEAction, QEObservation, State]):
                 encoded = json.dumps(action.answer, allow_nan=False, separators=(",", ":"))
                 too_big = len(encoded.encode()) > MAX_ANSWER_BYTES
                 self._reward = 0.0 if too_big else grade_mutant_kill(self._task, action.answer)
-        except (ValueError, TypeError, RecursionError):
+        except Exception:  # noqa: BLE001 - any grading failure on a model answer scores 0, never an error frame
             self._reward = 0.0
         return self._observe()
 
