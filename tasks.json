@@ -1,0 +1,28 @@
+{
+  "tasks": [
+    {
+      "task_id": "qe_bugfix-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-d3",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-d3",
+      "split": "train"
+    }
+  ]
+}

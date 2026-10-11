@@ -1,0 +1,66 @@
+name: image
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --no-cache-dir -r requirements.lock pytest
+      - run: python -m pytest -q tests
+
+  image:
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/openenv-qe-arena
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build (linux/amd64)
+        run: docker build --platform linux/amd64 -t qe-arena:ci .
+      - name: Check image limits
+        run: |
+          layers=$(docker image inspect qe-arena:ci --format '{{len .RootFS.Layers}}')
+          user=$(docker image inspect qe-arena:ci --format '{{.Config.User}}')
+          size=$(docker save qe-arena:ci | gzip -1 | wc -c)
+          echo "layers=$layers user=$user gzip_bytes=$size"
+          test "$layers" -lt 128
+          test "$user" = "10001"
+          test "$size" -lt 2147483648
+      - name: Validate the running container
+        run: |
+          python3 -m venv /tmp/v && /tmp/v/bin/pip install -q -r requirements.lock
+          docker run -d --name env --read-only --tmpfs /tmp -p 8000:8000 qe-arena:ci
+          for i in $(seq 1 30); do curl -sf localhost:8000/health && break; sleep 1; done
+          /tmp/v/bin/openenv validate --url http://127.0.0.1:8000
+          /tmp/v/bin/python scripts/smoke_ws.py --url ws://127.0.0.1:8000
+          docker logs env | tail -20
+      - name: Push to GHCR
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          tag="$IMAGE:${GITHUB_SHA::12}"
+          docker tag qe-arena:ci "$tag" && docker push "$tag"
+          digest=$(docker image inspect "$tag" --format '{{index .RepoDigests 0}}')
+          echo "### Image" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`$digest\`" >> "$GITHUB_STEP_SUMMARY"

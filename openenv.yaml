@@ -1,0 +1,23 @@
+spec_version: 1
+name: qe_arena
+version: 0.1.0
+type: space
+runtime: fastapi
+app: qe_arena.app:app
+port: 8000
+validation:
+  reward:
+    range: [0.0, 1.0]
+    oracle_tolerance: 0.0
+    floor_margin: 0.5
+  resources:
+    cpu: 2.0
+    memory_mb: 2048
+    disk_mb: 1024
+    episode_timeout_s: 240.0
+  capabilities:
+    verifier:
+      kind: reward_channel
+    declared_tools: [read, run_tests, edit, submit]
+  types:
+    tags: [software-engineering, quality-engineering, bug-repair, mutation-testing]
