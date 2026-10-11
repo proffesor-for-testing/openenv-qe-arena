@@ -84,19 +84,20 @@ def test_bugfix_partial_or_wrong_fix_earns_zero(level):
     assert env.step(QEAction(op="submit")).reward == 0.0
 
 
-def test_bugfix_d3_fixing_only_one_fault_earns_zero():
+@pytest.mark.parametrize("task_id", ["qe_bugfix-d2", "qe_bugfix-d3"])
+def test_bugfix_leaving_any_single_fault_unfixed_earns_zero(task_id):
     from qe_arena import mutation
 
-    task = make_task("qe_bugfix-d3", 21)
+    task = make_task(task_id, 21)
     original = task.private["original"]
     sites = [s for s in mutation.enumerate_sites(original) if s.description in task.private["sites"]]
-    assert len(sites) == 2
-    half_fixed = mutation.apply(original, sites[:1])
-    _, obs = play(task.task_id, 21, [
-        {"op": "edit", "path": MODULE, "old": task.private["buggy"], "new": half_fixed},
-        {"op": "submit", "answer": {}},
-    ])
-    assert obs.reward == 0.0
+    assert len(sites) == int(task_id[-1])
+    for site in sites:  # every other fault fixed, this one left in
+        _, obs = play(task_id, 21, [
+            {"op": "edit", "path": MODULE, "old": task.private["buggy"], "new": mutation.apply(original, [site])},
+            {"op": "submit", "answer": {}},
+        ])
+        assert obs.reward == 0.0, site.description
 
 
 @pytest.mark.parametrize("payload", [

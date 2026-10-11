@@ -22,6 +22,8 @@ TASK_IDS = [f"{family}-d{level}" for family in FAMILIES for level in (1, 2, 3)]
 
 HIDDEN_INPUTS = 48
 SUBTLE_RATE = 0.15  # a fault or mutant that at most this share of hidden inputs reveals
+FAULTS = {1: 1, 2: 2, 3: 3}  # qe_bugfix faults per level; the prompt never states the count
+MIN_SUBTLE = {1: 0, 2: 1, 3: 2}
 MAX_TESTS = {1: 1, 2: 1, 3: 3}
 MAX_ARGS_BYTES = 2048
 MODULE = "module.py"
@@ -89,16 +91,13 @@ REPLY_FORMAT = (
 )
 
 
-def _bugfix_prompt(entry: str, level: int, visible: list[str], report: str) -> str:
+def _bugfix_prompt(entry: str, visible: list[str], report: str) -> str:
     lines = [
-        f"A bug was introduced into `{entry}` in {MODULE}. The docstring is the specification "
-        "and is correct; the code is not.",
+        f"Faults were introduced into `{entry}` in {MODULE}. The docstring is the specification "
+        "and is correct; the code is not. There may be more than one fault, and the number is not given.",
         report,
-        "Fix the code so it matches the specification for every input. Hidden tests decide the reward.",
-    ]
-    if level == 3:
-        lines.append("There are exactly two separate faults in the function.")
-    lines += [
+        "Fix the code so it matches the specification for every input. Hidden tests decide the reward, "
+        "and a partial fix earns nothing.",
         "Visible tests:",
         *visible,
         "",
@@ -147,27 +146,25 @@ def _make_bugfix(task_id: str, level: int, seed: int, rng: random.Random) -> Tas
         reference = _outputs(original, item.entry, inputs)
         if not _usable(reference):
             continue
-        chosen, buggy, killed, subtle = [], original, [], False
-        for site in _candidate_sites(original, rng)[:20]:
+        chosen, buggy, killed, subtle = [], original, [], 0
+        for site in _candidate_sites(original, rng)[:24]:
             try:
                 trial = mutation.apply(original, [site] + chosen)
             except ValueError:
                 continue  # overlaps an already chosen fault
             single = _killing(reference, _outputs(mutation.apply(original, [site]), item.entry, inputs))
             if not single:
-                continue
+                continue  # equivalent on the hidden inputs: never a fault
             is_subtle = len(single) <= SUBTLE_RATE * len(inputs)
-            if level == 3 and chosen and not (subtle or is_subtle):
-                continue  # d3 needs at least one fault that few inputs reveal
-            subtle = subtle or is_subtle
-            outputs = _outputs(trial, item.entry, inputs)
-            kills = _killing(reference, outputs)
+            if not is_subtle and MIN_SUBTLE[level] - subtle >= FAULTS[level] - len(chosen):
+                continue  # the remaining slots are reserved for subtle faults
+            kills = _killing(reference, _outputs(trial, item.entry, inputs))
             if not kills:
-                continue
-            chosen, buggy, killed = chosen + [site], trial, kills
-            if len(chosen) == (2 if level == 3 else 1):
+                continue  # faults that cancel each other out
+            chosen, buggy, killed, subtle = chosen + [site], trial, kills, subtle + is_subtle
+            if len(chosen) == FAULTS[level]:
                 break
-        if len(chosen) != (2 if level == 3 else 1):
+        if len(chosen) != FAULTS[level]:
             continue
         passing = [i for i in range(len(inputs)) if i not in killed]
         visible_idx = rng.sample(passing, min(3, len(passing)))
@@ -176,12 +173,12 @@ def _make_bugfix(task_id: str, level: int, seed: int, rng: random.Random) -> Tas
                       "(the correct value is not given; derive it from the docstring). The visible tests all pass.")
         else:
             report = ("Hidden tests fail but the visible tests all pass, so no failing input is known. "
-                      "Compare the code with the docstring line by line to find the fault.")
+                      "Compare the code with the docstring line by line to find every fault.")
         visible = [{"args": inputs[i], "expected": reference[i]} for i in visible_idx]
         shown = [f"  {_call_text(item.entry, v['args'])} == {_result_text(v['expected'])}" for v in visible]
         return Task(
             task_id=task_id, family="qe_bugfix", difficulty=level, seed=seed,
-            prompt=_bugfix_prompt(item.entry, level, shown, report),
+            prompt=_bugfix_prompt(item.entry, shown, report),
             files={MODULE: buggy},
             private={
                 "corpus": name, "entry": item.entry, "original": original, "buggy": buggy,

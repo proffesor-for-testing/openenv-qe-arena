@@ -37,11 +37,13 @@ visible tests. It can read files, run the visible tests, edit with an exact stri
 | Level | What the model gets |
 |---|---|
 | d1 | One fault. An input that the bug breaks, without its expected value (derive it from the docstring). Visible tests pass |
-| d2 | One fault. No failing input at all: compare the code with the docstring to find it |
-| d3 | Two faults, at least one subtle (at most 15% of hidden inputs reveal it). No failing input |
+| d2 | Two faults, at least one subtle (at most 15% of hidden inputs reveal it). No failing input |
+| d3 | Three faults, at least two subtle. No failing input |
 
 Calibration v1 (thinking off, 8 episodes per cell) showed that giving the expected value of a failing test made
-the task trivial (d1 and the old d3 both 8/8), so no level shows an expected value for a failing input.
+the task trivial (d1 and the old d3 both 8/8), so no level shows an expected value for a failing input. Calibration v2 (12 episodes per cell) still
+solved single-fault d2 12/12, so d2 and d3 now carry 2 and 3 faults. The prompt never states how many there
+are, so the model has to keep checking the code against the spec instead of stopping after the first fix.
 
 Reward: **1.0 only if every hidden differential test passes** (edge cases plus seeded random inputs,
 compared against the original function's outputs). Otherwise 0. Unchanged code is 0. Partial credit is
