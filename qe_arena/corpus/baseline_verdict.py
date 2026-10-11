@@ -10,12 +10,13 @@ META = {
 def baseline_verdict(current_success, baseline_success):
     """Classify the change of a test success rate (integer percent) versus a baseline.
 
-    baseline_success None -> "no baseline". Otherwise with d = current - baseline:
+    baseline_success None -> "no baseline", without checking current_success at all.
+    Otherwise with d = current - baseline:
       d > 10        -> "significantly improved"
       0 < d <= 10   -> "improved"
       -5 <= d <= 0  -> "maintained"
       d < -5        -> "degraded"
-    Raises ValueError if a given rate is outside 0..100.
+    When baseline_success is not None, raises ValueError if either rate is outside 0..100.
     """
     if baseline_success is None:
         return "no baseline"

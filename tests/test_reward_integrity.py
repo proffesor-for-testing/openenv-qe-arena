@@ -306,7 +306,7 @@ def test_edit_and_answer_caps_are_inclusive():
 
 GOLDEN = {
     "qe_bugfix-d1:0": "e34b9e60b8509bc2", "qe_bugfix-d1:1": "be06e9e7f36d1a97",
-    "qe_bugfix-d1:2": "f497b2d7050fcb7f", "qe_bugfix-d1:3": "564160a102acec10",
+    "qe_bugfix-d1:2": "f497b2d7050fcb7f", "qe_bugfix-d1:3": "1e2e02cccd7e6712",
     "qe_bugfix-d2:0": "8f06d3e97319b140", "qe_bugfix-d2:1": "9f160e92b04c6d4e",
     "qe_bugfix-d2:2": "75c27e30ed593569", "qe_bugfix-d2:3": "2f2eb2b5088bcbbd",
     "qe_bugfix-d3:0": "9fcba1b61b997e9d", "qe_bugfix-d3:1": "3095d1c9805bb293",

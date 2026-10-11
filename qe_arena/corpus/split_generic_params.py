@@ -10,11 +10,12 @@ META = {
 def split_generic_params(params):
     """Split a function parameter list on commas that are not nested in <> or ().
 
-    Depth increases on "<" or "(" and decreases on ">" or ")". A comma at depth 0 ends
-    the current parameter; all other characters (including nested commas) are kept.
-    Each parameter is stripped of surrounding whitespace before it is added. The
-    trailing parameter is added only if it is non-empty after stripping, but empty
-    parameters between two top-level commas are kept as "".
+    Depth starts at 0, increases on "<" or "(" and decreases on ">" or ")" with no
+    clamping, so an unmatched ">" (as in "=>") or ")" makes it negative. Only a comma
+    at depth exactly 0 ends the current parameter; all other characters (including
+    commas at any other depth) are kept. Each parameter is stripped of surrounding
+    whitespace before it is added. The trailing parameter is added only if it is
+    non-empty after stripping; every parameter ended by a comma is kept, even "".
     """
     result = []
     depth = 0

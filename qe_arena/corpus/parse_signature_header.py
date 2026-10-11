@@ -12,9 +12,10 @@ def parse_signature_header(header):
 
     The header is split on ","; in each part the key is the text before the first "="
     and the value is everything after it ("" when there is no "="). Keys other than
-    "t" and "v1" are ignored; if a key repeats, the later value wins. "t" must be a
-    non-empty string of decimal digits, otherwise the result is None. Returns None if
-    the header is empty, "t" is missing, or "v1" is missing or empty.
+    "t" and "v1" are ignored; if a key repeats, the later value wins. Every "t" value
+    must be a non-empty string of decimal digits, otherwise the result is None (even
+    if a later "t" is valid). Returns None if the header is empty, "t" is missing, or
+    "v1" is missing or empty.
     """
     if not header:
         return None
@@ -23,7 +24,7 @@ def parse_signature_header(header):
     for part in header.split(","):
         key, _, value = part.partition("=")
         if key == "t":
-            if not value.isdigit():
+            if not value.isdecimal():
                 return None
             timestamp = int(value)
         elif key == "v1":

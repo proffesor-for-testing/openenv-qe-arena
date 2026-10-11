@@ -15,6 +15,8 @@ def efficiency_reward(actual_seconds, expected_seconds, actual_cost, estimated_c
     cost_reward: 0.0 if actual_cost <= 0; otherwise
       (estimated_cost / actual_cost - 1) * 50 clamped to [-25, 50].
     The clamps are inclusive: values outside are replaced by the nearest bound.
+    Rounding is Python's round(x, 2): an exact half goes to the even digit, so
+    actual_seconds 16 with expected_seconds 3 gives -40.625 -> -40.62.
     """
     if actual_seconds <= 0:
         time_reward = 0.0

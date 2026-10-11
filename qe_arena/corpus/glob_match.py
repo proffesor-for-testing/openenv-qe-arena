@@ -40,7 +40,8 @@ def glob_to_regex(pattern):
 def glob_match(pattern, path):
     """Return True if the whole path matches the glob pattern.
 
-    "**/" matches zero or more leading directories; "**" elsewhere matches anything,
+    "**/" anywhere in the pattern matches zero or more whole directories (nothing, or
+    any text ending in "/"), so "a/**/b" matches "a/b"; "**" elsewhere matches anything,
     including "/"; "*" matches any run of characters except "/"; "?" matches exactly
     one character except "/". Every other character matches itself literally.
     """
