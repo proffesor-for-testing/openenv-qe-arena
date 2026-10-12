@@ -15,6 +15,8 @@
 # inside a list iterator. The request, sys.argv and sys.orig_argv are gone by then.
 import builtins, copy, itertools, json, os, sys, types
 
+MONITOR_TOOL = 4  # sys.monitoring tool id used for the RAISE hook (0-2 and 5 are conventionally taken)
+
 
 def _setup():
     req = json.loads(sys.argv[1])
@@ -84,11 +86,28 @@ def _setup():
         raise ValueError("type " + t.__name__)
 
     def classify(exc):
-        # Allocation failure inside the capped linear memory surfaces as MemoryError. The static gate
-        # bans the MemoryError name, so candidate code cannot raise one on purpose.
-        if isinstance(exc, MemoryError):
-            return {"k": "resource", "e": "memory: " + describe(exc)}
+        # MemoryError comes from the capped linear memory and RecursionError from the depth limit:
+        # limits of the sandbox, not behaviour. The gate bans the MemoryError name, so candidate code
+        # cannot raise one on purpose.
+        if isinstance(exc, (MemoryError, RecursionError)):
+            return {"k": "resource", "e": describe(exc)}
         return {"k": "exc", "v": type(exc).__name__, "e": describe(exc)}
+
+    # Candidate code can catch a MemoryError or RecursionError with `except Exception` and return a
+    # value the cap chose. A RAISE monitor (a tool id the candidate cannot reach: the gate makes sys
+    # unreachable) sees every raise, caught or not, so such a call is reported as resource.
+    hit = [False]
+    resource_types = (MemoryError, RecursionError)
+
+    def on_raise(code, offset, exc):
+        if isinstance(exc, resource_types):
+            hit[0] = True
+
+    monitoring = sys.monitoring
+    monitoring.use_tool_id(MONITOR_TOOL, "qe-arena")
+    monitoring.register_callback(MONITOR_TOOL, monitoring.events.RAISE, on_raise)
+    monitoring.set_events(MONITOR_TOOL, monitoring.events.RAISE)
+    del monitoring
 
     source, entry = req["source"], req["entry"]
     calls = iter(req["calls"][req["start"]:])
@@ -97,6 +116,7 @@ def _setup():
 
     def run():
         ns = {"__builtins__": safe, "__name__": "candidate"}
+        hit[0] = False
         emit(begin)  # the module body is metered with the module budget
         try:
             exec(compile(source, "<candidate>", "exec"), ns)
@@ -104,9 +124,11 @@ def _setup():
         except BaseException as exc:
             module_err = exc
         emit(end)
+        if hit[0] or (module_err is not None and isinstance(module_err, resource_types)):
+            row({"k": "resource", "e": "module: memory or recursion limit"})
+            return
         if module_err is not None:
-            kind = "resource" if isinstance(module_err, MemoryError) else "crash"
-            row({"k": kind, "e": "module: " + describe(module_err)})
+            row({"k": "crash", "e": "module: " + describe(module_err)})
             return
         fn = ns.get(entry)
         if not callable(fn):
@@ -117,6 +139,7 @@ def _setup():
         for call in calls:
             args = deepcopy(call)
             del call
+            hit[0] = False
             write(1, next(begin))  # one write: the host's fd_write always takes the whole marker
             try:
                 value = fn(*args)
@@ -124,6 +147,10 @@ def _setup():
             except BaseException as exc:
                 err = exc
             write(1, next(end))
+            if hit[0]:
+                row({"k": "resource", "e": "memory or recursion limit reached during the call"})
+                err = value = None
+                continue
             if err is not None:
                 row(classify(err))
                 err = None

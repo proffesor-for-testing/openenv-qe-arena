@@ -32,7 +32,7 @@ CORPUS = ROOT / "qe_arena" / "corpus"
 
 # Cross-host golden: identical on arm64 macOS, amd64 Linux and the amd64 arena image. Regenerate only
 # when the runtime, guest harness, budgets, SAFE_EXPORTS or corpus change, and say why in the commit.
-CORPUS_FINGERPRINT = ("4f7c468dbcc5d9ce", 64_394_962, 2560)
+CORPUS_FINGERPRINT = ("dc7eacd68230508b", 65_576_800, 2560)
 
 
 def ok(value):
@@ -67,7 +67,7 @@ def test_exceptions_report_type_name():
            "    return x\n")
     results = run_calls(src, "f", [[0], [1], [2], [3], [4]])
     assert [(r.kind, r.value) for r in results] == [
-        ("exc", "ValueError"), ("exc", "KeyError"), ("exc", "ZeroDivisionError"), ("exc", "RecursionError"),
+        ("exc", "ValueError"), ("exc", "KeyError"), ("exc", "ZeroDivisionError"), ("resource", None),
         ("ok", 4)]
     assert results[0].error == "ValueError: zero"
 
@@ -225,7 +225,7 @@ def test_runtime_is_the_pinned_reproducible_build():
 
 def test_allocation_beyond_the_cap_is_resource():
     results = run_calls("def f(x):\n    return len([0] * 10 ** 9)\n", "f", [[0], [1]])
-    assert [(r.kind, r.error) for r in results] == [("resource", "memory: MemoryError: ")] * 2
+    assert [r.kind for r in results] == ["resource"] * 2
 
 
 def test_gradual_memory_growth_is_resource_at_a_deterministic_point():
@@ -250,9 +250,53 @@ def test_c_stack_exhaustion_is_resource_and_the_next_call_still_runs():
     assert results[1].error == "wasm stack exhausted" and results[1].fuel > 0
 
 
-def test_python_recursion_is_an_ordinary_exception():
+def test_python_recursion_is_resource_not_an_exception():
     [r] = run_calls("def f(x):\n    return f(x)\n", "f", [[0]])
-    assert (r.kind, r.value) == ("exc", "RecursionError")
+    assert (r.kind, r.value) == ("resource", None)
+
+
+# Codex P2: a caught MemoryError/RecursionError used to come back as a settled ok, and the cap could
+# then choose the value. A RAISE monitor in the guest flags the call however the candidate handles it.
+CAUGHT = "def f(n):\n    try:\n        a = [0] * n\n    except Exception:\n        return 123\n    return 456\n"
+
+
+@pytest.mark.parametrize("src, call", [
+    (CAUGHT, [10**9]),
+    ("def f(n):\n    try:\n        a = 'x' * n\n    except:\n        return 1\n", [10**9]),
+    ("def f(n):\n    try:\n        return sorted([1, 2], key=lambda v: [0] * n)\n    except Exception:\n        return 9\n", [10**9]),
+    ("def f(n):\n    out = []\n    for g in (lambda: [0] * n, lambda: list(range(n))):\n"
+     "        try:\n            g()\n        except Exception as e:\n            out.append(1)\n    return out\n", [3 * 10**8]),
+    ("def g():\n    return g()\ndef f(n):\n    try:\n        g()\n    except Exception:\n        return n\n", [5]),
+])
+def test_a_caught_resource_failure_is_still_resource(src, call):
+    [r] = run_calls(src, "f", [call])
+    assert r.kind == "resource", r
+
+
+def test_the_memory_cap_cannot_choose_a_settled_value():
+    big = 10**9  # the fill costs more than the default budget
+    small = run_calls(CAUGHT, "f", [[20_000_000]], mem_mb=64, fuel=big)
+    large = run_calls(CAUGHT, "f", [[20_000_000]], mem_mb=256, fuel=big)
+    assert (small[0].kind, large[0].kind, large[0].value) == ("resource", "ok", 456)
+
+
+def test_resource_flag_is_per_call_and_ordinary_exceptions_are_unaffected():
+    results = run_calls(CAUGHT, "f", [[5], [10**9], [7]])
+    assert [(r.kind, r.value) for r in results] == [("ok", 456), ("resource", None), ("ok", 456)]
+    src = "def f(x):\n    try:\n        return int(x)\n    except ValueError:\n        return -1\n"
+    assert [r.value for r in run_calls(src, "f", [["a"], ["3"]])] == [-1, 3]
+
+
+def test_a_caught_resource_failure_in_the_module_body_is_resource_for_every_call():
+    src = "try:\n    X = [0] * 10**9\nexcept Exception:\n    X = 1\ndef f():\n    return X\n"
+    assert kinds(run_calls(src, "f", [[], []])) == ["resource", "resource"]
+
+
+def test_the_monitor_is_unreachable_from_candidate_code():
+    assert static_gate("import sys\n") == ["import of 'sys' is not allowed"]
+    assert static_gate("def f():\n    return '{0.monitoring}'.format(1)\n")
+    [r] = run_calls("def f():\n    import sys\n    return 1\n", "f", [[]], _skip_gate=True)
+    assert (r.kind, r.value) == ("exc", "ImportError")
 
 
 def test_memory_error_name_is_banned_so_resource_cannot_be_faked():
