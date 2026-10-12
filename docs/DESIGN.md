@@ -82,26 +82,37 @@ Reward: **1.0 only if every hidden differential test passes** (edge cases plus s
 compared against the original function's outputs). Otherwise 0. Unchanged code is 0. Partial credit is
 deliberately absent: a mutant already passes most inputs, so a pass fraction would pay for doing nothing.
 
-#### `qe_bugfix-d4`: the edit budget
+#### `qe_bugfix-d4`: the edit budget and the localised-repair gate
 
-d4 is d3's fault generation plus a total edit budget. Its random stream is `qe_bugfix-d4:<seed>`, and the
-task ID was appended to `TASK_IDS`, so d1-d3 and every existing pin are byte-identical.
+d4 is d3's fault generation plus two limits that rule out rewriting the function from its docstring. Its
+random stream is `qe_bugfix-d4:<seed>`, and the task ID was appended to `TASK_IDS`, so d1-d3 and every
+existing pin are byte-identical. Code: `qe_arena/edit_budget.py`.
 
-- **Budget:** `qe_arena/edit_budget.py`. The budget is 40% of the buggy file's length, rounded up to a
-  multiple of 50 characters, and counts `len(old) + len(new)` over all edits. A task is served only if the
-  minimal fix fits and a full rewrite (`len(buggy) + len(original)`) does not. The minimal fix is one edit
-  per changed hunk, widened by context lines until `old` is unique.
-- **What the model sees:** the reset prompt states the budget. Every applied edit reports what is left.
-  An edit that would exceed the budget is refused, is not applied and does not use a step. Only the first
-  `MAX_FREE_REFUSALS` (4) refusals are free; after that a refusal uses a step, so episodes stay bounded.
-- **Why the budget ignores the faults:** the calibrated prototype used 1.5x the faults' line diff. Showing
-  that number would tell the model roughly how many characters the faulty lines hold, a side channel on
-  their size, and with the line lengths on screen on which lines they might be. The shipped budget depends
-  only on the shown file. A budget of 0.4 of the file matches the prototype's median (0.39). The minimal fix
-  fits for about 85% of d3 fault sets; the rest are not served as d4. The only thing this conditioning
-  reveals is the same for every d4 task: the fix is small relative to the file.
-- **Oracle:** the reference solution uses the minimal fix. It earns 1.0 on 200 seeds within the budget
-  and the 12-step limit (read, up to 3 edits, run_tests, submit).
+- **Budget:** 25% of the buggy file's length, rounded up to 25 characters, counted as `len(old) + len(new)`
+  over all edits. It is priced on the character-level minimal fix: changes closer than 16 characters merge
+  into one edit, and each edit widens until its `old` is unique. That fix's median share of the file is
+  about 0.10 (p90 0.21).
+- **Localised-repair gate:** checked on every edit and again at grading. The candidate must keep:
+  - the buggy file's top-level statements, in the same order (no shadow definition, no new top-level code,
+    no `globals()` trick);
+  - every function definition, with the same arguments and decorators (no nested shadow function);
+  - no lambda beyond those already in the file;
+  - no dead code: nothing after an unconditional return, raise, continue or break, and no constant test;
+  - a total change of at most `min(50, 0.35 × code tokens)` preorder AST tokens. The code tokens are
+    counted on the shown file without docstrings.
+  A compact re-implementation, even behind an always-true guard, needs more tokens than that.
+- **What the model sees:** the prompt states the budget, the token allowance, the rules and the refusal
+  cap. Each applied edit reports the budget left. A refused edit (over budget, or not a localised repair)
+  is not applied and costs no budget. The first `MAX_FREE_REFUSALS` (4) refusals use no step; later ones do.
+- **Serving:** a fault is added only if the resulting task still fits the budget and the gate. Generation
+  tries other faults in the same function before moving to another function.
+- **No fault leak:** the budget and the token allowance are functions of the shown file only. A budget
+  derived from the faults (the calibrated 1.5x line-diff prototype) would tell the model how large the
+  faulty code is.
+- **Adversarial tests** (`tests/test_d4_attacks.py`, 300 seeds, attacker given the correct function):
+  shadow append, early return, guarded early return, nested-def shadow, `if False:` wrap, lambda
+  reassignment, decorator and `globals()` redefinition. Every one breaks the gate and grades 0. The oracle
+  (the minimal fix) earns 1.0 on all 300 within budget, gate and the 12-step limit.
 
 ### `qe_mutant_kill`: write a test that kills a mutant
 

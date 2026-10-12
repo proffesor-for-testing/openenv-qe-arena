@@ -11,14 +11,15 @@ from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import Action, Observation, State
 from pydantic import Field
 
-from .tasks import MODULE, TASK_IDS, Task, grade_bugfix, grade_mutant_kill, make_task, run_visible
+from . import edit_budget
+from .tasks import (MAX_FREE_REFUSALS, MODULE, TASK_IDS, Task, grade_bugfix, grade_mutant_kill, make_task,
+                    run_visible)
 
 MAX_STEPS = 12
 MAX_TEST_RUNS = 3
 MAX_EDIT_BYTES = 4096
 MAX_FILE_BYTES = 6000
 MAX_ANSWER_BYTES = 8192
-MAX_FREE_REFUSALS = 4  # over-budget edits that do not use a step; later ones do, so episodes stay bounded
 
 
 class QEAction(Action):
@@ -82,8 +83,9 @@ class QEEnvironment(Environment[QEAction, QEObservation, State]):
             raise RuntimeError("reset required")
         if self._done:
             return self._observe(error="episode is terminal; reset before another attempt")
-        if self._free_refusal(action):
-            return self._refused(len(action.old) + len(action.new), self._task.private["edit_budget"])
+        free = self._free_refusal(action)
+        if free is not None:
+            return self._refused(free)
         self._state.step_count += 1
         family = self._task.family
         if action.op == "submit":
@@ -106,19 +108,31 @@ class QEEnvironment(Environment[QEAction, QEObservation, State]):
             return self._observe(content=run_visible(self._task, self._files[MODULE]))
         return self._edit(action)
 
-    def _free_refusal(self, action: QEAction) -> bool:
-        """An over-budget edit is refused before it can use a step, up to MAX_FREE_REFUSALS times."""
+    def _refusal_reason(self, action: QEAction) -> str | None:
+        """d4: why an otherwise valid edit is refused (over budget, or not a localised repair), else None."""
         budget = self._task.private.get("edit_budget")
         if budget is None or action.op != "edit" or action.path != MODULE or not action.old:
-            return False
-        if self._edit_spent + len(action.old) + len(action.new) <= budget:
-            return False
-        self._refusals += 1
-        return self._refusals <= MAX_FREE_REFUSALS
+            return None
+        cost = len(action.old) + len(action.new)
+        if self._edit_spent + cost > budget:
+            return (f"it costs {cost} characters (len(old) + len(new)) and {budget - self._edit_spent} of the "
+                    f"{budget} budget are left")
+        text = self._files[MODULE]
+        if text.count(action.old) != 1:
+            return None  # reported as an ordinary edit error
+        violation = edit_budget.structure_violation(self._task.private["buggy"], text.replace(action.old, action.new, 1))
+        return None if violation is None else f"not a localised repair: {violation}"
 
-    def _refused(self, cost: int, budget: int) -> QEObservation:
-        return self._observe(error=f"edit refused: it costs {cost} characters (len(old) + len(new)) and "
-                                   f"{budget - self._edit_spent} of the {budget} budget are left; nothing was changed")
+    def _free_refusal(self, action: QEAction) -> str | None:
+        """A refusal that does not use a step, for the first MAX_FREE_REFUSALS refusals."""
+        reason = self._refusal_reason(action)
+        if reason is None or self._refusals >= MAX_FREE_REFUSALS:
+            return None
+        self._refusals += 1
+        return reason
+
+    def _refused(self, reason: str) -> QEObservation:
+        return self._observe(error=f"edit refused, nothing was changed: {reason}")
 
     def _edit(self, action: QEAction) -> QEObservation:
         if action.path != MODULE:
@@ -127,8 +141,10 @@ class QEEnvironment(Environment[QEAction, QEObservation, State]):
             return self._observe(error="old must be non-empty and the edit small")
         budget = self._task.private.get("edit_budget")
         cost = len(action.old) + len(action.new)
-        if budget is not None and self._edit_spent + cost > budget:
-            return self._refused(cost, budget)
+        reason = self._refusal_reason(action)
+        if reason is not None:
+            self._refusals += 1
+            return self._refused(reason)
         text = self._files[MODULE]
         count = text.count(action.old)
         if count != 1:

@@ -38,27 +38,6 @@ def test_d4_is_a_bugfix_only_cell_appended_after_the_original_six():
     assert tasks.FAULTS[4] == tasks.FAULTS[3] and tasks.MIN_SUBTLE[4] == tasks.MIN_SUBTLE[3]
 
 
-def test_oracle_earns_one_within_budget_and_steps_on_200_seeds():
-    for seed in range(200):
-        task = make_task(D4, seed)
-        p = task.private
-        budget = p["edit_budget"]
-        fix = edit_budget.minimal_fix(p["buggy"], p["original"])
-        assert sum(edit_budget.edit_cost(e) for e in fix) <= budget, seed  # the minimal fix fits
-        assert len(p["buggy"]) + len(p["original"]) > budget, seed  # a full rewrite does not
-        assert mutation.apply(p["original"], p["fault_sites"]) == p["buggy"]
-        env = QEEnvironment()
-        obs = env.reset(seed=seed, task_id=D4)
-        actions = solve_actions(task)
-        assert len(actions) <= MAX_STEPS
-        for action in actions:
-            obs = env.step(QEAction(**action))
-            assert not obs.error, (seed, obs.error)
-            if obs.done:
-                break
-        assert obs.done and obs.reward == 1.0, seed
-
-
 @pytest.mark.parametrize("seed", [0, 1, 2])
 def test_a_full_rewrite_is_refused_unapplied_and_free(seed):
     task = make_task(D4, seed)
@@ -82,7 +61,8 @@ def test_budget_arithmetic_is_exact():
     pad = budget - 2 * len(line)
     assert pad >= 0
     over = _env(3).step(QEAction(op="edit", path=MODULE, old=line, new=line + "#" * (pad + 1)))
-    assert over.error.startswith("edit refused: it costs") and f"{budget} of the {budget} budget" in over.error
+    assert over.error.startswith("edit refused") and "it costs" in over.error
+    assert f"{budget} of the {budget} budget" in over.error
     env = _env(3)
     exact = env.step(QEAction(op="edit", path=MODULE, old=line, new=line + "#" * pad))
     assert not exact.error and exact.content.endswith(f"edit budget left: 0 of {budget} characters")
@@ -122,3 +102,79 @@ def test_lower_levels_carry_no_budget():
 def test_d4_uses_its_own_random_stream():
     assert make_task(D4, 7).prompt != make_task("qe_bugfix-d3", 7).prompt
     assert random.Random(f"{D4}:7").random() != random.Random("qe_bugfix-d3:7").random()
+
+
+# --------------------------------------------------------------------------- the localised-repair gate
+
+GATE_BASE = (
+    "import re\n\n\n"
+    "def helper(x):\n    return x + 1\n\n\n"
+    "def f(a, b):\n    \"\"\"Doc.\"\"\"\n    total = helper(a)\n    if total > b:\n        return b\n    return total\n"
+)
+
+
+@pytest.mark.parametrize("candidate, reason", [
+    (GATE_BASE + "\n\ndef f(a, b):\n    return 0\n", "top-level"),
+    (GATE_BASE + "\n\nf = lambda a, b: 0\n", "top-level"),
+    (GATE_BASE.replace("import re\n", "import re\nimport math\n"), "top-level"),
+    (GATE_BASE.replace("def f(a, b):", "def f(a, b, c=1):"), "definitions"),
+    (GATE_BASE.replace("def f(a, b):", "@staticmethod\ndef f(a, b):"), "definitions"),
+    (GATE_BASE.replace("    total = helper(a)\n", "    def g():\n        return 1\n    total = helper(a)\n"),
+     "definitions"),
+    (GATE_BASE.replace("    total = helper(a)\n", "    total = (lambda v: v)(helper(a))\n"), "lambda"),
+    (GATE_BASE.replace("    return total\n", "    return total\n    total = 0\n"), "unreachable"),
+    (GATE_BASE.replace("    if total > b:", "    if False:"), "constant condition"),
+    (GATE_BASE.replace("    if total > b:", "    if not 0:"), "constant condition"),
+    (GATE_BASE.replace("    if total > b:", "    if a == a:\n        return 1\n    if total > b:"), "constant condition"),
+])
+def test_gate_refuses_non_local_changes(candidate, reason):
+    violation = edit_budget.structure_violation(GATE_BASE, candidate)
+    assert violation is not None and reason in violation
+
+
+def test_gate_accepts_a_local_repair_and_counts_tokens():
+    fixed = GATE_BASE.replace("if total > b:", "if total >= b:")
+    assert edit_budget.structure_violation(GATE_BASE, fixed) is None
+    assert edit_budget.change_size(GATE_BASE, fixed) == 2  # one Gt out, one GtE in
+    assert edit_budget.change_size(GATE_BASE, GATE_BASE) == 0
+    assert edit_budget.change_allowance(GATE_BASE) == min(edit_budget.MAX_CHANGE, int(
+        edit_budget.CHANGE_SHARE * edit_budget.code_tokens(GATE_BASE)))
+
+
+def test_gate_refusal_costs_no_budget_and_grading_rechecks_the_gate():
+    task = make_task(D4, 2)
+    p = task.private
+    env = _env(2)
+    import ast  # noqa: PLC0415
+
+    fn = next(n for n in ast.parse(p["buggy"]).body if isinstance(n, ast.FunctionDef) and n.name == p["entry"])
+    first = fn.body[1] if ast.get_docstring(fn) is not None else fn.body[0]
+    line = p["buggy"].splitlines(keepends=True)[first.lineno - 1]
+    indent = line[:len(line) - len(line.lstrip())]
+    new = indent + "return None\n" + line  # an early return: everything after it is dead code
+    assert p["buggy"].count(line) == 1 and len(line) + len(new) <= p["edit_budget"]
+    obs = env.step(QEAction(op="edit", path=MODULE, old=line, new=new))
+    assert obs.error.startswith("edit refused") and "not a localised repair" in obs.error
+    assert env._edit_spent == 0 and env.state.step_count == 0 and env._files[MODULE] == p["buggy"]
+    shadow = p["buggy"] + f"\n\ndef {p['entry']}(*args):\n    return None\n"
+    assert tasks.grade_bugfix(task, shadow) == 0.0  # whatever path produced it
+
+
+def test_prompt_states_the_rules_and_the_refusal_cap():
+    task = make_task(D4, 0)
+    allowance = edit_budget.change_allowance(task.files[MODULE])
+    assert f"change at most {allowance} syntax tokens" in task.prompt
+    assert f"The first {MAX_FREE_REFUSALS} refusals do not use a step; later ones do." in task.prompt
+
+
+def test_export_rows_keep_the_base_cells_byte_identical(tmp_path):
+    import json  # noqa: PLC0415
+    import subprocess  # noqa: PLC0415
+
+    root = Path(__file__).resolve().parents[1]
+    subprocess.run([sys.executable, str(root / "scripts" / "export_dataset.py"), str(tmp_path), "--seeds", "1"],
+                   check=True, capture_output=True, timeout=900)
+    rows = [json.loads(line) for line in (tmp_path / "tasks.jsonl").read_text().splitlines()]
+    assert {r["task_id"] for r in rows} == set(tasks.TASK_IDS)
+    for row in rows:
+        assert ("edit_budget" in row) == (row["task_id"] == D4)

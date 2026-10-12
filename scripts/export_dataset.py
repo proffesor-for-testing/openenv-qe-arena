@@ -41,10 +41,12 @@ training environment (OpenEnv Arena, software-engineering domain).
 | Family | What the model does | Reward |
 |---|---|---|
 | `qe_bugfix` | Repairs an injected bug by exact-replacement edits, with visible tests it can run | 1.0 only if every hidden differential test passes |
+| `qe_bugfix-d4` | The same repair under a total edit budget and a localised-repair rule (no rewrite) | as `qe_bugfix`, and 0 for a file that breaks the rule |
 | `qe_mutant_kill` | Writes test cases (as data) that tell a mutant apart from the original | 0.5 per mutant for a distinguishing input, 1.0 when the expected value is also exact |
 
 Each row is what the model sees at reset: `prompt` and the virtual `files`. Hidden inputs, reference outputs
 and mutant sources are generated inside the environment from `(task_id, seed)` and are not in this dataset.
+`qe_bugfix-d4` rows also carry `edit_budget` (the budget the prompt states); other rows have no such key.
 
 - Rows: {rows} ({seeds} seeds x {cells} task cells)
 - Corpus: {entries} small Python functions, most adapted from MIT-licensed QE projects; origins are in
@@ -65,12 +67,14 @@ def main() -> int:
     for task_id in TASK_IDS:
         for seed in range(args.seed_base, args.seed_base + args.seeds):
             task = make_task(task_id, seed)
-            rows.append({
+            row = {
                 "task_id": task_id, "seed": seed, "split": "train", "domain": DOMAIN,
                 "family": task.family, "difficulty": task.difficulty,
                 "prompt": task.prompt, "files": json.dumps(task.files, sort_keys=True),
-                "edit_budget": task.private.get("edit_budget"),  # d4 only; the prompt states it too
-            })
+            }
+            if task.private.get("edit_budget") is not None:  # d4 only, so other rows stay byte-identical
+                row["edit_budget"] = task.private["edit_budget"]
+            rows.append(row)
     data = "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows)
     (args.out / "tasks.jsonl").write_text(data)
     manifest = {
