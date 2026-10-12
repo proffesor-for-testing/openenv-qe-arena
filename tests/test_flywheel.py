@@ -346,3 +346,10 @@ def test_stats_reports_both_projected_group_sizes():
 def test_modules_stay_under_500_lines():
     for path in [ROOT / "scripts" / "flywheel.py", *(ROOT / "scripts" / "qe_flywheel").glob("*.py")]:
         assert len(path.read_text().splitlines()) < 500, path
+
+
+def test_cells_with_too_few_valid_episodes_are_excluded():
+    cell_stats = synthetic_stats({"qe_mutant_kill-d1": [(0, [1.0, 0.0, 1.0])]})  # mixed, but 3 episodes
+    tasks, reasons = sel.select_cells(cell_stats, template(), 6, 1)
+    assert not tasks and "3 valid episodes < 4" in next(r for r in reasons if r["task_id"] == "qe_mutant_kill-d1")["reason"]
+    assert sel.select_cells(cell_stats, template(), 6, 1, min_episodes=3)[0]

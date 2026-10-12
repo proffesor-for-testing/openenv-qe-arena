@@ -529,3 +529,11 @@ def test_a_deliberate_consistent_rewrite_is_not_detected(tmp_path):
     lg.write_head(ledger, 2, lg.line_sha(lines[-1]))
     assert lg.read_ledger(ledger)[-1]["solved"] == 5
     assert "catch ACCIDENTS" in lg.__doc__
+
+
+def test_an_unterminated_last_line_is_refused(tmp_path):
+    # a copy or editor that drops the final newline: the content still verifies, the file shape does not
+    ledger = two_entries(tmp_path)
+    ledger.write_text(ledger.read_text().rstrip("\n"))
+    with pytest.raises(SystemExit, match="not terminated"):
+        lg.read_ledger(ledger)
