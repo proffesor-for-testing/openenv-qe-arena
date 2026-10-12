@@ -165,25 +165,41 @@ Rules:
   exact image digest, anonymous pull, `openenv validate`, `/schema` equality, and native replay of
   every task ID.
 
-## Daily flywheel (`scripts/flywheel.py`)
+## Daily flywheel (`scripts/flywheel.py`, logic in `scripts/qe_flywheel/`)
 
-One submission per day, and one arena run is noise, so the flywheel keeps three disciplines:
+One submission per day, and one arena run is noise, so the flywheel keeps three disciplines. The
+package lives under `scripts/`, not `qe_arena/`, so none of it ships in the image.
 
 - **`stats`** reports, per cell and per (cell, corpus function), Jeffreys Beta(0.5, 0.5) posteriors with
-  equal-tailed 90% intervals for the full-solve rate and the informative-group rate. A group is
-  `(task_id, seed[, corpus])` across attempts; it is informative when its rewards are not all equal.
-  Error rows (`reward: null`) are counted and excluded, never scored as 0. `p_inf@4` projects the chance
-  that 4 independent episodes are mixed (the arena plays 5 per step and trains on the first 4 valid ones;
-  an unseeded reset here draws a fresh instance), which our same-seed groups understate. It uses
-  solved/unsolved only.
-- **`select`** Thompson-samples cells by the informative-group posterior (or the projection, with
-  `--objective projected`) after dropping saturated (mean solve >= 0.9) and dead (<= 0.05) cells. Limits
-  are copied verbatim from the template and every decision is written to a `.why.json` sidecar.
-- **`ledger`** is an append-only, hash-chained JSONL of submissions. `show` prints per-run scores and,
-  separately, the best-per-domain composite next to its exact null: the composite expected if every run
-  were the baseline (leaderboard baseline: 4/40, industrial-physical-systems 2/5 + office-white-collar 2/5).
-  `--result` takes the arena leaderboard's `runs[]` record (`run_id`, `scores.<domain>.{solved,total}`).
+  equal-tailed 90% intervals for two measures. Error rows (`reward: null`) are counted and excluded,
+  never scored as 0.
+  - *same-seed informative*: the measured share of `(task_id, seed[, corpus])` groups whose rewards are
+    not all equal.
+  - *`p_inf@4`, `p_inf@5`*: the projected chance that 4 or 5 independent instances are mixed (solved vs
+    not), computed exactly from the solve posterior. The arena plays 5 episodes of one task per step and
+    trains on the first 4 with a valid reward; its contract has no seed, and an unseeded reset here
+    draws a fresh instance. So the trainer's group is several instances, not several attempts at one
+    seed, and same-seed groups understate mixing (on `cal-percorpus-d2`, `flaky_run_summary` solved
+    2/4 yet had no mixed same-seed group).
+- **`select`** drops saturated (mean solve >= 0.9) and dead (<= 0.05) cells, then Thompson-samples the
+  rest. The default objective is `projected` (`p_inf@G`, G = 4, `--group-size` to change); `--objective
+  group` uses the same-seed posterior instead. The measure used is printed and written to the
+  `.why.json` sidecar. Limits are copied verbatim from the template.
+- **`ledger`** is an append-only, hash-chained JSONL of arena runs. `fetch --user Profa-QE
+  [--submission-id ID]` reads the public leaderboard (`GET /api/leaderboard`, no auth, following
+  `next_cursor`), appends this user's runs that are not in the ledger yet (idempotent by `run_id`, and
+  only with the local `receipt-vN.json`, so every entry carries a verified request sha), and saves the
+  leaderboard's own `baseline` beside the ledger. `add` takes one `runs[]` record by hand. `show` prints
+  per-run scores and, separately, the best-per-domain composite next to its exact null: the composite
+  expected if every run were the baseline (today 4/40: industrial-physical-systems 2/5 +
+  office-white-collar 2/5). The hard-coded baseline is only an offline fallback, and `show` says when
+  it is used.
 - **`onecell-search`** proposes exactly one knob change (Darwin's one-knob idea, reimplemented) with a
   pre-registered paired plan: identical seeds for baseline and candidate on a discovery split, and fresh
   seeds for a confirmation split. `decide` accepts only a strict discovery gain above the plan's margin
   and no confirmation loss. It does not call a model; the caller runs both arms and passes the files.
+
+**Calibrating for the trainer's regime.** Run `scripts/calibrate.py --attempts 1 --seeds N` (N >= 16 per
+cell) when the question is "will GRPO get a gradient here": one attempt on each of many fresh instances
+measures the solve rate the projection needs, with no seed effect hidden inside a group. Use `--attempts
+>= 2` only to study seed difficulty itself (how much of the variance is the instance, not the model).
