@@ -214,6 +214,16 @@ def test_inflight_counts_never_go_negative(fake_pool):
     assert sandbox._IDLE == [worker] and sandbox._INFLIGHT[None] == 0
 
 
+def test_a_release_never_drives_a_session_count_negative(fake_pool):
+    # Kills E-sandbox-553 (> 0 -> >= 0) now that a second release is a no-op: if a held worker's session
+    # count was already lost (zero), releasing it must leave zero, not -1, which would let the session
+    # hold one worker more than its cap later.
+    worker = sandbox._acquire(time.monotonic() + 5)
+    fake_pool.setattr(sandbox, "_INFLIGHT", collections.Counter())
+    sandbox._release(worker, True)
+    assert sandbox._INFLIGHT[None] == 0
+
+
 def test_worker_start_failure_message_is_bounded(fake_pool):
     # Kills E-sandbox-571 (truncation of the start-failure status).
     class Broken:
