@@ -25,6 +25,7 @@ from __future__ import annotations
 import ast
 import difflib
 import math
+from collections import Counter
 
 BUDGET_SHARE = 0.25
 BUDGET_QUANTUM = 25  # characters
@@ -199,24 +200,28 @@ def _stmt_ends(stmt: ast.stmt, jumps: bool) -> bool:
     return False
 
 
-def _dead_code(tree: ast.AST) -> str | None:
-    """A test whose value is fixed (a wrapper such as `if True:`), or an unreachable statement."""
+def _dead_code(tree: ast.AST) -> list[tuple[str, str, str]]:
+    """Constant or tautological tests (a wrapper such as `if True:`), then unreachable statements.
+
+    Each finding is (key, location, message). The key identifies the code itself, not its line,
+    so findings the buggy file already has (a fault can create `x > x`) can be told apart from
+    new ones.
+    """
+    found = []
     for node in ast.walk(tree):
         if isinstance(node, (ast.If, ast.While, ast.IfExp)) and _constant_test(node.test):
-            return f"a constant condition at line {node.lineno}"
+            found.append((f"const:{ast.dump(node.test)}", str(node.lineno), f"a constant condition at line {node.lineno}"))
     for node in ast.walk(tree):
-        for field in ("body", "orelse", "finalbody"):
-            block = getattr(node, field, None)
+        blocks = [getattr(node, field, None) for field in ("body", "orelse", "finalbody")]
+        blocks += [h.body for h in getattr(node, "handlers", None) or []]
+        for block in blocks:
             if not isinstance(block, list) or not all(isinstance(s, ast.stmt) for s in block):
                 continue
             for stmt, nxt in zip(block, block[1:]):
                 if _stmt_ends(stmt, jumps=True):
-                    return f"line {nxt.lineno} can never run (after line {stmt.lineno})"
-        for handler in getattr(node, "handlers", []) or []:
-            for stmt, nxt in zip(handler.body, handler.body[1:]):
-                if _stmt_ends(stmt, jumps=True):
-                    return f"line {nxt.lineno} can never run (after line {stmt.lineno})"
-    return None
+                    found.append((f"dead:{ast.dump(nxt)}", str(nxt.lineno),
+                                  f"line {nxt.lineno} can never run (after line {stmt.lineno})"))
+    return found
 
 
 def structure_violation(buggy: str, candidate: str) -> str | None:
@@ -232,9 +237,12 @@ def structure_violation(buggy: str, candidate: str) -> str | None:
         return "function definitions, arguments and decorators must stay as they are"
     if sum(isinstance(n, ast.Lambda) for n in ast.walk(tree)) > sum(isinstance(n, ast.Lambda) for n in ast.walk(base)):
         return "no new lambda functions"
-    dead = _dead_code(tree)
-    if dead is not None and _dead_code(base) is None:
-        return dead
+    already = Counter(key for key, _, _ in _dead_code(base))
+    for key, _, message in _dead_code(tree):
+        if already[key] > 0:
+            already[key] -= 1  # the buggy file has this one too; a fault may have made it
+            continue
+        return message
     size, allowed = change_size(buggy, candidate), change_allowance(buggy)
     if size > allowed:
         return f"the change is too large for a localised repair ({size} syntax tokens; at most {allowed})"
