@@ -7,23 +7,29 @@ META = {
 }
 
 
+def one_decimal(ms, unit):
+    """ms / unit rounded half up to one decimal place, as text (exact integer arithmetic)."""
+    tenths = (ms * 10 + unit // 2) // unit
+    return str(tenths // 10) + "." + str(tenths % 10)
+
+
 def format_duration(ms):
     """Render a non-negative integer millisecond duration as a short string.
 
-    ms < 1000 -> "<ms>ms"; ms < 60000 -> seconds with one decimal + "s";
-    ms < 3600000 -> minutes with one decimal + "m"; otherwise hours with one decimal
-    + "h". One decimal means format(value, ".1f"), e.g. 1500 -> "1.5s", 90000 -> "1.5m".
-    Raises ValueError if ms is negative.
+    ms < 1000 -> "<ms>ms"; ms < 60000 -> seconds + "s"; ms < 3600000 -> minutes + "m";
+    otherwise hours + "h". Seconds, minutes and hours have exactly one decimal, rounded
+    half up from the exact value: 1500 -> "1.5s", 1450 -> "1.5s", 14350 -> "14.4s",
+    59999 -> "60.0s", 90000 -> "1.5m". Raises ValueError if ms is negative.
     """
     if ms < 0:
         raise ValueError("duration must be non-negative")
     if ms < 1000:
         return str(ms) + "ms"
     if ms < 60000:
-        return format(ms / 1000, ".1f") + "s"
+        return one_decimal(ms, 1000) + "s"
     if ms < 3600000:
-        return format(ms / 60000, ".1f") + "m"
-    return format(ms / 3600000, ".1f") + "h"
+        return one_decimal(ms, 60000) + "m"
+    return one_decimal(ms, 3600000) + "h"
 
 
 def gen_inputs(rng, n):

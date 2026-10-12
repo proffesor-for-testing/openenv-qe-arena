@@ -101,14 +101,16 @@ def observation_text(obs) -> str:
     return json.dumps(data, ensure_ascii=False)
 
 
-def run_episode(args, token: str, budget: Budget, task_id: str, seed: int, attempt: int) -> dict:
-    env = QEEnvironment()
+def run_episode(args, token: str, budget: Budget, task_id: str, seed: int, attempt: int,
+                corpus_name: str | None = None) -> dict:
+    env = QEEnvironment(corpus_pool=(corpus_name,) if corpus_name else None)
     started = time.time()
     obs = env.reset(seed=seed, task_id=task_id)
     schema = json.dumps(QEAction.model_json_schema(), separators=(",", ":"))
     messages = [{"role": "system", "content": SYSTEM + schema},
                 {"role": "user", "content": observation_text(obs)}]
-    record = {"task_id": task_id, "seed": seed, "attempt": attempt, "steps": 0, "invalid": 0,
+    record = {"task_id": task_id, "seed": seed, "attempt": attempt, "corpus": env._task.private["corpus"],
+              "steps": 0, "invalid": 0,
               "completion_tokens": 0, "prompt_tokens_last": 0, "end": "", "reward": 0.0}
     while True:
         if record["completion_tokens"] >= args.episode_completion_tokens:
@@ -171,13 +173,18 @@ def main(argv=None) -> int:
     parser.add_argument("--request-timeout", type=int, default=180)
     parser.add_argument("--max-total-tokens", type=int, required=True, help="hard global token ceiling")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--each-corpus", action="store_true",
+                        help="pin every episode group to one corpus function, for all functions (difficulty table)")
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args(argv)
     tasks = args.task_id or TASK_IDS
     for task_id in tasks:
         parse_task_id(task_id)
-    jobs = [(t, args.seed_base + s, a) for t in tasks for s in range(args.seeds) for a in range(args.attempts)]
-    print(f"{len(jobs)} episodes: {len(tasks)} tasks x {args.seeds} seeds x {args.attempts} attempts; "
+    from qe_arena import corpus as corpus_module
+    names = sorted(corpus_module.ENTRIES) if args.each_corpus else [None]
+    jobs = [(t, args.seed_base + s, a, n) for t in tasks for n in names
+            for s in range(args.seeds) for a in range(args.attempts)]
+    print(f"{len(jobs)} episodes: {len(tasks)} tasks x {len(names)} pools x {args.seeds} seeds x {args.attempts} attempts; "
           f"model {args.model}, thinking {args.thinking}, token ceiling {args.max_total_tokens}")
     if not args.execute:
         print("dry run; add --execute to call the model")
@@ -191,7 +198,7 @@ def main(argv=None) -> int:
             try:
                 record = run_episode(args, token, budget, *spec)
             except Exception as error:
-                record = {"task_id": spec[0], "seed": spec[1], "attempt": spec[2], "end": "error",
+                record = {"task_id": spec[0], "seed": spec[1], "attempt": spec[2], "corpus": spec[3], "end": "error",
                           "error": str(error).replace(token, "[redacted]")[:300], "reward": None}
             with lock:
                 out.write(json.dumps(record) + "\n")
@@ -199,6 +206,15 @@ def main(argv=None) -> int:
                 results.append(record)
         list(pool.map(job, jobs))
     print(f"\ntokens used: {budget.used}")
+    if args.each_corpus:
+        print(f"{'task':<16}{'corpus':<28} solved  mean")
+        for task_id in tasks:
+            for name in names:
+                cell = [r["reward"] for r in results if r["task_id"] == task_id and r.get("corpus") == name
+                        and r["reward"] is not None]
+                if cell:
+                    print(f"{task_id:<16}{name:<28} {sum(x == 1.0 for x in cell)}/{len(cell)}   {statistics.mean(cell):.2f}")
+        return 0
     print(f"{'cell':<22}{'seed':>9}  rewards        solved  invalid  ends")
     for task_id in tasks:
         for s in range(args.seeds):

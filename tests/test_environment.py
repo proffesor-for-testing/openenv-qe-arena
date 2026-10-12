@@ -88,10 +88,21 @@ def test_bugfix_partial_or_wrong_fix_earns_zero(level):
 def test_bugfix_leaving_any_single_fault_unfixed_earns_zero(task_id):
     from qe_arena import mutation
 
+    import itertools
+
     task = make_task(task_id, 21)
     original = task.private["original"]
-    sites = [s for s in mutation.enumerate_sites(original) if s.description in task.private["sites"]]
-    assert len(sites) == int(task_id[-1])
+    # Descriptions omit the column and can repeat on one line, so recover the exact sites by reproducing the file.
+    candidates = [s for s in mutation.enumerate_sites(original) if s.description in task.private["sites"]]
+    sites = None
+    for combo in itertools.combinations(candidates, len(task.private["sites"])):
+        try:
+            if mutation.apply(original, list(combo)) == task.private["buggy"]:
+                sites = list(combo)
+                break
+        except ValueError:
+            continue
+    assert sites is not None and len(sites) == int(task_id[-1])
     for site in sites:  # every other fault fixed, this one left in
         _, obs = play(task_id, 21, [
             {"op": "edit", "path": MODULE, "old": task.private["buggy"], "new": mutation.apply(original, [site])},

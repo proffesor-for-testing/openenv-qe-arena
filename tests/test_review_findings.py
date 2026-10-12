@@ -65,16 +65,37 @@ def test_no_partial_fix_passes_the_hidden_tests(level, seed):
 def test_d1_special_casing_the_reported_input_earns_zero(seed):
     task = make_task("qe_bugfix-d1", seed)
     p = task.private
-    buggy_out = sandbox.run_calls(p["buggy"], p["entry"], p["inputs"])
-    index = next(i for i, (r, o) in enumerate(zip(p["reference"], buggy_out)) if not sandbox.compare(r, o))
-    ref = p["reference"][index]
+    reported = p["report_args"]
+    [ref] = sandbox.run_calls(p["original"], p["entry"], [reported])
     if ref.kind != "ok":
         pytest.skip("reported call raises; a value table cannot express it")
     renamed = p["buggy"].replace(f"def {p['entry']}(", "def impl_buggy(", 1)
-    wrapper = (f"{renamed}\n\nREPORTED = {p['inputs'][index]!r}\nANSWER = {ref.value!r}\n\n"
+    wrapper = (f"{renamed}\n\nREPORTED = {reported!r}\nANSWER = {ref.value!r}\n\n"
                f"def {p['entry']}(*args):\n    if list(args) == REPORTED:\n        return ANSWER\n"
                f"    return impl_buggy(*args)\n")
     assert tasks.grade_bugfix(task, wrapper) == 0.0
+
+
+# Red team recheck N02: visible tests showed correct outputs for graded edge cases, so a table learned
+# across episodes could pass tasks whose faults show only there.
+@pytest.mark.parametrize("level", [1, 2, 3])
+@pytest.mark.parametrize("seed", range(8))
+def test_nothing_shown_is_ever_graded(level, seed):
+    task = make_task(f"qe_bugfix-d{level}", seed)
+    p = task.private
+    graded = {json.dumps(a, sort_keys=True) for a in p["inputs"]}
+    shown = [v["args"] for v in p["visible"]] + ([p["report_args"]] if p["report_args"] is not None else [])
+    assert shown and not graded.intersection(json.dumps(a, sort_keys=True) for a in shown)
+
+
+# Red team recheck N04: a MemoryError from the sandbox's 256 MiB cap counted as a kill on Linux.
+def test_resource_exceptions_are_never_a_behavioural_difference():
+    ok = sandbox.CallResult(kind="ok", value=None)
+    for name in ("MemoryError", "RecursionError"):
+        exc = sandbox.CallResult(kind="exc", value=name)
+        assert tasks._killing([ok], [exc]) == [] and tasks._killing([exc], [ok]) == []
+        assert not tasks._usable([exc])
+    assert tasks._killing([ok], [sandbox.CallResult(kind="exc", value="ValueError")]) == [0]
 
 
 @pytest.mark.parametrize("seed", range(10))

@@ -83,13 +83,20 @@ def _result_text(result: sandbox.CallResult) -> str:
 
 
 SETTLED = ("ok", "exc")
+# Limits of our sandbox, not behaviour of the code: a 256 MiB cap or the stack depth can make one side
+# raise these where the other merely ran longer. They are never a behavioural difference.
+RESOURCE_EXCEPTIONS = ("MemoryError", "RecursionError")
+
+
+def _settled(result: sandbox.CallResult) -> bool:
+    return result.kind == "ok" or (result.kind == "exc" and result.value not in RESOURCE_EXCEPTIONS)
 
 
 def _outputs(source: str, entry: str, calls: list[list]) -> list[sandbox.CallResult]:
     """Run calls so that machine load cannot decide an outcome.
 
-    A timeout is re-probed alone with a 400x margin over the corpus's 5 ms
-    budget. Code that still times out really loops; otherwise the batch is
+    A timeout is re-probed alone with a 200x margin over the corpus's 5 ms
+    budget, and the rerun is capped at 10 s so slow code cannot multiply cost. Code that still times out really loops; otherwise the batch is
     rerun with generous limits. Callers treat any unsettled result (timeout,
     crash) as unusable, never as a behavioural difference.
     """
@@ -97,20 +104,20 @@ def _outputs(source: str, entry: str, calls: list[list]) -> list[sandbox.CallRes
     timed_out = [i for i, r in enumerate(results) if r.kind == "timeout"]
     if not timed_out:
         return results
-    probe = sandbox.run_calls(source, entry, [calls[timed_out[0]]], timeout_s=4.0, per_call_timeout_s=2.0)
+    probe = sandbox.run_calls(source, entry, [calls[timed_out[0]]], timeout_s=2.0, per_call_timeout_s=1.0)
     if probe and probe[0].kind == "timeout":
         return results
-    return sandbox.run_calls(source, entry, calls, timeout_s=30.0, per_call_timeout_s=2.0)
+    return sandbox.run_calls(source, entry, calls, timeout_s=10.0, per_call_timeout_s=1.0)
 
 
 def _killing(reference: list, outputs: list) -> list[int]:
     """Inputs on which both sides settled and their results differ."""
     return [i for i, (r, o) in enumerate(zip(reference, outputs))
-            if r.kind in SETTLED and o.kind in SETTLED and not sandbox.compare(r, o)]
+            if _settled(r) and _settled(o) and not sandbox.compare(r, o)]
 
 
 def _usable(results: list) -> bool:
-    return all(r.kind in SETTLED for r in results)
+    return all(_settled(r) for r in results)
 
 
 def _subsets_all_fail(original: str, sites: list, entry: str, inputs: list, reference: list) -> bool:
@@ -181,13 +188,16 @@ def _candidate_sites(source: str, rng: random.Random) -> list[mutation.Site]:
     return sites
 
 
-def _make_bugfix(task_id: str, level: int, seed: int, rng: random.Random) -> Task:
-    for name in rng.sample(sorted(corpus.ENTRIES), len(corpus.ENTRIES)):
+def _make_bugfix(task_id: str, level: int, seed: int, rng: random.Random, pool: tuple[str, ...]) -> Task:
+    for name in rng.sample(sorted(pool), len(pool)):
         item = corpus.ENTRIES[name]
         original = mutation.rename_locals(item.function_source, random.Random(rng.random()))
         inputs = corpus.gen_inputs(name, rng.randrange(2**31), HIDDEN_INPUTS)
+        graded = {json.dumps(a, sort_keys=True) for a in inputs}
+        display = [a for a in corpus.gen_inputs(name, rng.randrange(2**31), HIDDEN_INPUTS)
+                   if json.dumps(a, sort_keys=True) not in graded]  # shown, never graded
         reference = _outputs(original, item.entry, inputs)
-        if not _usable(reference):
+        if not _usable(reference) or not display:
             continue
         chosen, buggy, killed, subtle = [], original, [], 0
         for site in _candidate_sites(original, rng)[:24]:
@@ -215,15 +225,22 @@ def _make_bugfix(task_id: str, level: int, seed: int, rng: random.Random) -> Tas
                 break
         if len(chosen) != FAULTS[level]:
             continue
-        passing = [i for i in range(len(inputs)) if i not in killed]
+        shown_ref = _outputs(original, item.entry, display)
+        shown_bug = _outputs(buggy, item.entry, display)
+        if not (_usable(shown_ref) and _usable(shown_bug)):
+            continue
+        revealing = _killing(shown_ref, shown_bug)
+        passing = [i for i in range(len(display)) if i not in revealing]
+        if not passing or (level == 1 and not revealing):
+            continue
         visible_idx = rng.sample(passing, min(3, len(passing)))
         if level == 1:
-            report = (f"A user reports a wrong result for {_call_text(item.entry, inputs[killed[0]])} "
+            report = (f"A user reports a wrong result for {_call_text(item.entry, display[revealing[0]])} "
                       "(the correct value is not given; derive it from the docstring). The visible tests all pass.")
         else:
             report = ("Hidden tests fail but the visible tests all pass, so no failing input is known. "
                       "Compare the code with the docstring line by line to find every fault.")
-        visible = [{"args": inputs[i], "expected": reference[i]} for i in visible_idx]
+        visible = [{"args": display[i], "expected": shown_ref[i]} for i in visible_idx]
         shown = [f"  {_call_text(item.entry, v['args'])} == {_result_text(v['expected'])}" for v in visible]
         return Task(
             task_id=task_id, family="qe_bugfix", difficulty=level, seed=seed,
@@ -232,7 +249,7 @@ def _make_bugfix(task_id: str, level: int, seed: int, rng: random.Random) -> Tas
             private={
                 "corpus": name, "entry": item.entry, "original": original, "buggy": buggy,
                 "sites": [s.description for s in chosen], "inputs": inputs, "reference": reference,
-                "visible": visible,
+                "visible": visible, "report_args": display[revealing[0]] if level == 1 else None,
             },
         )
     raise RuntimeError(f"no usable bugfix task for {task_id} seed {seed}")
@@ -242,9 +259,9 @@ def _kill_rate(reference: list, outputs: list) -> float:
     return len(_killing(reference, outputs)) / len(reference)
 
 
-def _make_mutant_kill(task_id: str, level: int, seed: int, rng: random.Random) -> Task:
+def _make_mutant_kill(task_id: str, level: int, seed: int, rng: random.Random, pool: tuple[str, ...]) -> Task:
     wanted = 3 if level == 3 else 1
-    for name in rng.sample(sorted(corpus.ENTRIES), len(corpus.ENTRIES)):
+    for name in rng.sample(sorted(pool), len(pool)):
         item = corpus.ENTRIES[name]
         original = mutation.rename_locals(item.function_source, random.Random(rng.random()))
         inputs = corpus.gen_inputs(name, rng.randrange(2**31), HIDDEN_INPUTS)
@@ -283,14 +300,24 @@ def _make_mutant_kill(task_id: str, level: int, seed: int, rng: random.Random) -
     raise RuntimeError(f"no usable mutant_kill task for {task_id} seed {seed}")
 
 
-def make_task(task_id: str, seed: int) -> Task:
+def make_task(task_id: str, seed: int, *, pool: tuple[str, ...] | None = None) -> Task:
+    """Build the task for (task_id, seed).
+
+    ``pool`` restricts which corpus functions may be drawn. It exists for
+    per-function calibration and is never reachable from an episode: the
+    server constructs environments without it.
+    """
     family, level = parse_task_id(task_id)
     if type(seed) is not int or not 0 <= seed < 2**64:
         raise ValueError("seed must be an unsigned 64 bit integer")
+    if pool is None:
+        pool = tuple(corpus.ENTRIES)
+    elif not pool or any(name not in corpus.ENTRIES for name in pool):
+        raise ValueError("pool must name corpus entries")
     rng = random.Random(f"{task_id}:{seed}")
     if family == "qe_bugfix":
-        return _make_bugfix(task_id, level, seed, rng)
-    return _make_mutant_kill(task_id, level, seed, rng)
+        return _make_bugfix(task_id, level, seed, rng, tuple(pool))
+    return _make_mutant_kill(task_id, level, seed, rng, tuple(pool))
 
 
 def run_visible(task: Task, source: str) -> str:

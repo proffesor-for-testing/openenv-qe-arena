@@ -131,9 +131,13 @@ def test_bugfix_task_contract(level, seed):
         rates.append(sum(not sandbox.compare(r, o) for r, o in zip(p["reference"], out)) / len(p["inputs"]))
     assert min(rates) > 0
     assert sum(r <= SUBTLE for r in rates) >= tasks.MIN_SUBTLE[level]
-    if level == 1:
-        reported = next(p["inputs"][i] for i in failing)
+    if level == 1:  # the report names an input that reveals the bug and is never graded
+        reported = p["report_args"]
         assert tasks._call_text(p["entry"], reported) in task.prompt
+        [want_r] = sandbox.run_calls(p["original"], p["entry"], [reported])
+        [got_r] = sandbox.run_calls(p["buggy"], p["entry"], [reported])
+        assert not sandbox.compare(want_r, got_r)
+        assert json.dumps(reported, sort_keys=True) not in {json.dumps(a, sort_keys=True) for a in p["inputs"]}
 
 
 def test_unknown_family_with_qe_prefix_is_rejected():
@@ -305,12 +309,12 @@ def test_edit_and_answer_caps_are_inclusive():
 
 
 GOLDEN = {
-    "qe_bugfix-d1:0": "e34b9e60b8509bc2", "qe_bugfix-d1:1": "be06e9e7f36d1a97",
-    "qe_bugfix-d1:2": "f497b2d7050fcb7f", "qe_bugfix-d1:3": "1e2e02cccd7e6712",
-    "qe_bugfix-d2:0": "8f06d3e97319b140", "qe_bugfix-d2:1": "9f160e92b04c6d4e",
-    "qe_bugfix-d2:2": "75c27e30ed593569", "qe_bugfix-d2:3": "2f2eb2b5088bcbbd",
-    "qe_bugfix-d3:0": "9fcba1b61b997e9d", "qe_bugfix-d3:1": "3095d1c9805bb293",
-    "qe_bugfix-d3:2": "a3120a33c426a4b3", "qe_bugfix-d3:3": "945e02cc0a556ee1",
+    "qe_bugfix-d1:0": "75d2aad48067724f", "qe_bugfix-d1:1": "40d7a7adcade783c",
+    "qe_bugfix-d1:2": "ed425d24818208ea", "qe_bugfix-d1:3": "4fb6ccb4939a55d5",
+    "qe_bugfix-d2:0": "749aa6a90458636a", "qe_bugfix-d2:1": "5e57aea783ea7e46",
+    "qe_bugfix-d2:2": "fe2081f6aa3d6c35", "qe_bugfix-d2:3": "ee2a196f31a2929c",
+    "qe_bugfix-d3:0": "9464240e26d05fed", "qe_bugfix-d3:1": "5f1d5f81243a49ae",
+    "qe_bugfix-d3:2": "140bb796dcdb6dd8", "qe_bugfix-d3:3": "41de52e393b01531",
     "qe_mutant_kill-d1:0": "2c18117ee463689c", "qe_mutant_kill-d1:1": "8bfe4fb2a811ab6b",
     "qe_mutant_kill-d1:2": "a29fa8404c66b6ff", "qe_mutant_kill-d1:3": "7579e245d91a9739",
     "qe_mutant_kill-d2:0": "0b352307ed8023d3", "qe_mutant_kill-d2:1": "1ea3d0f1e672b099",

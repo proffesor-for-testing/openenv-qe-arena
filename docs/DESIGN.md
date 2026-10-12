@@ -111,15 +111,19 @@ The oracle never runs in the same process as model-influenced code.
    int `expected` is read as a float wherever the original returned a float, at any depth, because JSON
    writes `2.0` as `2`. Whether `{"raises": ...}` means an exception depends on what the original actually
    did.
-5. **Machine load never decides an outcome.** A timed-out call is re-probed alone with a 400x margin over
-   the corpus's 5 ms budget. Only code that still times out is treated as looping; otherwise the batch is
-   rerun with generous limits. A timeout or crash is never a behavioural difference: it is never a fault,
-   never a kill, and never makes generation fall through to another function.
+5. **Machine load and sandbox limits never decide an outcome.** A timed-out call is re-probed alone with a
+   200x margin over the corpus's 5 ms budget; only code that still times out is treated as looping, and the
+   rerun is capped at 10 s so slow code cannot multiply cost. A timeout, a crash, or a `MemoryError` or
+   `RecursionError` (our 256 MiB cap and stack depth, not the code's behaviour) is never a behavioural
+   difference: never a fault, never a kill, never a reason to switch function. The planned move to
+   CPython-on-WASI with fuel metering makes all of this deterministic by construction (identical outcome and
+   fuel across hosts and load, measured).
 6. **No partial credit by accident.** Every non-empty proper subset of a task's faults must still fail some
    hidden input, so faults that cancel each other out can never let a partial fix pass. A d1 fault must be
    revealed by at least 3 distinct hidden calls, so special-casing the one reported call cannot pass.
-7. **What the model sees is by design.** Visible tests and the d1 report are drawn from the hidden pool
-   (they pass, or are named without their expected value). In mutant-kill, the original plus the diff is
+7. **Nothing shown is ever graded.** Visible tests and the d1 report come from a second input pool that
+   excludes every graded input, so outputs of the fixed edge cases are never shown and cannot be learned
+   as a lookup table across episodes. In mutant-kill, the original plus the diff is
    the mutant. Values echoed by `run_tests` are capped at 200 characters each.
 
 Items 4 to 7 came from independent review of the grader: an adversarial Codex review, a red team that built
