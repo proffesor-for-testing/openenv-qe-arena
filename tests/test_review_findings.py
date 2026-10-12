@@ -109,7 +109,7 @@ def test_d1_fault_is_revealed_by_several_distinct_calls(seed):
     out = sandbox.run_calls(p["buggy"], p["entry"], p["inputs"])
     revealing = {json.dumps(p["inputs"][i], sort_keys=True)
                  for i, (r, o) in enumerate(zip(p["reference"], out)) if not sandbox.compare(r, o)}
-    assert len(revealing) >= tasks.MIN_REVEALING_D1
+    assert len(revealing) >= 3  # literal: comparing with tasks.MIN_REVEALING_D1 let a 3 -> 2 mutant survive
 
 
 # Codex WHAT-ELSE 2 and red team #3: a 401-digit expected value crashed step() with OverflowError.
@@ -131,12 +131,13 @@ def test_surrogate_in_an_edit_is_rejected_not_raised():
 # Red team #5: run_tests echoed a 393,466-character model-controlled value.
 def test_run_tests_output_is_capped():
     task = make_task("qe_bugfix-d1", 2)
-    huge = f"def {task.private['entry']}(*args):\n    return '9' * 300000\n"
+    # 100,000 characters: under the sandbox's 128 KiB value cap (300,000 became a crash and never reached _clip)
+    huge = f"def {task.private['entry']}(*args):\n    return '9' * 100000\n"
     env = QEEnvironment()
     env.reset(seed=2, task_id=task.task_id)
     env.step(QEAction(op="edit", path=MODULE, old=task.private["buggy"], new=huge))
     obs = env.step(QEAction(op="run_tests"))
-    assert len(obs.content) < 2000
+    assert len(obs.content) < 2000 and "(100002 chars)" in obs.content
 
 
 # Codex S5 and red team #2: a timeout counted as a kill, and a timeout during generation changed the task.
