@@ -215,3 +215,12 @@ def test_arms_must_run_the_same_instances():
     files[1][0]["corpus"] = "other_function"
     with pytest.raises(SystemExit, match="different corpus"):
         search.decide(plan, *files)
+
+
+def test_mix_moves_never_take_weight_a_level_does_not_have():
+    cfg = dict(config(), difficulty_mix={"d1": 0.0, "d2": 0.95, "d3": 0.05})
+    mixes = [v for k, v in search.candidate_moves(cfg) if k == "difficulty_mix"]
+    assert mixes and all(min(m.values()) >= 0 for m in mixes)
+    assert {(k, v) for m in mixes for k, v in m.items() if v > cfg["difficulty_mix"][k]} == {("d1", 0.1), ("d3", 0.15)}
+    for m in mixes:
+        search.validate_config(dict(cfg, difficulty_mix=m))

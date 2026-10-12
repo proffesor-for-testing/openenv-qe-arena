@@ -182,7 +182,7 @@ def fetch_leaderboard(get=http_get_json, url: str = LEADERBOARD, cursor_url: str
     `{url}/1-1` returned 404 and `?cursor=1-1` returned the unpaged board. So a non-null next_cursor
     is refused unless the caller supplies ``cursor_url`` (e.g. "{url}?cursor={cursor}")."""
     board = check_board(get(url))
-    cursor, seen = board.get("next_cursor"), set()
+    cursor, seen, pages = board.get("next_cursor"), set(), 1
     while cursor:
         if cursor_url is None:
             raise SystemExit(f"leaderboard returned next_cursor {cursor!r} but its pagination format is "
@@ -191,14 +191,14 @@ def fetch_leaderboard(get=http_get_json, url: str = LEADERBOARD, cursor_url: str
             raise SystemExit(f"refusing leaderboard cursor {cursor!r}")
         if cursor in seen:
             raise SystemExit(f"leaderboard repeated cursor {cursor!r}; stopping")
-        if len(seen) + 1 >= max_pages:
+        if pages >= max_pages:  # counted apart from ``seen`` so it holds even if a cursor repeats
             raise SystemExit(f"leaderboard still paging after {max_pages} pages; stopping")
         seen.add(cursor)
         page = get(cursor_url.format(url=url, cursor=cursor))
         if not isinstance(page, dict) or not isinstance(page.get("runs"), list):
             raise SystemExit(f"leaderboard page {cursor!r} has no runs list")
         board["runs"] += page["runs"]
-        cursor = page.get("next_cursor")
+        cursor, pages = page.get("next_cursor"), pages + 1
     return board
 
 
