@@ -100,26 +100,41 @@ partly right reasoning. The episode reward is the mean over mutants.
 
 ### `qe_flaky`: find, diagnose and repair a flaky test
 
-`module.py` holds a corpus function, a suite of 3-5 tests and a fixed harness `run_suite(order, seed, t0)`. The
-sandbox has no clock and no `random`, so flakiness is simulated deterministically: each test gets an `env` whose
-seeded streams (`draw`, `frac`), fake clock (`now`) and unordered-collection order (`pool`) derive from the run's
-(order, seed, t0), and module-level dicts persist between tests within a run. One test carries one injected cause
-(`shared_state`, `cache_leak`, `shared_random`, `clock_boundary`, `unordered_iteration`, `float_equality`); the
-other tests use the same facilities safely, often in a form that looks like the faulty one. About 15% of tasks are
-clean controls with no flaky test, where the right answer is `{"test": null}`.
+`module.py` holds a corpus function, a suite of 4-5 tests and a fixed harness `run_suite(order, seed, t0)`. The
+sandbox has no clock and no `random`, so flakiness is simulated deterministically: each run builds a fresh `env`
+whose seeded streams (`draw`, `frac`), fake clock (`now`) and unordered-collection order (`pool`) derive from the
+run's (order, seed, t0), and module-level dicts persist between tests within a run. One test carries one injected cause
+(`shared_state`, `cache_leak`, `shared_random`, `clock_boundary`, `unordered_iteration`, `float_equality`); about 15%
+of tasks are clean controls whose right answer is `{"test": null}`. About a quarter of `draw`, `now` and `frac` flakes
+fail only 2-10% of runs; those tasks are graded on 96 runs instead of 24.
+
+**No surface feature names the flaky test.** Every check comes from a template with a faulty and a safe
+parametrization of the same text shape (a ternary over `env.draw` whose branches return equal values, a clock bucket
+compensated by the 250 ms tick, `w * 8 / 8 == w` next to `w * 3 / 3 == w`, a polluting dict write of a value with the
+same result, a coarse memo key whose colliding inputs give the same answer), and decoys mostly reuse the flaky test's
+own template. The audit's syntax-only classifier fell from 0.847 to 0.19-0.23 (the always-null baseline is 0.15).
 
 | Level | What the model does | Reward |
 |---|---|---|
 | d1 | Name the flaky test (or null) | 1.0 for the right test |
 | d2 | Name the test and its cause | 0.5 for the test, 1.0 with the cause |
-| d3 | Repair the test by edits, then name it | 0.5 for the test; 1.0 only if the suite passes on all K graded runs and the repaired test fails on every run against a reference mutant |
+| d3 | Repair the test by edits, then name it | 0.5 for the test; 1.0 only for a repair that passes every check below |
 
-Ground truth comes from execution, not the generator: the suite runs under K = 24 hidden combinations; exactly one
-test must both pass and fail and every other test must always pass, and the cause is the single facility whose
-per-test reset (a grader-only harness variant) makes that test constant. The d3 mutant returns a different value on
-every input the faulty check uses and the same value on every input any other test uses, so `assert True`, deleted
-assertions, early returns, swallowed failures and conditional skips earn at most 0.5. Shown runs (all passing) use
-seeds disjoint from the graded ones. Code lives in `qe_arena/flaky.py`; tests in `tests/test_flaky.py`.
+Ground truth comes from execution, not the generator: exactly one test must both pass and fail over the graded runs and
+every other test must always pass, and the cause is the single facility whose per-test reset (a grader-only harness
+variant) makes that test constant.
+
+A d3 repair is graded on the **original** tests with only the flaky test's function spliced in from the edit, so
+emptying the polluter or editing the harness changes nothing. The grader runs its own copy of the harness, defined
+before the tests and holding every builtin it uses as a default argument, with a fresh `Env` class per run; the spliced
+tests must also pass `flaky.gate_region` (no harness names, no rebinding of builtins or of the function under test, no
+attribute assignment). Full credit needs all four: every test passes on every graded run; the repaired test alone
+passes an adversarial facility sweep (every draw residue 0-7 and large values, clocks just below powers of ten and
+calendar periods, a frac grid, every pool order), which catches repairs such as `// 10**9` or `env.draw(10**9)` that
+keep the defect; and it fails on every graded run against a reference mutant that only the faulty check's inputs
+reveal. Shown runs (all passing) use seeds disjoint from the graded ones. Code: `qe_arena/flaky.py` (harness, gate,
+grading), `flaky_gen.py` (task assembly), `flaky_templates.py` (check templates); tests: `tests/test_flaky.py`,
+`tests/test_flaky_audit.py`.
 
 ## Action protocol (one schema for both families)
 

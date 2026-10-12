@@ -57,13 +57,20 @@ def patch_first_line(task, line):
     return [(b, b.replace(f"def {victim}(env):\n", f"def {victim}(env):\n    {line}\n", 1))]
 
 
-def _float_expr(victim_block: str) -> str:
-    return next(m.group(1) for m in re.finditer(r"^    assert (.*\bw\b.*)$", victim_block, re.M))
+def _float_check(victim_block: str) -> tuple[str, str]:
+    """(setup line or "", the asserted float expression) of a float-equality test."""
+    setup = next((m.group(1) for m in re.finditer(r"^    ((?:total|parts) = .*)$", victim_block, re.M)), "")
+    line = next(m.group(1) for m in re.finditer(r"^    assert (.*\bw\b.*)$", victim_block, re.M))
+    return setup, line.split(" and ")[-1]
 
 
-def _holds(expr: str, w: float) -> bool:
+def _holds(check: tuple[str, str], w: float) -> bool:
+    setup, expr = check
+    ns = {"__builtins__": {}, "w": w, "sum": sum, "abs": abs}
     try:
-        return bool(eval(expr, {"__builtins__": {}}, {"w": w, "abs": abs}))  # noqa: S307 - our own float literal
+        if setup:
+            exec(setup, ns)  # noqa: S102 - our own generated float literal
+        return bool(eval(expr, ns))  # noqa: S307
     except Exception:  # noqa: BLE001
         return False
 
@@ -84,8 +91,8 @@ def test_patching_the_env_class_never_earns_the_repair(d3_by_cause, cause, line)
 
 def test_patching_env_frac_never_earns_the_repair(d3_by_cause):
     for task in d3_by_cause["float_equality"]:
-        expr = _float_expr(block(task.files[MODULE], task.private["victim"]))
-        w = next(x / 64 for x in range(1, 64) if _holds(expr, x / 64))
+        check = _float_check(block(task.files[MODULE], task.private["victim"]))
+        w = next(x / 64 for x in range(1, 64) if _holds(check, x / 64))
         edits = patch_first_line(task, f"Env.frac = lambda self: {w}")
         assert play(task, edits, {"test": task.private["victim"]}) <= 0.5, task.seed
 
@@ -101,19 +108,20 @@ def test_shadowing_a_builtin_above_the_harness_never_earns_the_repair(d3_by_caus
 
 
 def _writer(task):
+    """The test that pollutes what the flaky test reads: it writes the same dict key, or warms the helper."""
     src, p = task.files[MODULE], task.private
-    names = re.findall(r"^def (test_\w+)\(env\):", src, re.M)
-    victim_reads = set(re.findall(r"\b([A-Z]+)\b", block(src, p["victim"])))
-    victim_helpers = set(re.findall(r"\b(\w+)\(", block(src, p["victim"])))
-    for n in names:
-        if n == p["victim"]:
-            continue
-        b = block(src, n)
-        if re.search(r"^    ([A-Z]+)\[.*\] = ", b, re.M) and re.search(r"^    ([A-Z]+)\[", b, re.M).group(1) in victim_reads:
-            return n
-        if p["cause"] == "cache_leak" and any(f"{h}(" in b for h in victim_helpers if h.islower() and h != p["entry"]):
-            return n
-    return None
+    victim = block(src, p["victim"])
+    names = [n for n in re.findall(r"^def (test_\w+)\(env\):", src, re.M) if n != p["victim"]]
+    if p["cause"] == "shared_state":
+        dict_name, key = re.search(r"\b([A-Z]+)\[('\w+')\]", victim).groups()
+        for n in names:
+            b = block(src, n)
+            if f"{dict_name}[{key}] = " in b or f"{dict_name}.update({{{key}:" in b:
+                return n
+        return None
+    helper = re.search(r"^def (\w+)\(\*args\):", src, re.M).group(1)
+    return next((n for n in names if f"{helper}(" in block(src, n)
+                 and not re.search(rf"(assert {helper}\(.*\) ==|got = {helper}\()", block(src, n))), None)
 
 
 @pytest.mark.parametrize("cause", ["shared_state", "cache_leak"])
@@ -219,7 +227,7 @@ def _syntax_classifier(src: str):
 @pytest.mark.parametrize("level", [1, 2])
 def test_the_syntax_only_classifier_scores_near_the_null_baseline(level):
     scores = []
-    for seed in range(150):
+    for seed in range(300):
         task = make_task(f"qe_flaky-d{level}", seed)
         p = task.private
         test, cause = _syntax_classifier(task.files[MODULE])
@@ -231,7 +239,7 @@ def test_the_syntax_only_classifier_scores_near_the_null_baseline(level):
             scores.append(1.0 if level == 1 or cause == p["cause"] else 0.5)
     mean = statistics.mean(scores)
     print(f"\nS classifier d{level}: {mean:.3f}")
-    assert mean <= 0.27, mean
+    assert mean <= 0.26, mean
 
 
 # ---------------------------------------------------------------- MINOR: low-rate flakes and wording

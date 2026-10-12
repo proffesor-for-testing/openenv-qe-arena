@@ -13,7 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from oracle import solve_actions  # noqa: E402
-from qe_arena import flaky, sandbox  # noqa: E402
+from qe_arena import flaky, flaky_gen, sandbox  # noqa: E402
 from qe_arena.environment import QEAction, QEEnvironment  # noqa: E402
 from qe_arena.tasks import MODULE, make_task  # noqa: E402
 
@@ -66,12 +66,10 @@ def test_ground_truth_is_what_execution_shows_on_many_seeds(many, level):
             continue
         assert p["cause"] in flaky.CAUSES
         # The cause is the one facility whose per-test reset makes the flaky test's outcome constant.
-        harness = p["harness"]
-        boxes = re.search(r"^BOXES = \[(.*)\]$", harness, re.M).group(1).split(", ") if "BOXES = []" not in harness else []
-        names = {"state": next((b for b in boxes if b in flaky.STATE_NAMES), None),
-                 "store": next((b for b in boxes if b in flaky.STORE_NAMES), None)}
-        probe = task.files[MODULE][:len(task.files[MODULE]) - len(harness)] + flaky._probe(harness, boxes, names)
-        attributed, unmasked = flaky._attribute(probe, p["graded"], p["victim"])
+        idx = {"state": [i for i, b in enumerate(p["boxes"]) if b in flaky_gen.STATE_NAMES],
+               "store": [i for i, b in enumerate(p["boxes"]) if b in flaky_gen.STORE_NAMES]}
+        graded = flaky.graded_source(p["prefix"], p["region"], p["tests"], p["boxes"])
+        attributed, unmasked = flaky.attribute(graded, p["graded"], p["victim"], idx)
         assert unmasked == runs and attributed == [p["cause"]], task.seed
 
 
@@ -199,16 +197,18 @@ def test_d3_naming_without_a_valid_repair_earns_half_and_the_canonical_repair_ea
         assert obs.reward == 0.0
 
 
-def test_d3_editing_the_harness_or_the_function_never_earns_the_repair(many):
+def test_d3_edits_outside_the_flaky_test_are_discarded(many):
     task = _d3_tasks(many, 1)[0]
     p = task.private
     for old, new in [("        except Exception:\n            passed[name] = False",
                       "        except Exception:\n            passed[name] = True"),
                      (task.files[MODULE].split("\n", 1)[0], task.files[MODULE].split("\n", 1)[0] + "\n    pass")]:
-        obs, _ = play(task, [{"op": "edit", "path": MODULE, **p["repair"]},
-                             {"op": "edit", "path": MODULE, "old": old, "new": new},
+        edit = {"op": "edit", "path": MODULE, "old": old, "new": new}
+        obs, _ = play(task, [edit, {"op": "submit", "answer": {"test": p["victim"]}}])
+        assert obs.reward == 0.5  # the harness edit alone repairs nothing
+        obs, _ = play(task, [{"op": "edit", "path": MODULE, **p["repair"]}, edit,
                              {"op": "submit", "answer": {"test": p["victim"]}}])
-        assert obs.reward == 0.5
+        assert obs.reward == 1.0  # and it does not spoil a real repair either
 
 
 def test_d3_hostile_test_code_goes_through_the_static_gate(many):
@@ -221,7 +221,7 @@ def test_d3_hostile_test_code_goes_through_the_static_gate(many):
     assert env.step(QEAction(op="submit", answer={"test": task.private["victim"]})).reward == 0.5
 
 
-def test_d3_clean_control_keeps_full_credit_only_while_the_suite_passes(many):
+def test_d3_clean_control_rewards_null_and_discards_edits(many):
     task = next(t for t in many[3] if t.private["victim"] is None)
     first = task.private["tests"][0]
     obs, _ = play(task, [{"op": "submit", "answer": {"test": None}}])
@@ -231,6 +231,8 @@ def test_d3_clean_control_keeps_full_credit_only_while_the_suite_passes(many):
     broken = f"def {first}(env):\n    assert False"
     obs, _ = play(task, [{"op": "edit", "path": MODULE, "old": task.files[MODULE][start:end], "new": broken},
                          {"op": "submit", "answer": {"test": None}}])
+    assert obs.reward == 1.0
+    obs, _ = play(task, [{"op": "submit", "answer": {"test": first}}])
     assert obs.reward == 0.0
 
 
@@ -252,11 +254,11 @@ def test_no_ground_truth_reaches_an_observation(many, level):
         shown = json.loads(texts[2])["content"]
         assert all(line.endswith(f"{len(p['tests'])}/{len(p['tests'])} passed") for line in shown.splitlines())
         # The prompt is a template over the entry name, the level and the shown runs: nothing else.
-        assert task.prompt == flaky._prompt(p["entry"], level, p["shown"])
+        assert task.prompt == flaky.prompt(p["entry"], level, p["shown"])
         if p["victim"]:
             assert p["victim"] not in task.prompt
         region = task.files[MODULE][len(p["prefix"]):len(task.files[MODULE]) - len(p["harness"])]
-        assert not any(w in region.replace(p["entry"], "").lower() for w in flaky.TELLTALE)
+        assert not any(w in region.replace(p["entry"], "").lower() for w in flaky_gen.TELLTALE)
         for mutant in p["mutants"]:
             assert mutant["source"].split("\n", 1)[1] not in text
 
@@ -267,7 +269,7 @@ def test_graded_runs_are_never_shown(many):
             p = task.private
             assert {s for _, s, _ in p["shown"]}.isdisjoint({s for _, s, _ in p["graded"]})
             assert all(s < flaky.SEED_SPLIT for _, s, _ in p["shown"])
-            assert len(p["graded"]) == flaky.K_GRADE
+            assert len(p["graded"]) == (flaky_gen.K_LOW if p["band"] == "low" else flaky_gen.K_GRADE)
 
 
 def test_run_tests_is_capped():
