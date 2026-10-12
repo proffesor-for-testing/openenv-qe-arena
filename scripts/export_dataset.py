@@ -26,7 +26,7 @@ CARD = """---
 license: mit
 language: [en]
 task_categories: [text-generation]
-tags: [openenv, openenv-arena, reinforcement-learning, software-engineering, quality-engineering, mutation-testing]
+tags: [openenv, openenv-arena, reinforcement-learning, software-engineering, quality-engineering, mutation-testing, flaky-tests]
 pretty_name: OpenEnv QE Arena tasks
 configs:
   - config_name: default
@@ -43,9 +43,10 @@ training environment (OpenEnv Arena, software-engineering domain).
 | `qe_bugfix` | Repairs an injected bug by exact-replacement edits, with visible tests it can run | 1.0 only if every hidden differential test passes |
 | `qe_bugfix-d4` | The same repair under a total edit budget and a localised-repair rule (no rewrite) | as `qe_bugfix`, and 0 for a file that breaks the rule |
 | `qe_mutant_kill` | Writes test cases (as data) that tell a mutant apart from the original | 0.5 per mutant for a distinguishing input, 1.0 when the expected value is also exact |
+| `qe_flaky` | Finds the flaky test in a suite (d1), names its cause (d2), or repairs it by edits (d3); some suites are clean | d1: 1.0 for the right test or null; d2: 0.5 for the test, 1.0 with the cause; d3: 0.5 for the test, 1.0 for a repair that holds on every graded run |
 
-Each row is what the model sees at reset: `prompt` and the virtual `files`. Hidden inputs, reference outputs
-and mutant sources are generated inside the environment from `(task_id, seed)` and are not in this dataset.
+Each row is what the model sees at reset: `prompt` and the virtual `files`. Hidden inputs, reference outputs,
+mutant sources and flaky-test ground truth are generated inside the environment from `(task_id, seed)` and are not in this dataset.
 `qe_bugfix-d4` rows also carry `edit_budget` (the budget the prompt states); other rows have no such key.
 
 - Rows: {rows} ({seeds} seeds x {cells} task cells)
