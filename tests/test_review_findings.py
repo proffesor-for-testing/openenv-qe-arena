@@ -304,3 +304,15 @@ def test_infrastructure_failure_reaches_the_client_as_an_error_frame_not_a_rewar
         ws.send_text(json.dumps({"type": "step", "data": {"op": "submit", "answer": {}}}))
         graded = json.loads(ws.receive_text())
         assert graded["type"] == "observation" and graded["data"]["done"] and graded["data"]["reward"] == 1.0
+
+
+# Red team on 6ba1905: a correct fix whose docstring mentioned __doc__ was rejected by the gate's string
+# rule and scored 0. Only format strings are checked for traversal names now.
+def test_a_correct_fix_whose_docstring_mentions_dunders_still_scores_one():
+    task = make_task("qe_bugfix-d1", 4)
+    original = task.private["original"]
+    head, sep, tail = original.partition('"""')
+    assert sep, "the corpus entry has a docstring"
+    fixed = head + sep + "See __doc__ and x.split('__'). " + tail
+    assert sandbox.static_gate(fixed) == []
+    assert tasks.grade_bugfix(task, fixed) == 1.0

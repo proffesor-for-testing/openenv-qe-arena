@@ -212,8 +212,11 @@ The oracle never runs in the same process as model-influenced code, and no code 
      reach of the AST checks. The Codex review used it to read the nonce
      (`'{0.__traceback__.tb_frame.f_back.f_locals[nonce]}'.format(e)`), the batch inputs and real module
      globals (`'{0.__class__.__init__.__globals__[sys]}'.format(typing.List)`). So:
-     - a string literal may not contain `__` or a frame-attribute name (`tb_frame`, `f_back`, `f_locals`,
-       `f_globals`, `gi_frame`, …, matched as whole words);
+     - a string that reaches a format path (the literal receiver of `.format`, the literal spec of
+       `format()`) may not contain `__` or a frame-attribute name (`tb_frame`, `f_back`, `f_locals`,
+       `f_globals`, `gi_frame`, …, matched as whole identifier words). Other literals (docstrings,
+       `x.split('__')`, dict keys) are free: none of them can drive an attribute lookup, because `getattr`,
+       `vars`, `globals`, `format_map`, `string.Formatter` and `operator.attrgetter` are unavailable;
      - `.format` needs a string-literal receiver whose fields are plain positions or names, with no `.` or
        `[` even in nested specs;
      - `format()` needs a literal spec and cannot be aliased.

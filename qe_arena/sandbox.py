@@ -126,9 +126,9 @@ DENIED_ATTRS = frozenset({"mro", "format_map", "get_field", "vformat", "convert_
                           "get_args", "get_origin", "evaluate", "evaluate_forward_ref", "evaluate_bound",
                           "evaluate_constraints", "evaluate_default"})
 # str.format resolves "{0.attr}" and "{0[key]}" at runtime, outside the AST checks, and reaches frames
-# and module globals through dunders ("{0.__traceback__.tb_frame.f_back.f_locals}"). So a string
-# literal may not mention a traversal name, .format needs a literal receiver whose fields are plain
-# positions or names, and format() needs a literal spec.
+# and module globals through dunders ("{0.__traceback__.tb_frame.f_back.f_locals}"). So .format needs a
+# literal receiver whose fields are plain positions or names and which mentions no traversal name, and
+# format() needs a literal spec that mentions none either.
 TRAVERSAL_TOKENS = ("__", "tb_frame", "tb_next", "f_back", "f_locals", "f_globals", "f_builtins", "f_code",
                     "gi_frame", "gi_code", "cr_frame", "cr_code", "ag_frame", "ag_code")
 # "__" anywhere; the frame attribute names as whole identifier words, with the same boundary on both sides
@@ -234,19 +234,25 @@ def _check_re_debug(node: ast.AST) -> list[str]:
     return []
 
 
+def _check_format_literal(text: str) -> list[str]:
+    found = _TRAVERSAL_RE.search(text)
+    return [f"format string mentions {found.group(0)!r}"] if found else []
+
+
 def _check_formatting(tree: ast.AST) -> list[str]:
+    """Only a string that reaches a format path is checked for traversal names: the literal receiver of
+    .format and the literal spec of format(). Any other literal (a docstring, x.split('__'), a dict key)
+    cannot drive an attribute lookup: getattr, vars, globals, format_map, string.Formatter and
+    operator.attrgetter are unavailable, and a non-literal .format receiver is refused below."""
     problems = []
     allowed_format_names = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            found = _TRAVERSAL_RE.search(node.value)
-            if found:
-                problems.append(f"string literal mentions {found.group(0)!r}")
-        elif isinstance(node, ast.Attribute) and node.attr == "format":
+        if isinstance(node, ast.Attribute) and node.attr == "format":
             receiver = node.value
             if not (isinstance(receiver, ast.Constant) and isinstance(receiver.value, str)):
                 problems.append(".format needs a string literal receiver")
                 continue
+            problems.extend(_check_format_literal(receiver.value))
             try:
                 fields = _format_fields(receiver.value)
             except ValueError:
@@ -259,6 +265,8 @@ def _check_formatting(tree: ast.AST) -> list[str]:
                 len(node.args) == 2 and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str))
             if spec_ok and not node.keywords:
                 allowed_format_names.add(node.func)
+                if len(node.args) == 2:
+                    problems.extend(_check_format_literal(node.args[1].value))
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and node.id == "format" and node not in allowed_format_names:
             problems.append("format() needs a string literal spec and may not be passed around")

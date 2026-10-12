@@ -443,8 +443,8 @@ def test_string_annotations_are_never_evaluated():
     src = ("import typing\n"
            "def g(x: 'f.__globals__'):\n    return x\n"
            "def f(n):\n    return [g(n), typing.List['os.system'] is not None]\n")
-    assert static_gate(src) == ["string literal mentions '__'"]
-    [r] = run_calls(src, "f", [[5]], _skip_gate=True)  # and the runtime never evaluates them either
+    assert static_gate(src) == []  # an annotation string reaches no format path
+    [r] = run_calls(src, "f", [[5]])  # and the runtime never evaluates it
     assert (r.kind, r.value) == ("ok", [5, True])
 
 
@@ -798,10 +798,9 @@ def test_format_traversal_reproductions_are_rejected(src):
     "def f(x):\n    return '{'.format(x)\n",                                  # malformed
     "def f(x):\n    h = format\n    return h(x, '>3')\n",                    # format passed around
     "def f(x, s):\n    return format(x, s)\n",                                # non-literal spec
-    "def f():\n    return 'tb_frame'\n",                                      # traversal names in literals
-    "def f():\n    return '{0.f_code}'\n",
-    "def f():\n    return {'f_locals': 1}\n",
-    "def f(d):\n    return d['__builtins__']\n",
+    "def f(x):\n    return '{0} tb_frame'.format(x)\n",                     # traversal names in a format string
+    "def f(x):\n    return '{0}__{0}'.format(x)\n",
+    "def f(x):\n    return format(x, '__')\n",
 ])
 def test_static_gate_rejects_runtime_traversal_routes(src):
     assert static_gate(src), src
@@ -813,8 +812,24 @@ def test_static_gate_rejects_runtime_traversal_routes(src):
 ])
 def test_traversal_names_match_as_whole_words_on_both_sides(literal, rejected):
     # Codex follow-up #2: "_" ended a word on the left but continued it on the right, so
-    # d["prefix_f_back"] was refused while "f_back_suffix" passed.
-    assert bool(static_gate(f"def f(d):\n    return d[{literal!r}]\n")) is rejected
+    # "prefix_f_back" was refused while "f_back_suffix" passed. Checked where it matters: in a format string.
+    receiver = literal.replace("{", "{{").replace("}", "}}") + " {0}" if "{0." not in literal else literal
+    assert bool(static_gate(f"def f(d):\n    return {receiver!r}.format(d)\n")) is rejected
+
+
+# Red team on 6ba1905: a correct fix whose docstring mentioned __doc__ scored 0, and x.split('__') was
+# refused. Only strings that reach a format path are checked for traversal names now.
+@pytest.mark.parametrize("src", [
+    'def f(x):\n    """Returns x; see __doc__ and f_back."""\n    return x\n',
+    '"""Module docstring naming __init__."""\ndef f(x):\n    return x\n',
+    "def f(x):\n    return x.split('__')\n",
+    "def f(d):\n    return [d.get('f_back'), d.get('__builtins__'), 'tb_frame', '{0.f_code}']\n",
+    "def f(x):\n    return '%(__x)s' % {'__x': x}\n",
+])
+def test_literals_outside_format_paths_are_accepted_and_inert(src):
+    assert static_gate(src) == []
+    results = run_calls(src, "f", [["a__b"]] if "split" in src else [[{"f_back": 1}]] if "d.get" in src else [[1]])
+    assert results[0].kind == "ok", results[0]
 
 
 def test_ordinary_formatting_still_works():
@@ -900,8 +915,7 @@ def test_update_wrapper_globals_merge_escape_is_closed():
            "def f(x):\n"
            "    functools.update_wrapper(w, statistics.mean, assigned=(), updated=('_' + '_globals__',))\n"
            "    return sys.modules['os'].getcwd()\n")
-    assert static_gate(src)  # the '_' + '_globals__' literal is refused now
-    [r] = run_calls(src, "f", [[0]], _skip_gate=True)  # and the proxy lacks update_wrapper anyway
+    [r] = run_calls(src, "f", [[0]])  # the functools proxy has no update_wrapper
     assert (r.kind, r.value) == ("exc", "AttributeError")
 
 
