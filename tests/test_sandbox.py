@@ -9,7 +9,9 @@ from __future__ import annotations
 import ctypes
 import importlib.metadata
 import json
+import os
 import pathlib
+import signal
 import statistics as pystats
 import sys
 import threading
@@ -479,11 +481,76 @@ def test_worker_count_override(monkeypatch):
 
 
 def test_a_dead_worker_is_replaced_and_the_batch_retried():
-    worker = sandbox._acquire()
+    worker = sandbox._acquire(time.monotonic() + 60)
     worker.proc.kill()
     worker.proc.wait()
     sandbox._release(worker, True)  # returned as if healthy: the next request finds it dead
     assert [r.value for r in run_calls("def f(x):\n    return -x\n", "f", [[2]])] == [-2]
+
+
+# Codex P4: a stopped worker blocked the request thread in a pipe write past every deadline, pool
+# acquisition could wait forever, and a failing warm-up leaked capacity until the pool deadlocked.
+BIG = ["x" * 1_000_000]  # larger than any pipe buffer, so the write itself has to wait
+
+
+def test_a_stopped_worker_cannot_block_a_write_past_its_deadline():
+    worker = sandbox._Worker()
+    try:
+        os.kill(worker.proc.pid, signal.SIGSTOP)
+        t = time.monotonic()
+        status = worker.request({"id": "x", "calls": [BIG]}, time.monotonic() + 0.3)
+        assert status == "timeout" and time.monotonic() - t < 2.0
+    finally:
+        worker.close()  # SIGKILL ends a stopped process too
+    assert worker.proc.returncode is not None
+
+
+def test_a_stopped_pool_worker_is_replaced_within_the_backstop(monkeypatch):
+    monkeypatch.setattr(sandbox, "BATCH_BACKSTOP_S", 2.0)
+    worker = sandbox._acquire(time.monotonic() + 60)
+    os.kill(worker.proc.pid, signal.SIGSTOP)
+    sandbox._release(worker, True)  # back in the pool, apparently healthy
+    t = time.monotonic()
+    results = run_calls("def f(s):\n    return len(s)\n", "f", [BIG])
+    assert [r.value for r in results] == [1_000_000]  # the retry ran on a fresh worker
+    assert worker.proc.poll() is not None and time.monotonic() - t < 2.0 + sandbox.WORKER_STARTUP_S
+
+
+class _FakeWorker:
+    made = 0
+
+    def __init__(self):
+        type(self).made += 1
+        if type(self).made == 2:
+            raise RuntimeError("simulated startup failure")
+
+    def close(self):
+        pass
+
+
+def test_pool_acquisition_has_a_deadline(monkeypatch):
+    monkeypatch.setenv("QE_ARENA_WASI_WORKERS", "1")
+    monkeypatch.setattr(sandbox, "_IDLE", [])
+    monkeypatch.setattr(sandbox, "_LIVE", [1])  # the only worker is busy elsewhere
+    monkeypatch.setattr(sandbox, "BATCH_BACKSTOP_S", 0.3)
+    t = time.monotonic()
+    assert sandbox._dispatch({"probe": "surface"}) == "pool timeout"
+    assert time.monotonic() - t < 2.0
+    assert kinds(run_calls("def f():\n    return 1\n", "f", [[]])) == ["infra"]
+
+
+def test_a_failing_warm_up_returns_the_workers_it_started(monkeypatch):
+    monkeypatch.setenv("QE_ARENA_WASI_WORKERS", "3")
+    monkeypatch.setattr(sandbox, "_IDLE", [])
+    monkeypatch.setattr(sandbox, "_LIVE", [0])
+    monkeypatch.setattr(sandbox, "_Worker", _FakeWorker)
+    _FakeWorker.made = 0
+    with pytest.raises(RuntimeError):
+        sandbox.warm()
+    assert sandbox._LIVE[0] == len(sandbox._IDLE) == 1  # the first worker came back; nothing leaked
+    first = sandbox._acquire(time.monotonic() + 1)      # neither the pool nor a retry is stuck
+    again = sandbox._acquire(time.monotonic() + 1)
+    assert sandbox._LIVE[0] == 2 and first is not again
 
 
 def test_wasmtime_private_fuel_surface_is_pinned():

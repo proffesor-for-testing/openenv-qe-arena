@@ -300,6 +300,7 @@ class _Worker:
         self.proc = subprocess.Popen(
             [sys.executable, "-P", "-B", "-m", "qe_arena.wasi_worker"], stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=None, env=env, close_fds=True)
+        os.set_blocking(self.proc.stdin.fileno(), False)  # writes honour the deadline (see send)
         self.buf = bytearray()
         ready = self.read(time.monotonic() + WORKER_STARTUP_S)
         if not (isinstance(ready, dict) and ready.get("ready")):
@@ -332,13 +333,35 @@ class _Worker:
                 if len(self.buf) > MAX_RESPONSE_BYTES:
                     return "overflow"
 
+    def send(self, data: bytes, deadline: float) -> str:
+        """Write all of ``data`` before the deadline. A stopped or wedged worker stops reading, and a
+        payload larger than the pipe buffer would otherwise block this thread forever."""
+        fd = self.proc.stdin.fileno()
+        view = memoryview(data)
+        with selectors.DefaultSelector() as sel:
+            sel.register(fd, selectors.EVENT_WRITE)
+            while view:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return "timeout"
+                if not sel.select(remaining):
+                    continue
+                try:
+                    view = view[os.write(fd, view):]
+                except BlockingIOError:
+                    continue
+                except OSError:
+                    return "exited"
+        return "sent"
+
     def request(self, payload: dict, deadline: float) -> Any:
-        try:
-            self.proc.stdin.write(json.dumps(payload, allow_nan=True).encode("utf-8", "surrogatepass") + b"\n")
-            self.proc.stdin.flush()
-        except (BrokenPipeError, OSError, ValueError):
-            return "exited"
-        return self.read(deadline)
+        status = self.send(json.dumps(payload, allow_nan=True).encode("utf-8", "surrogatepass") + b"\n", deadline)
+        if status != "sent":
+            return status
+        response = self.read(deadline)
+        if isinstance(response, dict) and response.get("id") != payload.get("id"):
+            return "mismatched response"
+        return response
 
     def close(self) -> None:
         if self.proc.poll() is None:
@@ -410,10 +433,18 @@ _IDLE: list[_Worker] = []
 _LIVE = [0]
 
 
-def _acquire() -> _Worker:
+class _PoolTimeout(Exception):
+    pass
+
+
+def _acquire(deadline: float) -> _Worker:
+    """An idle worker, or a new one if the pool has room; waits for one until the deadline."""
     with _POOL:
         while not _IDLE and _LIVE[0] >= _pool_size():
-            _POOL.wait()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise _PoolTimeout("no sandbox worker became free before the deadline")
+            _POOL.wait(remaining)
         if _IDLE:
             return _IDLE.pop()
         _LIVE[0] += 1
@@ -438,21 +469,34 @@ def _release(worker: _Worker, healthy: bool) -> None:
 
 
 def _dispatch(payload: dict) -> Any:
-    """Send one request; return the response dict or a status string. Replaces a worker that fails."""
-    worker = _acquire()
+    """Send one request; return the response dict or a status string. Every wait (a free worker,
+    starting one, writing, reading) ends by BATCH_BACKSTOP_S; a worker that fails is replaced."""
+    deadline = time.monotonic() + BATCH_BACKSTOP_S
+    try:
+        worker = _acquire(deadline)
+    except _PoolTimeout:
+        return "pool timeout"
+    except (RuntimeError, OSError) as exc:
+        return f"worker start failed: {exc}"[:200]
     response: Any = "exited"
     try:
-        response = worker.request(dict(payload, id=secrets.token_hex(8)), time.monotonic() + BATCH_BACKSTOP_S)
+        response = worker.request(dict(payload, id=secrets.token_hex(8)), deadline)
         return response
     finally:
         _release(worker, isinstance(response, dict) and "error" not in response)
 
 
 def warm() -> None:
-    """Start every worker now (each compiles python.wasm) so the first episode does not wait."""
-    workers = [_acquire() for _ in range(_pool_size())]
-    for worker in workers:
-        _release(worker, True)
+    """Start every worker now (each compiles python.wasm) so the first episode does not wait.
+    Workers already acquired go back to the pool even if a later one fails to start."""
+    deadline = time.monotonic() + WORKER_STARTUP_S * _pool_size()
+    acquired = []
+    try:
+        for _ in range(_pool_size()):
+            acquired.append(_acquire(deadline))
+    finally:
+        for worker in acquired:
+            _release(worker, True)
 
 
 def shutdown() -> None:
