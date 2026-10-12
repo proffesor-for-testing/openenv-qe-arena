@@ -11,7 +11,8 @@ from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import Action, Observation, State
 from pydantic import Field
 
-from . import edit_budget
+from . import edit_budget, flaky, sandbox
+from .sandbox import InfraError
 from .tasks import (MAX_FREE_REFUSALS, MODULE, TASK_IDS, Task, grade_bugfix, grade_mutant_kill, make_task,
                     run_visible)
 
@@ -25,14 +26,17 @@ MAX_ANSWER_BYTES = 8192
 class QEAction(Action):
     op: Literal["read", "run_tests", "edit", "submit"] = Field(description=(
         "One action per reply. Start with read path * to see every file. "
-        "read: show a file. run_tests: run the visible tests on your edited code (bug-fix tasks). "
-        "edit: replace old with new in a file (bug-fix tasks). submit: end the episode and get graded."))
+        "read: show a file. run_tests: run the visible tests on your edited code (bug-fix and flaky-test tasks). "
+        "edit: replace old with new in a file (bug-fix tasks and flaky-test repair). "
+        "submit: end the episode and get graded."))
     path: str = Field(default="", description="read/edit: the file name, or * with read for all files.")
     old: str = Field(default="", description="edit: exact text copied from the file; it must occur exactly once.")
     new: str = Field(default="", description="edit: the text that replaces old.")
     answer: dict[str, Any] = Field(default_factory=dict, description=(
         "submit: {} grades your edited file in a bug-fix task; "
-        '{"tests": [{"args": [...], "expected": ...}]} in a mutant-kill task.'))
+        '{"tests": [{"args": [...], "expected": ...}]} in a mutant-kill task; '
+        '{"test": "test_name" or null, "cause": ...} in a flaky-test task, where cause is one of '
+        + ", ".join(flaky.CAUSES) + "."))
 
 
 class QEObservation(Observation):
@@ -60,8 +64,13 @@ class QEEnvironment(Environment[QEAction, QEObservation, State]):
         self._test_runs = 0
         self._edit_spent = 0
         self._refusals = 0
+        self._sandbox_session = uuid4().hex  # fairness key for the shared sandbox worker pool
 
     def reset(self, seed: int | None = None, episode_id: str | None = None, **kwargs: Any) -> QEObservation:
+        with sandbox.session(self._sandbox_session):
+            return self._reset(seed, episode_id, **kwargs)
+
+    def _reset(self, seed: int | None = None, episode_id: str | None = None, **kwargs: Any) -> QEObservation:
         task_id = kwargs.get("task_id", TASK_IDS[0])
         if seed is None:
             seed = secrets.randbelow(2**63)
@@ -79,6 +88,8 @@ class QEEnvironment(Environment[QEAction, QEObservation, State]):
             remaining_steps=max(0, MAX_STEPS - self._state.step_count), **fields)
 
     def step(self, action: QEAction, timeout_s: float | None = None, **kwargs: Any) -> QEObservation:
+        """One action. An InfraError (the sandbox infrastructure failed) propagates unscored: the step,
+        the test run and the episode stay as they were, so the same action can be sent again."""
         if self._task is None:
             raise RuntimeError("reset required")
         if self._done:
@@ -87,6 +98,14 @@ class QEEnvironment(Environment[QEAction, QEObservation, State]):
         if free is not None:
             return self._refused(free)
         self._state.step_count += 1
+        try:
+            with sandbox.session(self._sandbox_session):
+                return self._act(action)
+        except InfraError:
+            self._state.step_count -= 1
+            raise
+
+    def _act(self, action: QEAction) -> QEObservation:
         family = self._task.family
         if action.op == "submit":
             return self._submit(action)
@@ -99,13 +118,15 @@ class QEEnvironment(Environment[QEAction, QEObservation, State]):
             if action.path not in self._files:
                 return self._observe(error=f"unknown file; files are {sorted(self._files)}")
             return self._observe(content=self._files[action.path])
-        if family != "qe_bugfix":
+        if family == "qe_mutant_kill" or (family == "qe_flaky" and action.op == "edit" and self._task.difficulty != 3):
             return self._observe(error=f"{action.op} is not available in this task; read the files, then submit")
         if action.op == "run_tests":
             if self._test_runs >= MAX_TEST_RUNS:
                 return self._observe(error="no test runs left; submit when ready")
+            run = run_visible if family == "qe_bugfix" else flaky.run_shown
+            report = run(self._task, self._files[MODULE])  # before counting: an InfraError uses no test run
             self._test_runs += 1
-            return self._observe(content=run_visible(self._task, self._files[MODULE]))
+            return self._observe(content=report)
         return self._edit(action)
 
     def _refusal_reason(self, action: QEAction) -> str | None:
@@ -164,16 +185,23 @@ class QEEnvironment(Environment[QEAction, QEObservation, State]):
         return self._observe(content=message)
 
     def _submit(self, action: QEAction) -> QEObservation:
-        self._done = True
         try:
             if self._task.family == "qe_bugfix":
-                self._reward = grade_bugfix(self._task, self._files[MODULE])
+                reward = grade_bugfix(self._task, self._files[MODULE])
             else:
                 encoded = json.dumps(action.answer, allow_nan=False, separators=(",", ":"))
                 too_big = len(encoded.encode()) > MAX_ANSWER_BYTES
-                self._reward = 0.0 if too_big else grade_mutant_kill(self._task, action.answer)
-        except Exception:  # noqa: BLE001 - any grading failure on a model answer scores 0, never an error frame
-            self._reward = 0.0
+                if too_big:
+                    reward = 0.0
+                elif self._task.family == "qe_flaky":
+                    reward = flaky.grade(self._task, action.answer, self._files[MODULE])
+                else:
+                    reward = grade_mutant_kill(self._task, action.answer)
+        except InfraError:
+            raise  # not the answer's fault: no reward, the episode stays open
+        except Exception:  # noqa: BLE001 - any other grading failure on a model answer scores 0
+            reward = 0.0
+        self._done, self._reward = True, reward
         return self._observe()
 
     @property

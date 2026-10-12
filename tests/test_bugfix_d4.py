@@ -25,9 +25,9 @@ def _env(seed):
     return env
 
 
-def test_d4_is_a_bugfix_only_cell_appended_after_the_original_six():
-    assert tasks.TASK_IDS[:6] == [f"{f}-d{lv}" for f in tasks.FAMILIES for lv in (1, 2, 3)]
-    assert tasks.TASK_IDS[6:] == [D4]
+def test_d4_is_a_bugfix_only_cell_appended_after_the_original_cells():
+    assert tasks.TASK_IDS[:-1] == [f"{f}-d{lv}" for f in tasks.FAMILIES for lv in (1, 2, 3)]
+    assert tasks.TASK_IDS[-1] == D4
     assert parse_task_id(D4) == ("qe_bugfix", 4)
     for bad in ("qe_mutant_kill-d4", "qe_bugfix-d5", "qe_bugfix-d0"):
         with pytest.raises(ValueError):

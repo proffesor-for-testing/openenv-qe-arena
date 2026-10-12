@@ -3,7 +3,9 @@
 .github
 tests
 scripts
+!scripts/build_wasi_runtime.py
 docs
 runs
 **/__pycache__
 .pytest_cache
+runtime

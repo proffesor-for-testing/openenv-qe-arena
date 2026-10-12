@@ -1,59 +1,76 @@
-"""Out-of-process execution of corpus and candidate code; the oracle stays in the parent.
+"""Sandboxed execution of corpus and candidate code; the oracle stays in this process.
 
 Layers, outermost first:
 
 1. ``static_gate`` rejects source before it runs: imports outside the allowlist, dunder and
-   introspection attributes, banned builtins, classes, ``global``/``nonlocal``, oversize or
-   overly deep code.
-2. ``run_calls`` runs one fresh ``python -S -s -P`` child per batch with an environment holding only
-   ``PYTHONHASHSEED=0``, a temporary working directory and its own session (the whole process group
-   is killed on timeout). That is ``-I`` minus ``-E``: ``-E`` would discard the hash seed, and with
-   randomized string hashing ``list(set(words))`` orders differently in the reference process and the
-   candidate process, so identical code could score differently. The parent controls the whole
-   environment, so ignoring it buys nothing.
-3. The child sets rlimits on itself (address space, CPU, file size 0, open files, core 0) *before*
-   any candidate code is compiled, sends fds 1 and 2 to /dev/null, and executes the code with a
-   restricted ``__builtins__`` whose ``__import__`` only returns pre-built proxy modules exposing an
-   audited list of names. Each call has its own interval timer.
-4. The child writes one result line, prefixed by a per-run random nonce, to a private dup of the
-   original stdout. The parent reads at most 1 MiB, accepts exactly one nonce line, validates its
-   shape, and compares values itself. Expected values never enter the child.
+   introspection attributes, banned names (including ``MemoryError``, so a guest MemoryError can
+   only come from the memory cap), classes, ``global``/``nonlocal``, oversize or overly deep code.
+2. ``run_calls`` hands the batch to a long-lived worker process (``qe_arena/wasi_worker.py``) over a
+   pipe, so the server never loads wasmtime and a worker fault cannot take down /health.
+3. The worker runs CPython 3.14 compiled to WASI under wasmtime, a fresh Store and Instance per
+   batch: wasmtime fuel meters every call, linear memory is capped at ``mem_mb``, the only preopen is
+   a read-only stdlib zip, clocks and randomness are shadowed. Inside, the guest harness executes
+   the code with restricted builtins and proxy modules that expose an audited list of names.
+4. Results come back as rows the parent validates; ``compare`` runs here. Expected values never
+   enter the worker or the guest.
 
-Rlimits that the platform cannot apply (macOS refuses RLIMIT_AS) are skipped; on Linux they hold.
+Outcomes are deterministic: the same source and calls give the same kind, value and fuel on any
+host and under any load (pinned by the corpus fingerprint test). ``fuel`` (budget exhausted),
+``resource`` (memory cap, MemoryError or RecursionError however the code handled it, wasm stack) and
+``skipped`` (an earlier call trapped and ended the instance) are limits of the sandbox, never
+behaviour. ``infra`` (worker died, hung or failed its identity check) is transient and never graded:
+tasks._outputs turns a persistent one into InfraError. ``timeout`` is kept as an alias of ``infra``
+for callers written against the subprocess sandbox. docs/DESIGN.md "Verifier integrity" has the
+full contract.
+
+The guest is CPython 3.14 on wasm32 while the server is 3.12 on 64-bit: pointers are 4 bytes and
+``hash()`` is 32-bit. That is harmless because reference and candidate both run in the guest; never
+compare a native reference with a guest result.
 """
 
 from __future__ import annotations
 
 import ast
+import atexit
+import collections
+import contextlib
+import contextvars
 import json
+import re
+import string
 import math
 import os
 import secrets
 import selectors
-import signal
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 ALLOWED_MODULES = ("math", "re", "itertools", "functools", "collections", "string", "bisect", "heapq",
-                   "statistics", "decimal", "fractions")
+                   "statistics", "decimal", "fractions", "typing", "operator")
 
-
-def _public(module_name: str) -> tuple[str, ...]:
-    module = __import__(module_name)
-    return tuple(sorted(n for n in dir(module) if not n.startswith("_")))
-
-
-# Names each allowlisted module exposes to candidate code. Anything that can read or write an
-# attribute by a runtime string (functools.update_wrapper/wraps, singledispatch's annotation eval,
-# string.Formatter.get_field) or that hands back another module is deliberately absent.
+# Names each allowlisted module exposes to candidate code, frozen for the CPython 3.14 guest (the
+# server's own 3.12 modules are irrelevant). Absent on purpose: anything that reads or writes an
+# attribute or evaluates code from a runtime string (functools.update_wrapper/wraps, singledispatch,
+# string.Formatter, operator.attrgetter/methodcaller, typing.get_type_hints/get_args/ForwardRef/
+# evaluate_forward_ref and every TypeVar-like object that can evaluate a lazy bound) and anything
+# that hands back a module (typing.sys, typing.functools, ...). tests/test_sandbox.py walks every
+# public attribute reachable from these names inside the guest and asserts no module, frame, code
+# object or loader is among them.
 SAFE_EXPORTS: dict[str, tuple[str, ...]] = {
-    "math": _public("math"),
-    "itertools": _public("itertools"),
+    "math": ("acos", "acosh", "asin", "asinh", "atan", "atan2", "atanh", "cbrt", "ceil", "comb", "copysign",
+             "cos", "cosh", "degrees", "dist", "e", "erf", "erfc", "exp", "exp2", "expm1", "fabs", "factorial",
+             "floor", "fma", "fmod", "frexp", "fsum", "gamma", "gcd", "hypot", "inf", "isclose", "isfinite",
+             "isinf", "isnan", "isqrt", "lcm", "ldexp", "lgamma", "log", "log10", "log1p", "log2", "modf",
+             "nan", "nextafter", "perm", "pi", "pow", "prod", "radians", "remainder", "sin", "sinh", "sqrt",
+             "sumprod", "tan", "tanh", "tau", "trunc", "ulp"),
+    "itertools": ("accumulate", "batched", "chain", "combinations", "combinations_with_replacement",
+                  "compress", "count", "cycle", "dropwhile", "filterfalse", "groupby", "islice", "pairwise",
+                  "permutations", "product", "repeat", "starmap", "takewhile", "tee", "zip_longest"),
     "re": ("A", "ASCII", "DOTALL", "I", "IGNORECASE", "M", "MULTILINE", "NOFLAG", "S", "VERBOSE", "X",
            "Match", "Pattern", "compile", "error", "escape", "findall", "finditer", "fullmatch", "match",
            "search", "split", "sub", "subn"),
@@ -74,6 +91,16 @@ SAFE_EXPORTS: dict[str, tuple[str, ...]] = {
                 "ROUND_HALF_EVEN", "ROUND_HALF_UP", "ROUND_UP", "Rounded", "Subnormal", "Underflow",
                 "getcontext", "localcontext", "setcontext"),
     "fractions": ("Fraction",),
+    "typing": ("TYPE_CHECKING", "Any", "Callable", "Collection", "Container", "Dict", "Final", "FrozenSet",
+               "Hashable", "Iterable", "Iterator", "List", "Literal", "Mapping", "MutableMapping",
+               "MutableSequence", "MutableSet", "Optional", "Sequence", "Set", "Sized", "Tuple", "Union",
+               "cast"),
+    "operator": ("abs", "add", "and_", "concat", "contains", "countOf", "delitem", "eq", "floordiv", "ge",
+                 "getitem", "gt", "iadd", "iand", "iconcat", "ifloordiv", "ilshift", "imatmul", "imod", "imul",
+                 "index", "indexOf", "inv", "invert", "ior", "ipow", "irshift", "is_", "is_none", "is_not",
+                 "is_not_none", "isub", "itemgetter", "itruediv", "ixor", "le", "length_hint", "lshift", "lt",
+                 "matmul", "mod", "mul", "ne", "neg", "not_", "or_", "pos", "pow", "rshift", "setitem", "sub",
+                 "truediv", "truth", "xor"),
 }
 
 SAFE_BUILTINS = (
@@ -82,19 +109,33 @@ SAFE_BUILTINS = (
     "min", "next", "object", "oct", "ord", "pow", "range", "repr", "reversed", "round", "set", "slice",
     "sorted", "str", "sum", "tuple", "zip", "callable",
     "ArithmeticError", "AssertionError", "AttributeError", "Exception", "IndexError", "KeyError",
-    "LookupError", "MemoryError", "NotImplementedError", "OverflowError", "RecursionError",
+    "LookupError", "NotImplementedError", "OverflowError", "RecursionError",
     "RuntimeError", "StopIteration", "TypeError", "ValueError", "ZeroDivisionError",
     "True", "False", "None", "NotImplemented",
 )
 
 BANNED_NAMES = frozenset({
     "open", "exec", "eval", "compile", "__import__", "globals", "locals", "vars", "getattr", "setattr",
-    "delattr", "breakpoint", "input", "help", "memoryview", "exit", "quit",
+    "delattr", "breakpoint", "input", "help", "memoryview", "exit", "quit", "MemoryError",
 })
-# Introspection attributes that reach frames, code objects or tracebacks without a dunder.
+# Introspection attributes that reach frames, code objects or tracebacks without a dunder, and the
+# string-driven attribute or evaluation helpers that are kept out of SAFE_EXPORTS (defence in depth).
 DENIED_ATTR_PREFIXES = ("_", "gi_", "cr_", "ag_", "f_", "tb_", "co_")
 DENIED_ATTRS = frozenset({"mro", "format_map", "get_field", "vformat", "convert_field", "format_field",
-                          "get_value", "with_traceback"})
+                          "get_value", "with_traceback", "attrgetter", "methodcaller", "get_type_hints",
+                          "get_args", "get_origin", "evaluate", "evaluate_forward_ref", "evaluate_bound",
+                          "evaluate_constraints", "evaluate_default"})
+# str.format resolves "{0.attr}" and "{0[key]}" at runtime, outside the AST checks, and reaches frames
+# and module globals through dunders ("{0.__traceback__.tb_frame.f_back.f_locals}"). So .format needs a
+# literal receiver whose fields are plain positions or names and which mentions no traversal name, and
+# format() needs a literal spec that mentions none either.
+TRAVERSAL_TOKENS = ("__", "tb_frame", "tb_next", "f_back", "f_locals", "f_globals", "f_builtins", "f_code",
+                    "gi_frame", "gi_code", "cr_frame", "cr_code", "ag_frame", "ag_code")
+# "__" anywhere; the frame attribute names as whole identifier words, with the same boundary on both sides
+# (letters, digits and "_" continue a word), so "lines_of_code" or "prefix_f_back" is fine and ".f_back" or
+# "[f_back]" is not.
+_WORD = "A-Za-z0-9_"
+_TRAVERSAL_RE = re.compile(r"__|(?<![" + _WORD + r"])(?:" + "|".join(TRAVERSAL_TOKENS[1:]) + r")(?![" + _WORD + r"])")
 REJECTED_NODES = {
     ast.ClassDef: "class definitions are not allowed",
     ast.Global: "global statements are not allowed",
@@ -108,20 +149,38 @@ REJECTED_NODES = {
 if hasattr(ast, "TypeAlias"):
     REJECTED_NODES[ast.TypeAlias] = "type aliases are not allowed"
 
-CHILD_ENV = {"PYTHONHASHSEED": "0"}
 MAX_SOURCE_BYTES = 6000
 MAX_AST_DEPTH = 100
-MAX_STDOUT_BYTES = 1 << 20
 MAX_RESULT_BYTES = 960 * 1024
 MAX_VALUE_BYTES = 128 * 1024
-KILL_GRACE_S = 0.5
+MAX_RESPONSE_BYTES = 4 << 20
+
+DEFAULT_MEM_MB = 256              # linear-memory cap per instance
+FUEL_PER_CALL = 100_000_000       # ~90x the most expensive corpus call (1.1 M)
+MODULE_FUEL = 200_000_000         # executing the candidate's module body
+FUEL_PER_SECOND = 200_000_000     # only to translate a legacy per_call_timeout_s into fuel
+WORKER_STARTUP_S = 180.0          # compiling python.wasm takes ~5 s at --cpus=2; generous for loaded hosts
+BATCH_BACKSTOP_S = 300.0          # parent-side wait for one batch before the worker is replaced
+
+KINDS = ("ok", "exc", "fuel", "resource", "crash", "skipped", "rejected", "infra", "timeout")
+WORKER_KINDS = frozenset({"ok", "exc", "fuel", "resource", "crash", "skipped", "infra"})
+
+
+class InfraError(RuntimeError):
+    """The sandbox infrastructure failed (worker died, backstop, pool exhausted), not the code.
+
+    Never a reward: the environment lets it propagate, so the OpenEnv server answers with an error
+    frame and the episode stays open, instead of scoring a correct answer 0.
+    """
 
 
 @dataclass
 class CallResult:
-    kind: Literal["ok", "exc", "timeout", "crash", "rejected"]
+    """One call's outcome. ``fuel`` is what the call consumed (0 when it never ran)."""
+    kind: Literal["ok", "exc", "fuel", "resource", "crash", "skipped", "rejected", "infra", "timeout"]
     value: Any = None
     error: str = ""
+    fuel: int = 0
 
 
 # --------------------------------------------------------------------------- static gate
@@ -137,6 +196,81 @@ def _ast_depth(tree: ast.AST) -> int:
         deepest = max(deepest, depth)
         stack.extend((child, depth + 1) for child in ast.iter_child_nodes(node))
     return deepest
+
+
+def _format_fields(template: str) -> list[str]:
+    """Field names in a format template, nested specs included; raises ValueError if malformed."""
+    names = []
+    for _, field, spec, _ in string.Formatter().parse(template):
+        if field is not None:
+            names.append(field)
+        if spec:
+            names.extend(_format_fields(spec))
+    return names
+
+
+# re.DEBUG (128) makes the re module print its parse tree. The guest discards Python-level stdout, so
+# a computed flag is harmless; a literal one is refused so honest code never depends on that.
+RE_FLAGS_POSITION = {"compile": 1, "search": 2, "match": 2, "fullmatch": 2, "findall": 2, "finditer": 2,
+                     "split": 3, "sub": 4, "subn": 4}
+RE_DEBUG = 128
+
+
+def _check_re_debug(node: ast.AST) -> list[str]:
+    if isinstance(node, ast.Attribute) and node.attr == "DEBUG":
+        return ["re.DEBUG is not allowed"]
+    if not isinstance(node, ast.Call):
+        return []
+    name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", None)
+    if name not in RE_FLAGS_POSITION:
+        return []
+    flags = [kw.value for kw in node.keywords if kw.arg == "flags"]
+    if len(node.args) > RE_FLAGS_POSITION[name]:
+        flags.append(node.args[RE_FLAGS_POSITION[name]])
+    for expr in flags:
+        for sub in ast.walk(expr):
+            if isinstance(sub, ast.Constant) and type(sub.value) is int and sub.value & RE_DEBUG:
+                return ["re.DEBUG is not allowed"]
+    return []
+
+
+def _check_format_literal(text: str) -> list[str]:
+    found = _TRAVERSAL_RE.search(text)
+    return [f"format string mentions {found.group(0)!r}"] if found else []
+
+
+def _check_formatting(tree: ast.AST) -> list[str]:
+    """Only a string that reaches a format path is checked for traversal names: the literal receiver of
+    .format and the literal spec of format(). Any other literal (a docstring, x.split('__'), a dict key)
+    cannot drive an attribute lookup: getattr, vars, globals, format_map, string.Formatter and
+    operator.attrgetter are unavailable, and a non-literal .format receiver is refused below."""
+    problems = []
+    allowed_format_names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr == "format":
+            receiver = node.value
+            if not (isinstance(receiver, ast.Constant) and isinstance(receiver.value, str)):
+                problems.append(".format needs a string literal receiver")
+                continue
+            problems.extend(_check_format_literal(receiver.value))
+            try:
+                fields = _format_fields(receiver.value)
+            except ValueError:
+                problems.append("malformed format string")
+                continue
+            if any("." in f or "[" in f for f in fields):
+                problems.append("format fields may not use attribute or index lookups")
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "format":
+            spec_ok = len(node.args) == 1 or (
+                len(node.args) == 2 and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str))
+            if spec_ok and not node.keywords:
+                allowed_format_names.add(node.func)
+                if len(node.args) == 2:
+                    problems.extend(_check_format_literal(node.args[1].value))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id == "format" and node not in allowed_format_names:
+            problems.append("format() needs a string literal spec and may not be passed around")
+    return problems
 
 
 def _check_node(node: ast.AST) -> list[str]:
@@ -189,314 +323,331 @@ def static_gate(source: str) -> list[str]:
     if _ast_depth(tree) > MAX_AST_DEPTH:
         return [f"syntax tree deeper than {MAX_AST_DEPTH}"]
     problems: list[str] = []
-    for node in ast.walk(tree):
-        for problem in _check_node(node):
-            if problem not in problems:
-                problems.append(problem)
+    found = [p for node in ast.walk(tree) for p in _check_node(node) + _check_re_debug(node)]
+    for problem in found + _check_formatting(tree):
+        if problem not in problems:
+            problems.append(problem)
     return problems
 
 
-# --------------------------------------------------------------------------- child harness
+# --------------------------------------------------------------------------- worker pool
 
-CHILD_SRC = r'''
-import builtins, copy, json, os, signal, sys, time, types
-def _main():
-    raw = sys.stdin.buffer.read()
-    req = json.loads(raw)
-    nonce = req["nonce"]
-    out_fd = os.dup(1)
-    null_fd = os.open(os.devnull, os.O_WRONLY)
-    os.dup2(null_fd, 1)
-    os.dup2(null_fd, 2)
-    os.close(null_fd)
-    started = time.monotonic()
-    deadline = started + req["budget_s"]
-    per_call = req["per_call_s"]
+PACKAGE_PARENT = Path(__file__).resolve().parents[1]
 
-    def emit(obj):
-        data = (nonce + " " + json.dumps(obj, allow_nan=True) + "\n").encode("utf-8", "surrogatepass")
+
+def runtime_root() -> Path:
+    """Where python.wasm and lib/python314.zip live (built by scripts/build_wasi_runtime.py)."""
+    configured = os.environ.get("QE_ARENA_WASI_ROOT")
+    if configured:
+        return Path(configured)
+    local = PACKAGE_PARENT / "runtime"
+    return local if (local / "python.wasm").exists() else Path("/opt/qe-arena/wasi")
+
+
+class _Worker:
+    def __init__(self, deadline: float | None = None) -> None:
+        """Start a worker and wait for its ready line, no longer than WORKER_STARTUP_S and never past
+        ``deadline`` (the caller's dispatch deadline)."""
+        env = dict(os.environ, QE_ARENA_WASI_ROOT=str(runtime_root()), PYTHONDONTWRITEBYTECODE="1",
+                   PYTHONPATH=os.pathsep.join(filter(None, [str(PACKAGE_PARENT), os.environ.get("PYTHONPATH")])))
+        self.proc = subprocess.Popen(
+            [sys.executable, "-P", "-B", "-m", "qe_arena.wasi_worker"], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=None, env=env, close_fds=True)
+        os.set_blocking(self.proc.stdin.fileno(), False)  # writes honour the deadline (see send)
+        self.buf = bytearray()
+        limit = time.monotonic() + WORKER_STARTUP_S
+        ready = self.read(limit if deadline is None else min(limit, deadline))
+        if not (isinstance(ready, dict) and ready.get("ready")):
+            self.close()
+            raise RuntimeError(f"sandbox worker did not start: {ready!r}")
+
+    def read(self, deadline: float) -> Any:
+        """One JSON line from the worker, or a status string on timeout, EOF or overflow."""
+        fd = self.proc.stdout.fileno()
+        with selectors.DefaultSelector() as sel:
+            sel.register(fd, selectors.EVENT_READ)
+            while True:
+                nl = self.buf.find(b"\n")
+                if nl >= 0:
+                    line = bytes(self.buf[:nl])
+                    del self.buf[:nl + 1]
+                    try:
+                        return json.loads(line.decode("utf-8", "surrogatepass"))
+                    except ValueError:
+                        return "bad response"
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return "timeout"
+                if not sel.select(remaining):
+                    continue
+                chunk = os.read(fd, 1 << 16)
+                if not chunk:
+                    return "exited"
+                self.buf += chunk
+                if len(self.buf) > MAX_RESPONSE_BYTES:
+                    return "overflow"
+
+    def send(self, data: bytes, deadline: float) -> str:
+        """Write all of ``data`` before the deadline. A stopped or wedged worker stops reading, and a
+        payload larger than the pipe buffer would otherwise block this thread forever."""
+        fd = self.proc.stdin.fileno()
         view = memoryview(data)
-        while view:
-            view = view[os.write(out_fd, view):]
-
-    real = {}
-    for name in req["modules"]:
-        real[name] = __import__(name)
-    applied = {}
-    try:
-        import resource
-    except ImportError:
-        resource = None
-    if resource is not None:
-        for name, value in req["limits"].items():
-            res = getattr(resource, name, None)
-            if res is None:
-                applied[name] = "unsupported"
-                continue
-            try:
-                resource.setrlimit(res, (value[0], value[1]))
-                applied[name] = list(resource.getrlimit(res))
-            except (ValueError, OSError) as exc:
-                applied[name] = "failed: " + type(exc).__name__
-    if req.get("probe"):
-        emit({"applied": applied, "env": sorted(os.environ), "cwd_entries": len(os.listdir(".")),
-              "flags": {"no_site": sys.flags.no_site, "no_user_site": sys.flags.no_user_site,
-                        "safe_path": sys.flags.safe_path, "hash_randomization": sys.flags.hash_randomization},
-              "path": sys.path})
-        return
-
-    proxies = {}
-    for name, exports in req["modules"].items():
-        proxy = types.ModuleType("_arena_safe_" + name)
-        for attr in exports:
-            if hasattr(real[name], attr):
-                setattr(proxy, attr, getattr(real[name], attr))
-        proxies[name] = proxy
-    helper_ns = {"__builtins__": {"ImportError": ImportError, "repr": repr, "type": type, "str": str}, "_M": proxies}
-    exec("def __import__(name, globals=None, locals=None, fromlist=(), level=0):\n"
-         "    if level == 0 and type(name) is str and name in _M:\n"
-         "        return _M[name]\n"
-         "    raise ImportError('import of ' + repr(name) + ' is not allowed')\n"
-         "def print(*args, **kwargs):\n"
-         "    return None\n", helper_ns)
-    safe = {name: getattr(builtins, name) for name in req["builtins"]}
-    safe["__import__"] = helper_ns["__import__"]
-    safe["print"] = helper_ns["print"]
-
-    class _Timeout(BaseException):
-        pass
-    armed = [False]
-    fired = [False]
-    def on_alarm(signum, frame):
-        if armed[0]:
-            armed[0] = False
-            fired[0] = True
-            raise _Timeout()
-    signal.signal(signal.SIGALRM, on_alarm)
-
-    def guarded(thunk, limit):
-        fired[0] = False
-        outcome = None
-        try:
-            armed[0] = True
-            signal.setitimer(signal.ITIMER_REAL, max(limit, 0.001))
-            try:
-                outcome = ("ok", thunk())
-            except _Timeout:
-                outcome = ("timeout", None)
-            except BaseException as exc:
-                outcome = ("exc", exc)
-            armed[0] = False
-        except _Timeout:
-            armed[0] = False
-            outcome = ("timeout", None)
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        if fired[0]:
-            return ("timeout", None)
-        return outcome
-
-    def describe(exc):
-        try:
-            return (type(exc).__name__ + ": " + str(exc))[:200]
-        except BaseException:
-            return type(exc).__name__
-
-    def normalize(value, depth, budget):
-        budget[0] += 1
-        if depth > 100 or budget[0] > 200000:
-            raise ValueError("too large")
-        t = type(value)
-        if value is None or t is bool or t is int or t is float or t is str:
-            return value
-        if t is list or t is tuple:
-            return [normalize(v, depth + 1, budget) for v in value]
-        if t is dict:
-            out = {}
-            for k, v in value.items():
-                if type(k) is not str:
-                    raise ValueError("non-str key")
-                out[k] = normalize(v, depth + 1, budget)
-            return out
-        raise ValueError("type " + t.__name__)
-
-    n = len(req["calls"])
-    def fill(kind, error=""):
-        return [{"k": kind, "e": error} for _ in range(n)]
-
-    ns = {"__builtins__": safe, "__name__": "candidate"}
-    try:
-        code = compile(req["source"], "<candidate>", "exec")
-    except BaseException as exc:
-        emit(fill("crash", "compile: " + describe(exc)))
-        return
-    kind, value = guarded(lambda: exec(code, ns), min(per_call * 4, deadline - time.monotonic()))
-    if kind != "ok":
-        if kind == "timeout":
-            emit(fill("timeout", "module timeout"))
-        else:
-            emit(fill("crash", "module: " + describe(value)))
-        return
-    fn = ns.get(req["entry"])
-    if not callable(fn):
-        emit(fill("crash", "entry " + repr(req["entry"]) + " is not a function"))
-        return
-
-    results, total = [], 0
-    for call in req["calls"]:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            results.append({"k": "timeout", "e": "batch budget exhausted"})
-            continue
-        args = copy.deepcopy(call)
-        kind, value = guarded(lambda: fn(*args), min(per_call, remaining))
-        if kind == "ok":
-            try:
-                value = normalize(value, 0, [0])
-                size = len(json.dumps(value, allow_nan=True))
-            except (ValueError, RecursionError, MemoryError, TypeError):
-                results.append({"k": "crash", "e": "unserializable"})
-                continue
-            if size > req["max_value_bytes"] or total + size > req["max_total_bytes"]:
-                results.append({"k": "crash", "e": "output too large"})
-                continue
-            total += size
-            results.append({"k": "ok", "v": value})
-        elif kind == "exc":
-            results.append({"k": "exc", "v": type(value).__name__, "e": describe(value)})
-        else:
-            results.append({"k": "timeout", "e": "per-call timeout"})
-    emit(results)
-
-try:
-    _main()
-except BaseException:
-    pass
-os._exit(0)
-'''
-
-
-def _child_limits(mem_mb: int, timeout_s: float) -> dict[str, list[int]]:
-    cpu = math.ceil(timeout_s) + 1
-    mem = int(mem_mb) << 20
-    return {
-        "RLIMIT_AS": [mem, mem],
-        "RLIMIT_CPU": [cpu, cpu + 1],
-        "RLIMIT_FSIZE": [0, 0],
-        "RLIMIT_NOFILE": [16, 16],
-        "RLIMIT_CORE": [0, 0],
-    }
-
-
-def _kill_group(proc: subprocess.Popen) -> None:
-    if proc.poll() is None:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            proc.kill()
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:  # pragma: no cover - SIGKILL does not fail on POSIX
-        pass
-
-
-def _exchange(payload: bytes, deadline: float) -> tuple[bytes, str]:
-    """Run the child; return (stdout bytes, status) with status in ok/timeout/overflow/exit:<rc>."""
-    with tempfile.TemporaryDirectory(prefix="qe-arena-") as cwd:
-        proc = subprocess.Popen(
-            [sys.executable, "-S", "-s", "-P", "-c", CHILD_SRC],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            env=CHILD_ENV, cwd=cwd, start_new_session=True, close_fds=True)
-
-        def feed() -> None:
-            try:
-                proc.stdin.write(payload)
-                proc.stdin.close()
-            except (BrokenPipeError, OSError, ValueError):
-                pass
-        writer = threading.Thread(target=feed, daemon=True)
-        writer.start()
-        buf, status = bytearray(), "ok"
-        fd = proc.stdout.fileno()
-        try:
-            with selectors.DefaultSelector() as sel:
-                sel.register(fd, selectors.EVENT_READ)
-                while True:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        status = "timeout"
-                        break
-                    if not sel.select(remaining):
-                        continue
-                    chunk = os.read(fd, 65536)
-                    if not chunk:
-                        break
-                    if len(buf) + len(chunk) > MAX_STDOUT_BYTES:
-                        status = "overflow"
-                        break
-                    buf += chunk
-            if status == "ok":
+        with selectors.DefaultSelector() as sel:
+            sel.register(fd, selectors.EVENT_WRITE)
+            while view:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return "timeout"
+                if not sel.select(remaining):
+                    continue
                 try:
-                    proc.wait(timeout=max(0.05, deadline - time.monotonic()))
-                except subprocess.TimeoutExpired:
-                    status = "timeout"
-        finally:
-            _kill_group(proc)
-            writer.join(timeout=1)
-            for pipe in (proc.stdin, proc.stdout):
-                try:
-                    pipe.close()
+                    view = view[os.write(fd, view):]
+                except BlockingIOError:
+                    continue
                 except OSError:
-                    pass
-        if status == "ok" and proc.returncode != 0:
-            status = f"exit:{proc.returncode}"
-        return bytes(buf), status
+                    return "exited"
+        return "sent"
+
+    def request(self, payload: dict, deadline: float) -> Any:
+        status = self.send(json.dumps(payload, allow_nan=True).encode("utf-8", "surrogatepass") + b"\n", deadline)
+        if status != "sent":
+            return status
+        response = self.read(deadline)
+        if isinstance(response, dict) and response.get("id") != payload.get("id"):
+            return "mismatched response"
+        return response
+
+    def close(self) -> None:
+        if self.proc.poll() is None:
+            self.proc.kill()
+        try:
+            self.proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:  # pragma: no cover - SIGKILL does not fail on POSIX
+            pass
+        for pipe in (self.proc.stdin, self.proc.stdout):
+            try:
+                pipe.close()
+            except OSError:
+                pass
 
 
-def _result_line(buf: bytes, nonce: str) -> Any:
-    prefix = (nonce + " ").encode()
-    lines = [line for line in buf.split(b"\n") if line.startswith(prefix)]
-    if len(lines) != 1:
-        raise ValueError(f"expected one result line, found {len(lines)}")
-    return json.loads(lines[0][len(prefix):].decode("utf-8", "surrogatepass"))
+MAX_WORKERS = 4
+CGROUP_ROOT = Path("/sys/fs/cgroup")
 
 
-def _parse_results(data: Any, n: int) -> list[CallResult]:
-    if not isinstance(data, list) or len(data) != n:
-        raise ValueError("result shape mismatch")
+def detect_workers(cgroup_root: Path = CGROUP_ROOT) -> int:
+    """One worker per CPU the container may actually use, between 1 and MAX_WORKERS.
+
+    ``docker run --cpus=2`` sets a CFS quota but leaves every host CPU visible, so os.cpu_count()
+    and the affinity mask say 16 on ruos. Read the quota first: cgroup v2 ``cpu.max`` ("max 100000"
+    or "200000 100000"), then cgroup v1 ``cpu.cfs_quota_us``/``cpu.cfs_period_us``, then the
+    affinity mask, then os.cpu_count(). A fractional quota rounds up.
+    """
+    cpus = None
+    try:
+        fields = (cgroup_root / "cpu.max").read_text().split()
+        if fields and fields[0] != "max":
+            cpus = int(fields[0]) / int(fields[1] if len(fields) > 1 else 100_000)
+    except (OSError, ValueError, ZeroDivisionError):
+        pass
+    if cpus is None:
+        try:
+            quota = int((cgroup_root / "cpu" / "cpu.cfs_quota_us").read_text())
+            period = int((cgroup_root / "cpu" / "cpu.cfs_period_us").read_text())
+            if quota > 0 and period > 0:
+                cpus = quota / period
+        except (OSError, ValueError):
+            pass
+    if cpus is None:
+        try:
+            cpus = len(os.sched_getaffinity(0))
+        except (AttributeError, OSError):
+            cpus = os.cpu_count() or 1
+    return min(MAX_WORKERS, max(1, math.ceil(cpus)))
+
+
+_DETECTED: list[int] = []
+
+
+def _pool_size() -> int:
+    """QE_ARENA_WASI_WORKERS overrides (at least 1); otherwise ``detect_workers()``, read once."""
+    override = os.environ.get("QE_ARENA_WASI_WORKERS")
+    if override:
+        try:
+            return max(1, int(override))
+        except ValueError:
+            pass
+    if not _DETECTED:
+        _DETECTED.append(detect_workers())
+    return _DETECTED[0]
+
+
+_POOL = threading.Condition()
+_IDLE: list[_Worker] = []
+_LIVE = [0]
+_WAITING: collections.deque = collections.deque()  # (ticket, session, capped), oldest first
+_INFLIGHT: collections.Counter = collections.Counter()  # workers held per session
+
+# Which episode a batch belongs to. QEEnvironment sets it around reset and step, so one session cannot
+# hold every worker: a session that keeps grading looping code waits its turn like anyone else.
+_SESSION: contextvars.ContextVar = contextvars.ContextVar("qe_arena_sandbox_session", default=None)
+
+
+@contextlib.contextmanager
+def session(key: Any):
+    """Attribute the sandbox batches run inside this block to ``key`` (fairness only)."""
+    token = _SESSION.set(key)
+    try:
+        yield
+    finally:
+        _SESSION.reset(token)
+
+
+def _session_cap() -> int:
+    """Workers one session may hold at once: all but one, so another session can always get one."""
+    return max(1, _pool_size() - 1)
+
+
+class _PoolTimeout(Exception):
+    pass
+
+
+def _next_eligible() -> Any:
+    """The oldest waiting ticket whose session is under its cap (FIFO among those that may proceed)."""
+    for ticket, key, capped in _WAITING:
+        if not capped or _INFLIGHT[key] < _session_cap():
+            return ticket
+    return None
+
+
+def _acquire(deadline: float, *, capped: bool = True) -> _Worker:
+    """A worker for the current session, served first come first served among sessions under their cap.
+    Reuses an idle worker or starts one if the pool has room; waits only until the deadline."""
+    key, ticket = _SESSION.get(), object()
+    with _POOL:
+        _WAITING.append((ticket, key, capped))
+        try:
+            while _next_eligible() is not ticket or (not _IDLE and _LIVE[0] >= _pool_size()):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise _PoolTimeout("no sandbox worker became free before the deadline")
+                _POOL.wait(remaining)
+        finally:
+            _WAITING.remove(next(item for item in _WAITING if item[0] is ticket))
+            _POOL.notify_all()
+        _INFLIGHT[key] += 1
+        if _IDLE:
+            worker = _IDLE.pop()
+            worker.session, worker.held = key, True
+            return worker
+        _LIVE[0] += 1
+    try:
+        worker = _Worker(deadline)
+    except BaseException:
+        with _POOL:
+            _LIVE[0] -= 1
+            _INFLIGHT[key] -= 1
+            _POOL.notify_all()
+        raise
+    worker.session, worker.held = key, True
+    return worker
+
+
+def _release(worker: _Worker, healthy: bool) -> None:
+    """Return a worker to the pool (or retire it). A second release of the same acquisition is ignored:
+    no caller does that today, but it would list the worker twice or uncount it while it sits idle."""
+    with _POOL:
+        if not getattr(worker, "held", True):
+            return
+        worker.held = False
+    if not healthy:
+        worker.close()
+    with _POOL:
+        key = getattr(worker, "session", None)
+        if _INFLIGHT[key] > 0:
+            _INFLIGHT[key] -= 1
+        if healthy:
+            _IDLE.append(worker)
+        else:
+            _LIVE[0] -= 1
+        _POOL.notify_all()
+
+
+def _dispatch(payload: dict) -> Any:
+    """Send one request; return the response dict or a status string. Every wait (a free worker,
+    starting one, writing, reading) ends by BATCH_BACKSTOP_S; a worker that fails is replaced."""
+    deadline = time.monotonic() + BATCH_BACKSTOP_S
+    try:
+        worker = _acquire(deadline)
+    except _PoolTimeout:
+        return "pool timeout"
+    except (RuntimeError, OSError) as exc:
+        return f"worker start failed: {exc}"[:200]
+    response: Any = "exited"
+    try:
+        response = worker.request(dict(payload, id=secrets.token_hex(8)), deadline)
+        return response
+    finally:
+        _release(worker, isinstance(response, dict) and "error" not in response)
+
+
+def warm() -> None:
+    """Start every worker now (each compiles python.wasm) so the first episode does not wait.
+    Workers already acquired go back to the pool even if a later one fails to start."""
+    deadline = time.monotonic() + WORKER_STARTUP_S * _pool_size()
+    acquired = []
+    try:
+        for _ in range(_pool_size()):
+            acquired.append(_acquire(deadline, capped=False))
+    finally:
+        for worker in acquired:
+            _release(worker, True)
+
+
+def shutdown() -> None:
+    with _POOL:
+        workers, _IDLE[:] = list(_IDLE), []
+        _LIVE[0] -= len(workers)
+        _POOL.notify_all()
+    for worker in workers:
+        worker.close()
+
+
+atexit.register(shutdown)
+
+
+def _parse_results(response: Any, n: int) -> list[CallResult]:
+    if not isinstance(response, dict) or not isinstance(response.get("results"), list):
+        raise ValueError(f"no results: {response!r}"[:200])
+    rows = response["results"]
+    if len(rows) != n:
+        raise ValueError("result count mismatch")
     out = []
-    for row in data:
-        if not isinstance(row, dict) or set(row) - {"k", "v", "e"}:
+    for row in rows:
+        if not isinstance(row, dict) or set(row) - {"k", "v", "e", "f"}:
             raise ValueError("bad result row")
-        kind, error = row.get("k"), row.get("e", "")
-        if kind not in ("ok", "exc", "timeout", "crash") or not isinstance(error, str):
+        kind, error, fuel = row.get("k"), row.get("e", ""), row.get("f", 0)
+        if kind not in WORKER_KINDS or not isinstance(error, str) or type(fuel) is not int or fuel < 0:
             raise ValueError("bad result kind")
         if kind == "exc" and not isinstance(row.get("v"), str):
             raise ValueError("bad exception name")
         value = row.get("v") if kind in ("ok", "exc") else None
-        out.append(CallResult(kind=kind, value=value, error=error[:200]))
+        out.append(CallResult(kind=kind, value=value, error=error[:200], fuel=fuel))
     return out
 
 
-def _launch(request: dict, timeout_s: float) -> tuple[Any, str]:
-    nonce = secrets.token_hex(16)
-    request = dict(request, nonce=nonce)
-    payload = json.dumps(request, allow_nan=True).encode("utf-8", "surrogatepass")
-    buf, status = _exchange(payload, time.monotonic() + timeout_s + KILL_GRACE_S)
-    try:
-        return _result_line(buf, nonce), status
-    except (ValueError, UnicodeDecodeError) as exc:
-        return None, status if status != "ok" else f"bad output: {exc}"
-
-
-def run_calls(source: str, entry: str, calls: list[list], *, timeout_s: float = 3.0,
-              per_call_timeout_s: float = 0.5, mem_mb: int = 256,
+def run_calls(source: str, entry: str, calls: list[list], *, timeout_s: float | None = None,
+              per_call_timeout_s: float | None = None, mem_mb: int = DEFAULT_MEM_MB, fuel: int | None = None,
               _skip_gate: bool = False) -> list[CallResult]:
-    """Call ``entry(*args)`` for each args list in ``calls`` inside one sandboxed child process.
+    """Call ``entry(*args)`` for each args list in ``calls`` in one sandboxed guest instance.
 
-    ``timeout_s`` bounds the whole batch (the child stops starting calls at the budget and the
-    parent kills the process group shortly after); ``per_call_timeout_s`` bounds each call.
-    ``_skip_gate`` exists only so tests can prove the runtime layer on its own.
+    Each call may consume ``fuel`` units (default ``FUEL_PER_CALL``) and the module body
+    ``MODULE_FUEL``. ``per_call_timeout_s`` is accepted for compatibility and converted at
+    ``FUEL_PER_SECOND``; ``timeout_s`` is accepted and ignored (fuel bounds every call and a
+    wall-clock backstop bounds the instance). ``_skip_gate`` exists only so tests can prove the
+    runtime layers on their own.
     """
+    del timeout_s
     if not all(isinstance(c, (list, tuple)) for c in calls):
         raise TypeError("each call must be a list of positional arguments")
     calls = [list(c) for c in calls]
@@ -506,31 +657,29 @@ def run_calls(source: str, entry: str, calls: list[list], *, timeout_s: float = 
         problems = static_gate(source)
         if problems:
             return [CallResult("rejected", None, "; ".join(problems)[:400]) for _ in calls]
-    request = {
-        "source": source, "entry": entry, "calls": calls,
-        "budget_s": max(0.05, timeout_s - 0.15), "per_call_s": per_call_timeout_s,
+    if fuel is None:
+        fuel = FUEL_PER_CALL if per_call_timeout_s is None else max(1, int(per_call_timeout_s * FUEL_PER_SECOND))
+    payload = {
+        "source": source, "entry": entry, "calls": calls, "nonce": secrets.token_hex(16),
+        "fuel": int(fuel), "module_fuel": MODULE_FUEL, "mem_mb": int(mem_mb),
         "modules": SAFE_EXPORTS, "builtins": SAFE_BUILTINS,
-        "limits": _child_limits(mem_mb, timeout_s),
         "max_value_bytes": MAX_VALUE_BYTES, "max_total_bytes": MAX_RESULT_BYTES,
     }
-    data, status = _launch(request, timeout_s)
-    if data is not None and status == "ok":
+    status = ""
+    for _ in range(2):  # a dead worker is replaced and the batch retried once
+        response = _dispatch(payload)
         try:
-            return _parse_results(data, len(calls))
+            return _parse_results(response, len(calls))
         except ValueError as exc:
-            status = f"bad output: {exc}"
-    if status == "timeout" or status == f"exit:{-signal.SIGXCPU}":
-        return [CallResult("timeout", None, "batch timeout") for _ in calls]
-    return [CallResult("crash", None, f"sandbox: {status}") for _ in calls]
+            status = str(exc)
+    return [CallResult("infra", None, f"sandbox worker: {status}"[:200]) for _ in calls]
 
 
-def _probe_limits(mem_mb: int = 256, timeout_s: float = 3.0) -> dict:
-    """Report the child's rlimits, environment and flags (test hook; runs no candidate code)."""
-    request = {"source": "", "entry": "", "calls": [], "budget_s": timeout_s, "per_call_s": 0.5,
-               "modules": SAFE_EXPORTS, "builtins": SAFE_BUILTINS, "probe": True,
-               "limits": _child_limits(mem_mb, timeout_s)}
-    data, _ = _launch(request, timeout_s)
-    return data if isinstance(data, dict) else {}
+def _probe_guest(kind: str = "surface", mem_mb: int = DEFAULT_MEM_MB) -> dict:
+    """Ask the guest harness to describe its own surface (test hook; runs no candidate code)."""
+    response = _dispatch({"probe": kind, "nonce": secrets.token_hex(16), "modules": SAFE_EXPORTS,
+                          "mem_mb": mem_mb})
+    return response.get("probe", {}) if isinstance(response, dict) else {"error": response}
 
 
 # --------------------------------------------------------------------------- comparison
@@ -557,7 +706,8 @@ def _equal(a: Any, b: Any) -> bool:
 def compare(expected: CallResult, actual: CallResult) -> bool:
     """True when two results agree: ok/ok by strict JSON value equality (bool is not int, int is not
     float, floats within rel 1e-9 / abs 1e-12), exc/exc by exception type name. Anything else,
-    including timeout, crash and rejected on either side, is a mismatch."""
+    including fuel, resource, crash, infra and rejected on either side, is a mismatch. Fuel is never
+    compared: it depends on what ran earlier in the same instance."""
     if expected.kind == "ok" and actual.kind == "ok":
         try:
             return _equal(_jsonish(expected.value), _jsonish(actual.value))

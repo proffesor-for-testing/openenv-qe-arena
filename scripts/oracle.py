@@ -42,4 +42,12 @@ def solve_actions(task: Task) -> list[dict]:
         else:
             edits = [{"op": "edit", "path": MODULE, "old": task.private["buggy"], "new": task.private["original"]}]
         return [{"op": "read", "path": "*"}, *edits, {"op": "run_tests"}, {"op": "submit", "answer": {}}]
+    if task.family == "qe_flaky":
+        p = task.private
+        actions = [{"op": "read", "path": "*"}, {"op": "run_tests"}]
+        if p["repair"]:
+            actions.append({"op": "edit", "path": MODULE, **p["repair"]})
+        answer = {"test": p["victim"]} if p["victim"] is None or task.difficulty != 2 else \
+            {"test": p["victim"], "cause": p["cause"]}
+        return actions + [{"op": "submit", "answer": answer}]
     return [{"op": "read", "path": "*"}, {"op": "submit", "answer": {"tests": kill_tests(task)}}]
