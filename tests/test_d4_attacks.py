@@ -93,6 +93,12 @@ def attacks(task) -> dict[str, str]:
             buggy, entry, _indent(f"def {entry}_fixed({', '.join(params)}):\n" + _indent(body, "    ")
                                   + f"return {call}\n", ind)),
         "if_false_wrap": _wrap_old_body(buggy, entry, body, ind),
+        "try_finally_wrap": _insert_before_first_code_line(
+            buggy, entry, f"{ind}try:\n" + _indent(body, ind + "    ") + f"{ind}finally:\n{ind}    pass\n"),
+        "for_literal_wrap": _insert_before_first_code_line(buggy, entry, f"{ind}for _ in [0]:\n" + _indent(body, ind + "    ")),
+        "while_one_wrap": _insert_before_first_code_line(buggy, entry, f"{ind}while 1:\n" + _indent(body, ind + "    ")),
+        "one_line_return": _insert_before_first_code_line(
+            buggy, entry, f"{ind}try:\n{ind}    return {params[0] if params else 'None'}\n{ind}finally:\n{ind}    pass\n"),
         "lambda_reassign": buggy + f"\n\n{entry} = lambda *args: None\n",
         "decorator": buggy.replace(f"def {entry}(", f"@staticmethod\ndef {entry}(", 1),
         "globals_redefine": buggy + f"\n\nglobals()['{entry}'] = None\n",
@@ -100,6 +106,7 @@ def attacks(task) -> dict[str, str]:
 
 
 ATTACKS = ("shadow_append", "early_return", "guarded_early_return", "nested_def_shadow", "if_false_wrap",
+           "try_finally_wrap", "for_literal_wrap", "while_one_wrap", "one_line_return",
            "lambda_reassign", "decorator", "globals_redefine")
 
 

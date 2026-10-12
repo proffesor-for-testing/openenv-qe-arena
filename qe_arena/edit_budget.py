@@ -11,8 +11,9 @@ dd32587). Every edit, and the graded file, must keep the buggy file's structure:
 - the same top-level statements in the same order, and the same function definitions (names,
   arguments, decorators), so there is no shadow definition and no new top-level code;
 - no lambda beyond those already in the file;
-- no statement after an unconditional return/raise/continue/break, and no branch or loop whose
-  test is a constant, so no dead code hides the old body;
+- every statement stays reachable (a static check that proves exits through returns, raises,
+  if/else, try/finally, with, and loops that must run their body), and no branch or loop tests a
+  constant or a tautology such as `p == p`, so no wrapper can bypass the old body;
 - at most change_allowance(buggy) syntax tokens changed against the buggy file (a sequence diff of
   the AST in preorder): CHANGE_SHARE of the file's code tokens, capped at MAX_CHANGE. It depends on
   the shown file only, so the gate reveals nothing about the faults. A compact re-implementation of a
@@ -30,7 +31,6 @@ BUDGET_QUANTUM = 25  # characters
 MERGE_GAP = 16  # character hunks closer than this become one edit
 CHANGE_SHARE = 0.35  # of the shown file's code tokens (docstrings excluded)
 MAX_CHANGE = 50  # AST tokens
-EXITS = (ast.Return, ast.Raise, ast.Continue, ast.Break)
 
 
 # --------------------------------------------------------------------------- the minimal fix
@@ -143,16 +143,79 @@ def _constant_test(test: ast.AST) -> bool:
     return False
 
 
+def _loop_body_jumps_out(body: list[ast.stmt]) -> bool:
+    """A break that leaves this loop (not one inside a nested loop or function)."""
+    stack = list(body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.Break):
+            return True
+        if isinstance(node, (ast.For, ast.AsyncFor, ast.While, ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        stack.extend(ast.iter_child_nodes(node))
+    return False
+
+
+def _nonempty_literal(node: ast.AST) -> bool:
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return bool(node.elts)
+    if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)):
+        return bool(node.value)
+    return False
+
+
+def _ends(block: list[ast.stmt], jumps: bool) -> bool:
+    """True if control can never fall off the end of ``block``.
+
+    ``jumps`` says whether break/continue end it (they do inside a loop body). The analysis is
+    sound for exits it proves: a return, a raise, an if with every branch ending, a try whose
+    body and handlers end or whose finally ends, a with whose body ends, and a loop that must run
+    its body (a constant-true while, a for over a non-empty literal) with a body that ends and
+    no break. A branch on a test that is not constant may go either way.
+    """
+    return any(_stmt_ends(stmt, jumps) for stmt in block)
+
+
+def _stmt_ends(stmt: ast.stmt, jumps: bool) -> bool:
+    if isinstance(stmt, (ast.Return, ast.Raise)):
+        return True
+    if isinstance(stmt, (ast.Break, ast.Continue)):
+        return jumps
+    if isinstance(stmt, ast.If):
+        if _constant_test(stmt.test):
+            return _ends(stmt.body, jumps) or _ends(stmt.orelse, jumps)  # either branch may be the live one
+        return bool(stmt.orelse) and _ends(stmt.body, jumps) and _ends(stmt.orelse, jumps)
+    if isinstance(stmt, (ast.With, ast.AsyncWith)):
+        return _ends(stmt.body, jumps)
+    if isinstance(stmt, ast.Try) or type(stmt).__name__ == "TryStar":
+        if _ends(stmt.finalbody, jumps):
+            return True
+        handlers_end = all(_ends(h.body, jumps) for h in stmt.handlers)
+        return handlers_end and (_ends(stmt.body, jumps) or (bool(stmt.orelse) and _ends(stmt.orelse, jumps)))
+    if isinstance(stmt, ast.While):
+        return _constant_test(stmt.test) and not _loop_body_jumps_out(stmt.body)
+    if isinstance(stmt, (ast.For, ast.AsyncFor)):
+        return _nonempty_literal(stmt.iter) and _ends(stmt.body, False) and not _loop_body_jumps_out(stmt.body)
+    return False
+
+
 def _dead_code(tree: ast.AST) -> str | None:
+    """A test whose value is fixed (a wrapper such as `if True:`), or an unreachable statement."""
     for node in ast.walk(tree):
-        for field in ("body", "orelse", "finalbody"):
-            body = getattr(node, field, None)
-            if isinstance(body, list):
-                for stmt, nxt in zip(body, body[1:]):
-                    if isinstance(stmt, EXITS):
-                        return f"unreachable code after line {stmt.lineno}"
         if isinstance(node, (ast.If, ast.While, ast.IfExp)) and _constant_test(node.test):
             return f"a constant condition at line {node.lineno}"
+    for node in ast.walk(tree):
+        for field in ("body", "orelse", "finalbody"):
+            block = getattr(node, field, None)
+            if not isinstance(block, list) or not all(isinstance(s, ast.stmt) for s in block):
+                continue
+            for stmt, nxt in zip(block, block[1:]):
+                if _stmt_ends(stmt, jumps=True):
+                    return f"line {nxt.lineno} can never run (after line {stmt.lineno})"
+        for handler in getattr(node, "handlers", []) or []:
+            for stmt, nxt in zip(handler.body, handler.body[1:]):
+                if _stmt_ends(stmt, jumps=True):
+                    return f"line {nxt.lineno} can never run (after line {stmt.lineno})"
     return None
 
 

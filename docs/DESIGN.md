@@ -97,7 +97,10 @@ existing pin are byte-identical. Code: `qe_arena/edit_budget.py`.
     no `globals()` trick);
   - every function definition, with the same arguments and decorators (no nested shadow function);
   - no lambda beyond those already in the file;
-  - no dead code: nothing after an unconditional return, raise, continue or break, and no constant test;
+  - every statement stays reachable. A static check proves exits through return, raise, if/else,
+    try/finally, with, and loops that must run their body. No branch or loop may test a constant or a
+    tautology such as `p == p`, so no wrapper (`if True:`, `while 1:`, `for _ in [0]:`, try/finally)
+    can bypass the old body;
   - a total change of at most `min(50, 0.35 × code tokens)` preorder AST tokens. The code tokens are
     counted on the shown file without docstrings.
   A compact re-implementation, even behind an always-true guard, needs more tokens than that.
@@ -110,8 +113,9 @@ existing pin are byte-identical. Code: `qe_arena/edit_budget.py`.
   derived from the faults (the calibrated 1.5x line-diff prototype) would tell the model how large the
   faulty code is.
 - **Adversarial tests** (`tests/test_d4_attacks.py`, 300 seeds, attacker given the correct function):
-  shadow append, early return, guarded early return, nested-def shadow, `if False:` wrap, lambda
-  reassignment, decorator and `globals()` redefinition. Every one breaks the gate and grades 0. The oracle
+  shadow append, early return, guarded early return, nested-def shadow, `if False:` wrap, try/finally,
+  `for _ in [0]:` and `while 1:` wrappers, an inserted one-line return, lambda reassignment, decorator
+  and `globals()` redefinition. Every one breaks the gate and grades 0. The oracle
   (the minimal fix) earns 1.0 on all 300 within budget, gate and the 12-step limit.
 
 ### `qe_mutant_kill`: write a test that kills a mutant
