@@ -30,6 +30,7 @@ class RealFault:
     origin: str
     find: str
     replace: str
+    note: str = ""  # how the fault relates to the pre-fix code when it is not a literal copy of it
 
 
 @dataclass(frozen=True)

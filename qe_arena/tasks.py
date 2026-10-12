@@ -30,7 +30,8 @@ MAX_TESTS = {1: 1, 2: 1, 3: 3}
 MAX_ARGS_BYTES = 2048
 MODULE = "module.py"
 BUGFIX_CANDIDATES = 24  # fault candidates tried per corpus function
-REAL_SHARE = 0.25  # share of qe_bugfix tasks that carry a real upstream fault (when real entries exist)
+REAL_SHARE = 0.15  # share of qe_bugfix tasks that carry a real upstream fault (when real entries exist)
+FILLER_KEEP = 0.5  # a real task keeps each filler candidate with this chance, so no filler site dominates
 FAULT_KINDS = ("injected", "real")
 
 
@@ -192,7 +193,7 @@ def _candidate_sites(source: str, rng: random.Random) -> list[mutation.Site]:
     return sites
 
 
-def _bugfix_sites(source: str, rng: random.Random) -> list[mutation.Site]:
+def _bugfix_sites(source: str, rng: random.Random, limit: int = BUGFIX_CANDIDATES) -> list[mutation.Site]:
     """Bug-fix fault candidates, round-robin over operators with the realistic ones first.
 
     Every round takes one site from each realistic operator, then one from each classic operator,
@@ -208,11 +209,11 @@ def _bugfix_sites(source: str, rng: random.Random) -> list[mutation.Site]:
     rng.shuffle(realistic)
     rng.shuffle(classic)
     order: list[mutation.Site] = []
-    while len(order) < BUGFIX_CANDIDATES and any(groups.values()):
+    while len(order) < limit and any(groups.values()):
         for op in realistic + classic:
             if groups[op]:
                 order.append(groups[op].pop())
-    return order[:BUGFIX_CANDIDATES]
+    return order[:limit]
 
 
 def _real_sites(item: corpus.CorpusEntry, original: str, renaming: dict[str, str]) -> dict:
@@ -249,7 +250,11 @@ def _make_bugfix(task_id: str, level: int, seed: int, rng: random.Random, pool: 
         real_first = list(real)
         rng.shuffle(real_first)
         chosen, buggy, killed, subtle = [], original, [], 0
-        for site in real_first + _bugfix_sites(original, rng):
+        if kind == "real":  # a small function has few fillers: sample them so one site cannot dominate
+            filler = [s for s in _bugfix_sites(original, rng, 2 * BUGFIX_CANDIDATES) if rng.random() < FILLER_KEEP]
+        else:
+            filler = _bugfix_sites(original, rng)
+        for site in real_first + filler:
             try:
                 trial = mutation.apply(original, [site] + chosen)
             except ValueError:
@@ -386,6 +391,8 @@ def make_task(task_id: str, seed: int, *, pool: tuple[str, ...] | None = None,
     kind = fault_kind or ("real" if real and rng.random() < REAL_SHARE else "injected")
     if kind == "injected":
         return _make_bugfix(task_id, level, seed, rng, injected)
+    if fault_kind is None:
+        real = (rng.choice(real),)  # every real entry is drawn equally often; if it cannot serve, fall back
     try:
         return _make_bugfix(task_id, level, seed, rng, real, "real")
     except RuntimeError:

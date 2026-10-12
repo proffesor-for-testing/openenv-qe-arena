@@ -315,20 +315,22 @@ _EXITS = (ast.Return, ast.Raise, ast.Continue, ast.Break)
 # Sibling calls with a compatible signature. Method siblings are swapped on any receiver.
 _NAME_SIBLINGS = {"any": ("all",), "all": ("any",), "round": ("int",)}
 _ITER_SIBLINGS = {"sorted": ("reversed",), "reversed": ("sorted",)}  # only where the result is iterated
+# Method siblings by receiver type. They are used only where the receiver's type is inferred, and only
+# swaps that change values are listed: values/keys or remove/discard would mostly kill by raising.
 _METHOD_SIBLINGS = {
-    "startswith": ("endswith",), "endswith": ("startswith",),
-    "lower": ("upper",), "upper": ("lower",),
-    "strip": ("lstrip", "rstrip"), "lstrip": ("strip", "rstrip"), "rstrip": ("strip", "lstrip"),
-    "find": ("rfind",), "rfind": ("find",), "index": ("rindex",), "rindex": ("index",),
-    "split": ("rsplit",), "rsplit": ("split",),
-    "partition": ("rpartition",), "rpartition": ("partition",),
-    "append": ("extend",), "extend": ("append",),
-    "isalpha": ("isalnum",), "isalnum": ("isalpha",), "isdigit": ("isalnum",),
-    "islower": ("isupper",), "isupper": ("islower",),
-    "floor": ("ceil",), "ceil": ("floor",),
-    "keys": ("values",), "values": ("keys",),
-    "remove": ("discard",), "discard": ("remove",),
+    "str": {
+        "startswith": ("endswith",), "endswith": ("startswith",),
+        "lower": ("upper",), "upper": ("lower",),
+        "strip": ("lstrip", "rstrip"), "lstrip": ("strip", "rstrip"), "rstrip": ("strip", "lstrip"),
+        "find": ("rfind",), "rfind": ("find",), "index": ("rindex",), "rindex": ("index",),
+        "split": ("rsplit",), "rsplit": ("split",),
+        "partition": ("rpartition",), "rpartition": ("partition",),
+        "isalpha": ("isalnum",), "isalnum": ("isalpha",), "isdigit": ("isalnum",),
+        "islower": ("isupper",), "isupper": ("islower",),
+    },
+    "list": {"append": ("extend",), "extend": ("append",)},
 }
+_MODULE_SIBLINGS = {("math", "floor"): ("ceil",), ("math", "ceil"): ("floor",)}
 _STR_METHODS = frozenset({"lower", "upper", "strip", "lstrip", "rstrip", "startswith", "endswith", "split",
                           "rsplit", "find", "rfind", "replace", "encode", "isdigit", "isalpha", "isalnum",
                           "partition", "rpartition", "splitlines", "title", "casefold", "zfill"})
@@ -344,6 +346,12 @@ _CALL_RESULT = {"len": "int", "ord": "int", "int": "int", "str": "str", "chr": "
 _SWAP_TYPES = frozenset({"int", "str", "list", "dict", "set", "bool", "float"})
 _LOOSE = (ast.BoolOp, ast.IfExp, ast.NamedExpr, ast.Lambda)
 _COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+
+
+def _iterable_value(node: ast.AST, function) -> bool:
+    if isinstance(node, (ast.List, ast.Tuple, ast.ListComp)):
+        return True
+    return _expr_type(node, function.types if function is not None else {}) in ("list", "str")
 
 
 def _paren(text: str, node: ast.AST) -> str:
@@ -519,6 +527,10 @@ class _Realistic:
                               if isinstance(n, (ast.Import, ast.ImportFrom)) for a in n.names}
         self.functions = [_Function(n, finder.parents) for n in ast.walk(finder.tree)
                           if isinstance(n, ast.FunctionDef)]
+        self.owner: dict[ast.AST, _Function] = {}  # innermost enclosing function of every node
+        for function in self.functions:  # ast.walk order: an inner function overwrites its outer one
+            for node in ast.walk(function.func):
+                self.owner[node] = function
 
     def visit(self) -> None:
         for node in ast.walk(self.f.tree):
@@ -612,14 +624,15 @@ class _Realistic:
         if isinstance(test, (ast.IfExp, ast.NamedExpr, ast.Lambda)) or (
                 isinstance(test, ast.BoolOp) and isinstance(test.op, ast.Or)):
             body = f"({body})"
+        function = self.owner.get(test)
+        bound = function.bound_names() if function is not None else set()
         seen = []
         for node in ast.walk(test):
             if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load) or node.id in seen:
                 continue
             parent = self.f.parents.get(node)
-            if (isinstance(parent, ast.Call) and parent.func is node) or node.id in _RESERVED \
-                    or node.id in self.module_names:
-                continue
+            if (isinstance(parent, ast.Call) and parent.func is node) or node.id not in bound:
+                continue  # only the function's own parameters and locals: never a comprehension variable
             seen.append(node.id)
             self.f._site("extra_condition", span, f"{node.id} and {body}")
 
@@ -643,15 +656,27 @@ class _Realistic:
                 siblings += _ITER_SIBLINGS.get(func.id, ())
             for other in siblings:
                 self.f._site("call_swap", self.text.node_span(func), other)
-        elif isinstance(func, ast.Attribute) and func.attr in _METHOD_SIBLINGS:
+        elif isinstance(func, ast.Attribute):
+            siblings = self._method_siblings(node, func)
             if func.attr in ("split", "rsplit") and len(node.args) < 2 and not any(
                     k.arg == "maxsplit" for k in node.keywords):
                 return  # without maxsplit, split and rsplit agree
             line, col, end_line, end_col = self.text.node_span(func)
             if self.text.line(end_line)[end_col - len(func.attr):end_col] != func.attr:
                 return
-            for other in _METHOD_SIBLINGS[func.attr]:
+            for other in siblings:
                 self.f._site("call_swap", (end_line, end_col - len(func.attr), end_line, end_col), other)
+
+    def _method_siblings(self, node: ast.Call, func: ast.Attribute) -> tuple[str, ...]:
+        receiver = func.value
+        if isinstance(receiver, ast.Name) and receiver.id in self.module_names:
+            return _MODULE_SIBLINGS.get((receiver.id, func.attr), ())  # re.split has no re.rsplit
+        function = self.owner.get(node)
+        kind = _expr_type(receiver, function.types if function is not None else {})
+        siblings = _METHOD_SIBLINGS.get(kind, {}).get(func.attr, ())
+        if func.attr == "append" and not (node.args and _iterable_value(node.args[0], function)):
+            return ()  # extend(x) on a non-iterable only raises
+        return siblings
 
     # -- variable misuse
     def _var_swap(self, function: _Function) -> None:

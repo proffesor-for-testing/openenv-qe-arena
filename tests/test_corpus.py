@@ -23,10 +23,9 @@ BANNED_NAMES = {
 }
 MAX_FILE_BYTES = 6000
 SOURCE_REPOS = ("sentinel-api-testing", "lionagi-qe-fleet", "agentic-qe")
-ORIGIN_RE = re.compile(
-    r"^(?:proffesor-for-testing/(?:%s)|ruvnet/RuVector)@[0-9a-f]{40}:[\w./-]+\.(?:py|ts|rs)$"
-    % "|".join(SOURCE_REPOS)
-)
+ONE_ORIGIN = r"(?:proffesor-for-testing/(?:%s)|ruvnet/RuVector)@[0-9a-f]{40}:[\w./-]+\.(?:py|ts|rs)" % "|".join(
+    SOURCE_REPOS)
+ORIGIN_RE = re.compile(r"^%s(?:; %s)*$" % (ONE_ORIGIN, ONE_ORIGIN))  # "; " joins several source files
 ALLOWED_EXCEPTIONS = (ValueError, TypeError, KeyError)
 SEEDS = (0, 1, 7)
 N_INPUTS = 64

@@ -44,20 +44,25 @@ Faults come from two sources, drawn per task. Nothing in the prompt or files say
   - missing logic: `guard_delete` (an early-exit guard is gone), `arm_drop` (one if/elif arm of a dispatch
     is gone), `member_drop` (an allowlist literal lost a member) and `condition_drop` (one operand of an
     and/or is gone);
-  - excess logic: `extra_condition` (a branch also requires one of its variables to be truthy);
-  - function misuse: `call_swap` (a sibling call with a compatible signature: startswith/endswith,
-    strip/lstrip/rstrip, find/rfind, append/extend, any/all, floor/ceil, round/int, sorted/reversed where
-    the result is iterated, and similar);
+  - excess logic: `extra_condition` (a branch also requires one of the function's own parameters or locals
+    to be truthy; never a comprehension or lambda variable);
+  - function misuse: `call_swap` swaps in a sibling call with a compatible signature. Method siblings
+    apply only where the receiver's type is inferred: on strings startswith/endswith, strip/lstrip/rstrip,
+    find/rfind and the like; on lists append/extend, with append only when its argument is iterable.
+    Other siblings are any/all, math.floor/ceil, round/int, and sorted/reversed where the result is
+    iterated. Swaps that would mostly kill by raising are left out (values/keys, remove/discard), and so
+    is anything on a module receiver other than math (re.split has no re.rsplit);
   - variable misuse: `var_swap` (another variable of the same inferred type that is bound on every path);
   - value misuse: `const_sibling` (another literal of the same type from the same function).
   Bug-fix candidates are taken round-robin over operators, realistic operators first in every round, so
   operators with many sites (constants, variables) cannot crowd out the rest. `qe_mutant_kill` keeps the 12
   classic operators.
-- **Real** (`REAL_SHARE` = 25%): one of the real-bug entries, ported from merged RuVector PR #1125
+- **Real** (`REAL_SHARE` = 15%, one real entry drawn uniformly per task): one of the real-bug entries, ported from merged RuVector PR #1125
   (`32033a8b`). The fixed upstream code is the reference; each recorded real fault is the pre-fix logic
   from the parent commit `3e1d1886`, stored as an exact replacement in META `real_faults`. The task leads
   with a real fault and fills the remaining slots of its level with injected faults, under the same
-  filters (revealing inputs, subtle share, no cancelling subsets). Real-bug entries are never drawn by the
+  filters (revealing inputs, subtle share, no cancelling subsets). Filler candidates are subsampled
+  (`FILLER_KEEP`), so a small function's one subtle site cannot fill most of its real tasks. Real-bug entries are never drawn by the
   injected tier or by `qe_mutant_kill`. If no real fault fits a level and seed, the task falls back to the
   injected tier.
 
@@ -192,6 +197,13 @@ A real-bug entry also has `META["real_faults"]`: a list of `{"id", "kind", "summ
 occur exactly once in the function source. The docstring is the spec and comes from the fixed code's own
 docs and tests, never from the diff. Each real fault must be revealed by at least `MIN_REVEALING_D1`
 distinct graded inputs, so its deterministic edge cases include enough revealing calls.
+
+Spec sufficiency: for every real-bug entry, `tests/test_real_bugs.py` holds implementations written from
+the docstring alone, one per plausible literal reading (for example "an int" with and without bools). Each
+reading must equal the reference on 100 × 48 generated inputs. A served fault differs from the reference on
+a graded input, so no served fault can match a literal reading of the docstring. Third-party code is
+credited in `THIRD_PARTY_NOTICES`, which the image ships with the corpus. A fault whose `note` is set
+reproduces the pre-fix behaviour rather than copying pre-fix code.
 
 ## Calibration and submission
 

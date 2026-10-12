@@ -310,12 +310,12 @@ def test_edit_and_answer_caps_are_inclusive():
 
 
 GOLDEN = {
-    "qe_bugfix-d1:0": "fa129947dec18115", "qe_bugfix-d1:1": "24559b6fa19b3a65",
+    "qe_bugfix-d1:0": "7816de45ee0c6b6c", "qe_bugfix-d1:1": "24559b6fa19b3a65",
     "qe_bugfix-d1:2": "c485566cf41da3f6", "qe_bugfix-d1:3": "7637736f4a4b27e9",
     "qe_bugfix-d2:0": "793c43825074f5ef", "qe_bugfix-d2:1": "2eb2deb692c9c106",
     "qe_bugfix-d2:2": "af8819b151c56e35", "qe_bugfix-d2:3": "3a4e674811293e8f",
-    "qe_bugfix-d3:0": "0c61446267d6adb0", "qe_bugfix-d3:1": "f59e33fdce1d2471",
-    "qe_bugfix-d3:2": "baf3006a24382d1e", "qe_bugfix-d3:3": "2fd4c51e81859407",
+    "qe_bugfix-d3:0": "9a179b75b06d8c3c", "qe_bugfix-d3:1": "694a306e26f85371",
+    "qe_bugfix-d3:2": "baf3006a24382d1e", "qe_bugfix-d3:3": "1ec2c7078bb50b63",
     "qe_mutant_kill-d1:0": "2c18117ee463689c", "qe_mutant_kill-d1:1": "8bfe4fb2a811ab6b",
     "qe_mutant_kill-d1:2": "a29fa8404c66b6ff", "qe_mutant_kill-d1:3": "7579e245d91a9739",
     "qe_mutant_kill-d2:0": "0b352307ed8023d3", "qe_mutant_kill-d2:1": "1ea3d0f1e672b099",

@@ -1,17 +1,19 @@
-"""Resolve a GGUF model's end-of-sequence id and the ids that stop generation. Ported from Rust; adapted from ruvnet/RuVector@32033a8bc0d4d92e0ea644fce98eef4bb5c6bfef:crates/ruvllm/src/backends/gguf_arch/mod.rs (MIT)."""
+"""Resolve a GGUF model's end-of-sequence id and the ids that stop generation. Ported from Rust; adapted from ruvnet/RuVector@32033a8bc0d4d92e0ea644fce98eef4bb5c6bfef:crates/ruvllm/src/backends/gguf_arch/mod.rs; ruvnet/RuVector@32033a8bc0d4d92e0ea644fce98eef4bb5c6bfef:crates/ruvllm/src/backends/candle_backend.rs (MIT)."""
 
 PRE_FIX = "ruvnet/RuVector@3e1d1886c50f2db817664648b95fab18e3e4c34b:crates/ruvllm/src/backends/candle_backend.rs"
 META = {
     "entry": "gguf_special_ids",
-    "origin": "ruvnet/RuVector@32033a8bc0d4d92e0ea644fce98eef4bb5c6bfef:crates/ruvllm/src/backends/gguf_arch/mod.rs",
+    "origin": "ruvnet/RuVector@32033a8bc0d4d92e0ea644fce98eef4bb5c6bfef:crates/ruvllm/src/backends/gguf_arch/mod.rs; ruvnet/RuVector@32033a8bc0d4d92e0ea644fce98eef4bb5c6bfef:crates/ruvllm/src/backends/candle_backend.rs",
     "tags": ["llm", "tokenizer", "lookup"],
     "real_faults": [
         {"id": "gguf_special_ids/eos-from-vocab-guess", "kind": "wrong-sibling-constant", "origin": PRE_FIX,
          "summary": "the declared EOS id is ignored: a Qwen instruct model gets its end-of-text token, not end-of-turn",
+         "note": "pre-fix behaviour (EOS guessed from the vocabulary) expressed through the fixed function's interface",
          "find": "    eos = declared(\"eos\")\n    if eos is None:\n        eos = guess\n",
          "replace": "    eos = guess\n"},
         {"id": "gguf_special_ids/stop-is-only-eos", "kind": "missing-logic", "origin": PRE_FIX,
          "summary": "generation stops only at the EOS id, never at end-of-turn tokens",
+         "note": "pre-fix behaviour (stop on the single EOS id) expressed through the fixed function's interface",
          "find": "    stop = [vocab[t] for t in STOPS if t in vocab]\n    for name in (\"eos\", \"eot\", \"eom\"):\n"
                  "        value = declared(name)\n        if value is not None and value not in stop:\n"
                  "            stop.append(value)\n",
@@ -24,7 +26,7 @@ def gguf_special_ids(metadata, vocab):
     """Return {"eos": id or None, "stop": [ids]} for a GGUF model.
 
     vocab maps token text to id. A declared id metadata["tokenizer.ggml.<x>_token_id"]
-    (x is eos, eot or eom) counts only if it is an int with 0 <= id < len(vocab).
+    (x is eos, eot or eom) counts only if it is an int (not a bool) with 0 <= id < len(vocab).
     eos is the declared eos id; without one, the id of the first of "</s>",
     "<end_of_text>", "<endoftext>", "<eot_id>" present in vocab; else None.
     stop lists the vocab ids of "<im_end>", "<endoftext>", "<eot_id>",

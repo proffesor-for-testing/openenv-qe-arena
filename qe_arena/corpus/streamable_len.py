@@ -8,9 +8,11 @@ META = {
     "real_faults": [
         {"id": "streamable_len/no-holdback", "kind": "missing-logic", "origin": PRE_FIX,
          "summary": "streams everything settled, so the start of a stop sequence reaches the client",
+         "note": "reconstructed from the pre-fix streaming behaviour; the pre-fix code had no streamable_len",
          "find": "    end = max(settled - holdback, 0)\n", "replace": "    end = settled\n"},
         {"id": "streamable_len/streams-pending-bytes", "kind": "missing-logic", "origin": PRE_FIX,
          "summary": "a trailing incomplete UTF-8 sequence (U+FFFD) is streamed instead of held",
+         "note": "reconstructed from the pre-fix streaming behaviour; the pre-fix code had no streamable_len",
          "find": "    settled = len(text.rstrip(\"\\ufffd\").encode(\"utf-8\"))\n",
          "replace": "    settled = len(data)\n"},
     ],

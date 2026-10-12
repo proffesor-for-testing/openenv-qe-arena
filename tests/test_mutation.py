@@ -548,7 +548,8 @@ def test_const_sibling_never_touches_docstrings_or_range_steps():
 
 
 def test_realistic_sites_on_the_corpus_are_gated_and_never_unbound():
-    """Every realistic mutant of every corpus function passes the gate; no var_swap reads an unbound name."""
+    """Every realistic mutant of every corpus function passes the gate; no var_swap or extra_condition
+    reads a name that is unbound there (a comprehension or lambda variable outside its scope)."""
     from qe_arena import corpus  # noqa: PLC0415
 
     counts: Counter = Counter()
@@ -557,7 +558,7 @@ def test_realistic_sites_on_the_corpus_are_gated_and_never_unbound():
         counts.update(s.operator for s in sites)
         for site in sites:
             assert sandbox.static_gate(mutation.apply(item.function_source, [site])) == [], (name, site)
-        swaps = [s for s in sites if s.operator == "var_swap"]
+        swaps = [s for s in sites if s.operator in ("var_swap", "extra_condition")]
         if swaps:
             inputs = corpus.gen_inputs(name, 0, 16)
             for site in swaps:
@@ -615,3 +616,22 @@ def test_block_site_spans_the_changed_lines_only():
     assert mutation.block_site(a, a, "real", "demo") is None
     deletion = mutation.block_site(a, a.replace("    z = 2\n", ""), "real", "demo")
     assert deletion.replacement == "" and mutation.apply(a, [deletion]) == a.replace("    z = 2\n", "")
+
+
+def test_call_swap_needs_a_known_receiver_and_changes_values():
+    source = (
+        "import re\n\n\n"
+        "def f(s, d, xs):\n"
+        "    parts = re.split(',', s, 1)\n"
+        "    keys = list(d.values())\n"
+        "    xs.append(len(parts))\n"
+        "    xs.append(parts)\n"
+        "    names = set(keys)\n"
+        "    names.discard(s)\n"
+        "    return [parts, keys, xs, s.upper()]\n"
+    )
+    swaps = {(s.original, s.replacement) for s in mutation.enumerate_sites(source, ["call_swap"])}
+    assert ("split", "rsplit") not in swaps  # re is a module: re.rsplit does not exist
+    assert not {("values", "keys"), ("discard", "remove")} & swaps  # these mostly kill by raising
+    assert ("append", "extend") in swaps and ("upper", "lower") in swaps
+    assert len([s for s in mutation.enumerate_sites(source, ["call_swap"]) if s.original == "append"]) == 1
