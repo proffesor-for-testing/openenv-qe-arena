@@ -128,9 +128,10 @@ def test_attacks_played_as_edits_are_refused(d4_tasks, attack):
         p = task.private
         attacked = attacks(task)[attack]
         lines = p["buggy"].splitlines(keepends=True)
-        # The cheapest edit that produces the attacked file: replace one unique line by itself plus the payload.
-        old = next(ln for ln in reversed(lines) if p["buggy"].count(ln) == 1 and ln.strip())
+        # The cheapest edit that produces the attacked file: the shortest unique suffix, then the payload.
         if attack != "guarded_early_return":
+            old = next(p["buggy"][-k:] for k in range(1, len(p["buggy"]) + 1)
+                       if p["buggy"].count(p["buggy"][-k:]) == 1)
             new = old + attacked[len(p["buggy"]):] if attacked.startswith(p["buggy"]) else None
         else:
             lineno, _ = _first_code_line(p["buggy"], p["entry"])
@@ -143,6 +144,7 @@ def test_attacks_played_as_edits_are_refused(d4_tasks, attack):
         env = QEEnvironment()
         env.reset(seed=task.seed, task_id=D4)
         obs = env.step(QEAction(op="edit", path=MODULE, old=old, new=new))
+        assert p["buggy"].replace(old, new, 1) == attacked
         assert obs.error.startswith("edit refused") and env._files[MODULE] == p["buggy"], (task.seed, attack)
         assert env.step(QEAction(op="submit", answer={})).reward == 0.0
 
