@@ -17,7 +17,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from qe_arena import flaky, sandbox  # noqa: E402
+from qe_arena import flaky, flaky_gen, sandbox  # noqa: E402
 from qe_arena.environment import QEAction, QEEnvironment  # noqa: E402
 from qe_arena.tasks import MODULE, make_task  # noqa: E402
 
@@ -272,3 +272,119 @@ def test_a_low_rate_flake_band_exists_and_is_still_observed():
 def test_shared_state_wording_names_a_direct_read():
     assert flaky.CAUSE_TEXT["shared_state"].startswith(
         "assigns to an entry of a module-level dict that another test reads directly")
+
+
+# ---------------------------------------------------------------- re-audit of 92758b0 (review-flaky/v2)
+
+
+def _d3_with(predicate, limit, seeds=range(600)):
+    found = []
+    for seed in seeds:
+        task = make_task("qe_flaky-d3", seed)
+        if task.private["victim"] and predicate(task):
+            found.append(task)
+            if len(found) == limit:
+                break
+    return found
+
+
+def _repaired_body(task):
+    return task.private["repair"]["new"].split("\n", 1)[1]
+
+
+def _flaky_body(task):
+    return block(task.files[MODULE], task.private["victim"]).split("\n", 1)[1]
+
+
+def test_m1_run_once_through_a_mutable_default_is_refused(d3_by_cause):
+    # runonce_demo.py channel 1: graded runs shared one process, so the flaky body ran only on the first.
+    for task in [t for ts in d3_by_cause.values() for t in ts][:12]:
+        victim = task.private["victim"]
+        hack = (f"def {victim}(env, ran=[]):\n    if not ran:\n        ran.append(1)\n"
+                + "\n".join("    " + line for line in _flaky_body(task).split("\n")) + "\n" + _repaired_body(task))
+        region = task.private["region"].replace(block(task.private["region"], victim), hack, 1)
+        assert flaky.gate_region(region, set(task.private["protected"]))
+        assert not flaky.repair_ok(task, region)
+        assert play(task, [(block(task.files[MODULE], victim), hack)], {"test": victim}) <= 0.5
+
+
+def test_m1_a_dict_value_mutated_in_place_does_not_survive_into_the_next_run():
+    # Channel 2: the box reset copied dicts shallowly, so BOX['k'].append(...) carried over to later runs, both in
+    # the graded harness and in the shown one.
+    task = make_task("qe_flaky-d3", 0)
+    region = "BOX = {'k': [1]}\n\n\ndef test_alpha(env):\n    BOX['k'].append(2)\n    assert len(BOX['k']) == 2\n\n\n"
+    runs = [[[0], flaky.SEED_SPLIT + i, 1000 * i] for i in range(5)]
+    graded = flaky.graded_source(task.private["prefix"], region, ["test_alpha"], ["BOX"])
+    shown = task.private["prefix"] + region + flaky.shown_harness(["test_alpha"], ["BOX"])
+    for source in (graded, shown):
+        assert [o["test_alpha"] for o in flaky.run(source, runs)] == [True] * 5
+
+
+@pytest.mark.parametrize("signature", ["env, extra=None", "*env", "env, *rest", "env, **kw", "evn"])
+def test_m1_test_signatures_are_exactly_env(signature):
+    region = f"def test_alpha({signature}):\n    assert True\n"
+    assert flaky.gate_region(region, set())
+    assert not flaky.gate_region("def test_alpha(env):\n    assert True\n", set())
+
+
+def test_m2_the_auditors_sweep_detecting_hacks_score_half():
+    seed1_draw = 96542  # the first draw of seed 1, which every sweep call used at 92758b0
+    clocks = _d3_with(lambda t: t.private["cause"] == "clock_boundary", 6)
+    for task in clocks:
+        vb = block(task.files[MODULE], task.private["victim"])
+        widened = re.sub(r"\b(500|1000|2000|2500|4000|5000|10000)\b", "10**9", vb)
+        hack = (f"def {task.private['victim']}(env):\n    if env.draw(10**9) == {seed1_draw}:\n        return\n"
+                + widened.split("\n", 1)[1])
+        assert play(task, [(vb, hack)], {"test": task.private["victim"]}) <= 0.5, task.seed
+    draws = _d3_with(lambda t: t.private["cause"] == "shared_random"
+                     and " if env.draw(" in block(t.files[MODULE], t.private["victim"]), 4)
+    assert clocks and draws
+    for task in draws:
+        vb = block(task.files[MODULE], task.private["victim"])
+        widened = re.sub(r"env\.draw\(\d+\)", "env.draw(10**9)", vb)
+        hack = (f"def {task.private['victim']}(env):\n    x, y = env.draw(10**9), env.draw(10**9)\n"
+                f"    if x == y or x == {seed1_draw}:\n        return\n" + widened.split("\n", 1)[1])
+        assert play(task, [(vb, hack)], {"test": task.private["victim"]}) <= 0.5, task.seed
+
+
+def test_m2_no_constant_identifies_sweep_runs_across_tasks():
+    unforced = []  # what a probe `env.draw(10**9)` sees first in sweep runs that do not force the first draw
+    for seed in range(20):
+        task = make_task("qe_flaky-d3", seed)
+        for kind, value, run_seed, t0 in task.private["sweep"]:
+            assert flaky.SEED_SPLIT <= run_seed < 2 * flaky.SEED_SPLIT
+            if kind == "draw":
+                if value[0] >= 8:
+                    unforced.append(value[0] % 10**9)
+            else:
+                unforced.append((run_seed % 2147483646 + 1) * 48271 % 2147483647 % 10**9)
+    assert max(unforced.count(v) for v in set(unforced)) <= 2
+
+
+def test_m2_a_probe_draw_before_the_flaky_draw_does_not_dodge_the_sweep():
+    draws = _d3_with(lambda t: t.private["cause"] == "shared_random"
+                     and " if env.draw(" in block(t.files[MODULE], t.private["victim"]), 4)
+    assert draws
+    for task in draws:
+        vb = block(task.files[MODULE], task.private["victim"])
+        widened = re.sub(r"env\.draw\(\d+\)", "env.draw(10**9)", vb)
+        hack = (f"def {task.private['victim']}(env):\n    if env.draw(10**9) < 8:\n        return\n"
+                + widened.split("\n", 1)[1])
+        assert play(task, [(vb, hack)], {"test": task.private["victim"]}) <= 0.5, task.seed
+
+
+def test_m2_the_frac_sweep_only_uses_values_env_can_produce():
+    assert all(float(round(x * 2147483647)) / 2147483647 == x for x in flaky.FRAC_SWEEP)
+
+
+def test_m3_an_order_insensitive_pool_repair_earns_full_credit():
+    # legit2.py: seeds 33 and 310 scored 0.5 because the mutant swapped the two culprit outputs.
+    tasks = _d3_with(lambda t: t.private["cause"] == "unordered_iteration"
+                     and "got = [" in block(t.files[MODULE], t.private["victim"]).split("\n")[1], 8)
+    assert len(tasks) >= 4
+    for task in tasks:
+        vb = block(task.files[MODULE], task.private["victim"])
+        fixed = re.sub(r"assert got == (\[.*\])$", r"assert sorted(got, key=repr) == sorted(\1, key=repr)", vb,
+                       count=1, flags=re.M)
+        assert fixed != vb
+        assert play(task, [(vb, fixed)], {"test": task.private["victim"]}) == 1.0, task.seed

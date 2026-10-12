@@ -139,6 +139,12 @@ def _build(task_id, level, seed, rng, corpus_name, entry, function, rows, cause,
         victim_unit = [[check]] if check else None
     if victim_unit is None:
         return _reject("no_culprit_rows")
+    if mutant is not None:  # an order-insensitive repair must not let a mutant that permutes outputs through
+        culprit = victim_unit[0][0]
+        changed = _outputs(mutant, entry, culprit.args)
+        reference = [o for a in culprit.args for r, o in rows if r == a][:len(culprit.args)]
+        if sorted(map(repr, (c.value for c in changed))) == sorted(map(repr, reference)):
+            return _reject("mutant_permutes_culprit_outputs")
     p.zone = "spare" if p.zones else ""
     plan = list(victim_unit)
     n_tests = rng.choice(N_TESTS[level])
@@ -168,7 +174,8 @@ def _build(task_id, level, seed, rng, corpus_name, entry, function, rows, cause,
     prefix = function.rstrip("\n") + "\n\n\n"
     source = prefix + region + harness
     graded_src = graded_source(prefix, region, listed, boxes)
-    if max(len(source.encode()), len(graded_src.encode())) > MAX_GRADED_BYTES or sandbox.static_gate(graded_src):
+    if graded_src is None or max(len(source.encode()), len(graded_src.encode())) > MAX_GRADED_BYTES \
+            or sandbox.static_gate(graded_src):
         return _reject("size_or_gate")
     if gate_region(region, protected) or any(w in region.replace(entry, "").lower() for w in TELLTALE):
         return _reject("region_gate_or_telltale")
@@ -186,7 +193,7 @@ def _build(task_id, level, seed, rng, corpus_name, entry, function, rows, cause,
         attribution = attribute(graded_src, graded, victim, idx)
         if attribution is None or attribution[1] != outcomes or attribution[0] != [cause]:
             return _reject("attribution")
-    sweep = sweep_calls(rng)
+    sweep = sweep_calls(random.Random(rng.random()))  # the task's own secret stream
     if not clean and facility in SINGLE:  # the sweep must catch every faulty template on its own
         swept = run(graded_src, [[victim] + s for s in sweep], entry="sweep")
         if swept is None or all(o.get(victim) for o in swept):
@@ -209,7 +216,7 @@ def _build(task_id, level, seed, rng, corpus_name, entry, function, rows, cause,
         fixed_region, _ = _render(p, tests, names, repaired=victim)
         old, new = victim_block(region, victim), victim_block(fixed_region, victim)
         task.private["mutants"] = [{"source": mutant}]
-        if source.count(old) != 1 or not repair_ok(task, region.replace(old, new, 1)):
+        if source.count(old) != 1 or not repair_ok(task, region.replace(old, new, 1), isolated=False):
             return _reject("repair")
         task.private["repair"] = {"old": old, "new": new}
     return task

@@ -41,17 +41,26 @@ TICK = 250
 MAX_GRADED_BYTES = 5600  # leaves room under the sandbox's 6000-byte cap for a repair to grow the test
 HARNESS_HEAD = "from collections import namedtuple\n"
 HARNESS_NAMES = frozenset({"SUITE", "BOXES", "SNAPSHOT", "RUN", "make_runner", "run_suite", "namedtuple", "probe",
-                           "sweep", "permutations", "Env"})
+                           "sweep", "permutations", "Env", "build"})
 BUILTIN_NAMES = frozenset(dir(builtins))
 
-CORE = '''def make_runner(namedtuple=namedtuple, list=list, range=range, len=len, zip=zip, Exception=Exception{gargs}):
+CORE = '''def make_runner(namedtuple=namedtuple, list=list, range=range, len=len, zip=zip, Exception=Exception,
+                isinstance=isinstance, dict=dict{gargs}):
     """Builds run(). Every run gets a fresh env: its own Env class, seeded streams and clock."""
     tick = 250
+
+    def clone(value):
+        if isinstance(value, list):
+            return [clone(v) for v in value]
+        if isinstance(value, dict):
+            return {{k: clone(v) for k, v in value.items()}}
+        return value
 
     def run(suite, boxes, snapshot, order, seed, t0{rargs}):
         for box, saved in zip(boxes, snapshot):
             box.clear()
-            box.update(saved)
+            box.update(clone(saved))
+        fed = [0, 0, 0]  #G
         cell = [seed % 2147483646 + 1, (seed * 7919 + 17) % 2147483646 + 1, (seed * 104729 + 3) % 2147483646 + 1, t0]
 
         def step(i):
@@ -61,13 +70,16 @@ CORE = '''def make_runner(namedtuple=namedtuple, list=list, range=range, len=len
         def draw(n):
             """An int in range(n) from the run's seeded stream, which every test in the run shares."""
             if stub and stub[0] == "draw":  #G
-                return stub[1] % n  #G
+                fed[0] += 1  #G
+                if fed[0] <= len(stub[1]):  #G
+                    return stub[1][fed[0] - 1] % n  #G
             return step(0) % n
 
         def frac():
             """A number in (0, 1) from a second seeded stream."""
             if stub and stub[0] == "frac":  #G
-                return stub[1]  #G
+                fed[1] += 1  #G
+                return stub[1][(fed[1] - 1) % len(stub[1])]  #G
             return step(1) / 2147483647
 
         def now():
@@ -79,8 +91,9 @@ CORE = '''def make_runner(namedtuple=namedtuple, list=list, range=range, len=len
             """items in the iteration order of an unordered collection, which changes from run to run."""
             items = list(items)
             if stub and stub[0] == "pool":  #G
+                fed[2] += 1  #G
                 pick = list(permutations(range(len(items))))  #G
-                return [items[i] for i in pick[stub[1] % len(pick)]]  #G
+                return [items[i] for i in pick[(stub[1] + fed[2] - 1) % len(pick)]]  #G
             for i in range(len(items) - 1, 0, -1):
                 j = step(2) % (i + 1)
                 items[i], items[j] = items[j], items[i]
@@ -91,7 +104,7 @@ CORE = '''def make_runner(namedtuple=namedtuple, list=list, range=range, len=len
         for index in order:
             for k in reset:  #G
                 boxes[k].clear()  #G
-                boxes[k].update(snapshot[k])  #G
+                boxes[k].update(clone(snapshot[k]))  #G
             if mask in (3, 4, 6):  #G
                 cell[{{3: 0, 4: 1, 6: 2}}[mask]] = 1  #G
             if mask == 5:  #G
@@ -115,13 +128,20 @@ RUN_SUITE = '''def run_suite(order, seed, t0):
 '''
 GRADER_TAIL = '''
 
+def run_suite(order, seed, t0):
+    suite, boxes = build()
+    return RUN(suite, boxes, [dict(box) for box in boxes], order, seed, t0)
+
+
 def probe(order, seed, t0, mask, reset):
-    return RUN(SUITE, BOXES, SNAPSHOT, order, seed, t0, mask, reset)
+    suite, boxes = build()
+    return RUN(suite, boxes, [dict(box) for box in boxes], order, seed, t0, mask, reset)
 
 
-def sweep(name, kind, value):
-    one = [item for item in SUITE if item[0] == name]
-    return RUN(one, BOXES, SNAPSHOT, [0], 1, value if kind == "now" else 0, 0, (), [kind, value])
+def sweep(name, kind, value, seed, t0):
+    suite, boxes = build()
+    one = [item for item in suite if item[0] == name]
+    return RUN(one, boxes, [dict(box) for box in boxes], [0], seed, t0, 0, (), [kind, value])
 '''
 
 
@@ -147,10 +167,18 @@ def shown_harness(names: list[str], boxes: list[str]) -> str:
     return f"{HARNESS_HEAD}\n{_registry(names, boxes)}\n\n{_core(False)}\n\n{RUN_SUITE}"
 
 
-def graded_source(prefix: str, region: str, names: list[str], boxes: list[str]) -> str:
-    """The module the grader runs: harness first, so it is bound before any region code executes."""
-    head = f"{HARNESS_HEAD}from itertools import permutations\n\n\n{_core(True)}\n\n"
-    return prefix + head + region + _registry(names, boxes) + "\n\n" + RUN_SUITE + GRADER_TAIL
+def graded_source(prefix: str, region: str, names: list[str], boxes: list[str]) -> str | None:
+    """The module the grader runs. The harness is bound first, and the function under test plus the tests are
+    rebuilt inside build() on every run, so no state (a mutable default, a module-level list, a dict value mutated
+    in place) survives from one run to the next. None if the code does not parse."""
+    try:
+        user = ast.unparse(ast.parse(prefix + region))
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return None
+    suite = ", ".join(f"({n!r}, {n})" for n in names)
+    body = "\n".join("    " + line for line in user.split("\n")) + f"\n    return [{suite}], [{', '.join(boxes)}]"
+    return (f"{HARNESS_HEAD}from itertools import permutations\n\n\n{_core(True)}\n\n\ndef build():\n{body}\n"
+            + GRADER_TAIL)
 
 
 def top_names(source: str) -> set[str]:
@@ -195,6 +223,16 @@ def gate_region(region: str, protected: set[str]) -> list[str]:
             bound(node.name)
         elif isinstance(node, ast.Attribute) and not isinstance(node.ctx, ast.Load):
             problems.append(f"the tests may not assign attribute {node.attr!r}")
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            spec = node.args
+            if spec.defaults or any(d is not None for d in spec.kw_defaults):
+                problems.append("functions in the tests may not have default arguments")
+            if getattr(node, "decorator_list", None):
+                problems.append("functions in the tests may not be decorated")
+            if getattr(node, "name", "").startswith("test_") and (
+                    [a.arg for a in spec.args] != ["env"] or spec.posonlyargs or spec.kwonlyargs
+                    or spec.vararg or spec.kwarg):
+                problems.append(f"{node.name} must take exactly one parameter, env")
     return list(dict.fromkeys(problems))
 
 
@@ -208,22 +246,52 @@ def run(source: str, calls: list[list], entry: str = "run_suite") -> list[dict] 
     return results
 
 
+def run_isolated(source: str, calls: list[list]) -> list[dict] | None:
+    """One sandbox process per graded run, so nothing in the interpreter carries over between runs either."""
+    results = []
+    for call in calls:
+        out = run(source, [call])
+        if out is None:
+            return None
+        results.extend(out)
+    return results
+
+
 def combos(rng: random.Random, n_tests: int, count: int, shown: bool) -> list[list]:
     lo, hi = (0, SEED_SPLIT) if shown else (SEED_SPLIT, 2 * SEED_SPLIT)
     return [[rng.sample(range(n_tests), n_tests), rng.randrange(lo, hi), rng.randrange(10**7)] for _ in range(count)]
 
 
+def reachable(x: float) -> float:
+    """The value env.frac can actually return that is closest to x."""
+    return max(1, min(2147483646, round(x * 2147483647))) / 2147483647
+
+
+FRAC_SWEEP = [reachable(x) for x in [i / 64 for i in range(1, 64)] + [i / 10 for i in range(1, 10)]
+              + [i / 97 for i in range(1, 97, 3)]]
+
+
 def sweep_calls(rng: random.Random) -> list[list]:
-    """Adversarial facility values for the repaired test alone: every draw residue 0..7 (and large ones), clocks
-    just below powers of ten and calendar periods (and random ones), a frac grid, and every pool order."""
-    draws = list(range(8)) + [rng.randrange(8, 10**9) for _ in range(8)]
-    clocks = [10**k - d for k in range(1, 14) for d in (1, 125, 249) if 10**k > d]
+    """[kind, value, seed, t0] for the repaired test alone, with seed and t0 drawn like graded runs from the task's
+    own secret stream. Each of the first eight draws in turn is forced to each residue 0..7 while the others take
+    large random values, so no probe draw reveals the sweep and a flaky draw is caught wherever it sits; clocks
+    start just below powers of ten and calendar periods (and at random); frac walks a grid of reachable values from
+    every starting point; pool takes every order."""
+    def run_at(kind, value, t0=None):
+        return [kind, value, rng.randrange(SEED_SPLIT, 2 * SEED_SPLIT), rng.randrange(10**7) if t0 is None else t0]
+
+    calls = []
+    for r in range(8):
+        for position in range(8):
+            values = [rng.randrange(8, 10**9) for _ in range(8)]
+            values[position] = r
+            calls.append(run_at("draw", values))
+    clocks = [10**k - d for k in range(1, 14) for d in (1, 125, 249, 374, 499, 749, 999) if 10**k > d]
     clocks += [p * m - d for p in (60_000, 3_600_000, 86_400_000) for m in (1, 7) for d in (1, 249)]
-    clocks += [rng.randrange(10**13) for _ in range(48)]
-    fracs = [i / 64 for i in range(1, 64)] + [i / 10 for i in range(1, 10)] + [i / 97 for i in range(1, 97, 3)]
-    fracs += [rng.randrange(1, 2147483647) / 2147483647 for _ in range(48)]
-    return ([["draw", v] for v in draws] + [["now", v] for v in clocks] + [["frac", v] for v in fracs]
-            + [["pool", v] for v in range(6)])
+    calls += [run_at("now", 0, t0) for t0 in clocks + [rng.randrange(10**13) for _ in range(32)]]
+    grid = FRAC_SWEEP + [rng.randrange(1, 2147483647) / 2147483647 for _ in range(16)]
+    calls += [run_at("frac", grid[i:] + grid[:i]) for i in range(len(grid))]
+    return calls + [run_at("pool", j) for j in range(6)]
 
 
 def attribute(source: str, graded: list[list], victim: str, idx: dict) -> tuple[list[str], list[dict]] | None:
@@ -260,16 +328,18 @@ def spliced_region(task: Task, source: str) -> str | None:
     return p["region"].replace(original, edited, 1)
 
 
-def repair_ok(task: Task, region: str, mutant: str | None = None) -> bool:
+def repair_ok(task: Task, region: str, mutant: str | None = None, isolated: bool = True) -> bool:
     """The suite passes on every graded run, the repaired test passes every sweep value alone, and it fails on
-    every graded run when the function under test is the reference mutant."""
+    every graded run when the function under test is the reference mutant. Model code gets one process per
+    graded run; ``isolated=False`` batches them, for the generator's own canonical repair only."""
+    runner = run_isolated if isolated else run
     p = task.private
     if gate_region(region, set(p["protected"])):
         return False
     source = graded_source(p["prefix"], region, p["tests"], p["boxes"])
-    if len(source.encode()) > 6000:
+    if source is None or len(source.encode()) > 6000:
         return False
-    outcomes = run(source, p["graded"])
+    outcomes = runner(source, p["graded"])
     if outcomes is None or not all(sorted(o) == sorted(p["tests"]) and all(v is True for v in o.values())
                                    for o in outcomes):
         return False
@@ -277,7 +347,8 @@ def repair_ok(task: Task, region: str, mutant: str | None = None) -> bool:
     if swept is None or not all(o.get(p["victim"]) is True for o in swept):
         return False
     mutant = mutant or p["mutants"][0]["source"]
-    killed = run(graded_source(mutant.rstrip("\n") + "\n\n\n", region, p["tests"], p["boxes"]), p["graded"])
+    mutated = graded_source(mutant.rstrip("\n") + "\n\n\n", region, p["tests"], p["boxes"])
+    killed = runner(mutated, p["graded"]) if mutated else None
     return killed is not None and all(o.get(p["victim"]) is False for o in killed)
 
 
@@ -297,7 +368,7 @@ def run_shown(task: Task, source: str) -> str:
         return "the code under test and the harness must stay unchanged; only the tests may be edited"
     problems = gate_region(region, set(p["protected"]))
     graded = graded_source(p["prefix"], region, p["tests"], p["boxes"])
-    problems = problems or sandbox.static_gate(graded)
+    problems = problems or (sandbox.static_gate(graded) if graded else ["the tests do not parse"])
     if problems:
         return "REJECTED: " + "; ".join(problems)[:400]
     results = _outputs(graded, "run_suite", p["shown"])
