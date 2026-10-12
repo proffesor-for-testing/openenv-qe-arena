@@ -59,7 +59,7 @@ def test_manifest_holds_hashes_and_budgets_never_hidden_values(built):
         assert all(HEX64.fullmatch(v) for k, v in m["runtime"].items() if k != "wasmtime")
         assert m["runtime"]["wasmtime"] == "47.0.1"
         assert m["budgets"] == {"fuel_per_call": 100_000_000, "module_fuel": 200_000_000,
-                                "startup_fuel": 3_000_000_000, "harness_fuel": 1_000_000_000, "mem_mb": 256}
+                                "startup_fuel": 3_000_000_000, "harness_fuel": 20_000_000, "mem_mb": 256}
         assert m["hidden_inputs_count"] == len(task.private["inputs"])
 
 

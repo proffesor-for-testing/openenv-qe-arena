@@ -103,6 +103,17 @@ def _setup():
         if isinstance(exc, resource_types):
             hit[0] = True
 
+    # Python-level writes to stdout/stderr (re.DEBUG prints its parse tree, warnings print to stderr) go
+    # nowhere: only the harness writes to fd 1, with os.write, so nothing else can break the protocol.
+    class _Discard:
+        def write(self, text):
+            return len(text)
+
+        def flush(self):
+            return None
+
+    sys.stdout = sys.stderr = _Discard()
+
     monitoring = sys.monitoring
     monitoring.use_tool_id(MONITOR_TOOL, "qe-arena")
     monitoring.register_callback(MONITOR_TOOL, monitoring.events.RAISE, on_raise)
@@ -114,27 +125,47 @@ def _setup():
     max_value, max_total = req["max_value_bytes"], req["max_total_bytes"]
     del req
 
+    def encode(obj):
+        return dumps(obj, allow_nan=True).encode("utf-8", "surrogatepass") + b"\n"
+
+    def settle(value, err, total):
+        """Build the call's result row. Runs BEFORE the end marker, on the call's own fuel: str() of an
+        exception, normalizing and serializing can all run candidate code (an instance's overridden
+        method, a generator's finally block), which must not spend the harness's refill."""
+        if err is not None:
+            return encode(classify(err)), 0
+        try:
+            value = normalize(value, 0, [0])
+            text = dumps(value, allow_nan=True)
+        except MemoryError:
+            return encode({"k": "resource", "e": "memory: result"}), 0
+        except (ValueError, RecursionError, TypeError):
+            return encode({"k": "crash", "e": "unserializable"}), 0
+        if len(text) > max_value or total + len(text) > max_total:
+            return encode({"k": "crash", "e": "output too large"}), 0
+        # the value is serialized once: splice its JSON text into the row
+        return b'{"k": "ok", "v": ' + text.encode("utf-8", "surrogatepass") + b"}\n", len(text)
+
     def run():
         ns = {"__builtins__": safe, "__name__": "candidate"}
         hit[0] = False
         emit(begin)  # the module body is metered with the module budget
         try:
             exec(compile(source, "<candidate>", "exec"), ns)
-            module_err = None
+            payload = None
         except BaseException as exc:
-            module_err = exc
+            payload = encode({"k": "crash", "e": "module: " + describe(exc)})
+            exc = None
+        if hit[0]:
+            payload = encode({"k": "resource", "e": "module: memory or recursion limit"})
+        fn = ns.get(entry) if payload is None else None
+        if payload is None and not callable(fn):
+            payload = encode({"k": "crash", "e": "entry " + repr(entry) + " is not a function"})
         emit(end)
-        if hit[0] or (module_err is not None and isinstance(module_err, resource_types)):
-            row({"k": "resource", "e": "module: memory or recursion limit"})
+        if payload is not None:
+            emit(head, payload)
             return
-        if module_err is not None:
-            row({"k": "crash", "e": "module: " + describe(module_err)})
-            return
-        fn = ns.get(entry)
-        if not callable(fn):
-            row({"k": "crash", "e": "entry " + repr(entry) + " is not a function"})
-            return
-        row({"k": "ok"})
+        emit(head, encode({"k": "ok"}))
         total = 0
         for call in calls:
             args = deepcopy(call)
@@ -142,33 +173,20 @@ def _setup():
             hit[0] = False
             write(1, next(begin))  # one write: the host's fd_write always takes the whole marker
             try:
-                value = fn(*args)
-                err = None
+                value, err = fn(*args), None
             except BaseException as exc:
-                err = exc
-            write(1, next(end))
-            if hit[0]:
-                row({"k": "resource", "e": "memory or recursion limit reached during the call"})
-                err = value = None
-                continue
-            if err is not None:
-                row(classify(err))
-                err = None
-                continue
+                value, err = None, exc
+                exc = None
             try:
-                value = normalize(value, 0, [0])
-                size = len(dumps(value, allow_nan=True))
-            except MemoryError:
-                row({"k": "resource", "e": "memory: result"})
-                continue
-            except (ValueError, RecursionError, TypeError):
-                row({"k": "crash", "e": "unserializable"})
-                continue
-            if size > max_value or total + size > max_total:
-                row({"k": "crash", "e": "output too large"})
-                continue
+                payload, size = settle(value, err, total)
+            except BaseException:
+                payload, size = encode({"k": "crash", "e": "result could not be read"}), 0
+            if hit[0]:
+                payload, size = encode({"k": "resource", "e": "memory or recursion limit reached during the call"}), 0
+            value = err = args = None  # candidate objects die here, on the call's fuel
+            write(1, next(end))
             total += size
-            row({"k": "ok", "v": value})
+            emit(head, payload)
 
     return run
 

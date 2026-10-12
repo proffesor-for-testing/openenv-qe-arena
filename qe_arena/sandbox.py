@@ -203,6 +203,31 @@ def _format_fields(template: str) -> list[str]:
     return names
 
 
+# re.DEBUG (128) makes the re module print its parse tree. The guest discards Python-level stdout, so
+# a computed flag is harmless; a literal one is refused so honest code never depends on that.
+RE_FLAGS_POSITION = {"compile": 1, "search": 2, "match": 2, "fullmatch": 2, "findall": 2, "finditer": 2,
+                     "split": 3, "sub": 4, "subn": 4}
+RE_DEBUG = 128
+
+
+def _check_re_debug(node: ast.AST) -> list[str]:
+    if isinstance(node, ast.Attribute) and node.attr == "DEBUG":
+        return ["re.DEBUG is not allowed"]
+    if not isinstance(node, ast.Call):
+        return []
+    name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", None)
+    if name not in RE_FLAGS_POSITION:
+        return []
+    flags = [kw.value for kw in node.keywords if kw.arg == "flags"]
+    if len(node.args) > RE_FLAGS_POSITION[name]:
+        flags.append(node.args[RE_FLAGS_POSITION[name]])
+    for expr in flags:
+        for sub in ast.walk(expr):
+            if isinstance(sub, ast.Constant) and type(sub.value) is int and sub.value & RE_DEBUG:
+                return ["re.DEBUG is not allowed"]
+    return []
+
+
 def _check_formatting(tree: ast.AST) -> list[str]:
     problems = []
     allowed_format_names = set()
@@ -284,7 +309,8 @@ def static_gate(source: str) -> list[str]:
     if _ast_depth(tree) > MAX_AST_DEPTH:
         return [f"syntax tree deeper than {MAX_AST_DEPTH}"]
     problems: list[str] = []
-    for problem in [p for node in ast.walk(tree) for p in _check_node(node)] + _check_formatting(tree):
+    found = [p for node in ast.walk(tree) for p in _check_node(node) + _check_re_debug(node)]
+    for problem in found + _check_formatting(tree):
         if problem not in problems:
             problems.append(problem)
     return problems

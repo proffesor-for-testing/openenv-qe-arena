@@ -39,7 +39,7 @@ from .wasi_fs import SIGNATURES as FS_SIGNATURES, VirtualFS
 
 HARNESS = (Path(__file__).resolve().parent / "guest_harness.py").read_text(encoding="utf-8")
 STARTUP_FUEL = 3_000_000_000   # interpreter init plus allowlisted imports (measured 287,333,867)
-HARNESS_FUEL = 1_000_000_000   # harness bookkeeping between calls, refilled at every boundary
+HARNESS_FUEL = 20_000_000      # harness work between calls (marker, row, next args); no candidate code runs there
 BACKSTOP_S = 60.0              # wall clock per instance: infrastructure failure only, never graded
 EPOCH_TICK_S = 0.1
 FIXED_REALTIME_NS = 1_700_000_000 * 10**9

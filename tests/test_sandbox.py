@@ -34,7 +34,7 @@ CORPUS = ROOT / "qe_arena" / "corpus"
 
 # Cross-host golden: identical on arm64 macOS, amd64 Linux and the amd64 arena image. Regenerate only
 # when the runtime, guest harness, budgets, SAFE_EXPORTS or corpus change, and say why in the commit.
-CORPUS_FINGERPRINT = ("7cc2a917d4e9dcdd", 65_614_239, 2560)
+CORPUS_FINGERPRINT = ("301caf2f1ee2a77f", 194_606_462, 2560)
 
 
 def ok(value):
@@ -442,7 +442,7 @@ def test_batch_of_64_calls_costs_a_fixed_small_amount_of_fuel():
     # The gating cost check is in fuel, which load cannot move: wall-clock asserts flaked on ruos.
     first, second = run_calls(BENCH_SRC, "f", BENCH_CALLS), run_calls(BENCH_SRC, "f", BENCH_CALLS)
     assert kinds(first) == ["ok"] * 64 and outcome(first) == outcome(second)
-    assert sum(r.fuel for r in first) == 2_158_952 and max(r.fuel for r in first) < FUEL_PER_CALL // 1000
+    assert sum(r.fuel for r in first) == 6_391_334 and max(r.fuel for r in first) < FUEL_PER_CALL // 100
 
 
 @pytest.mark.skipif(os.environ.get("QE_ARENA_BENCH") != "1", reason="wall-clock benchmark; set QE_ARENA_BENCH=1")
