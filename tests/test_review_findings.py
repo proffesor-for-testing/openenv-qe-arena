@@ -135,6 +135,8 @@ def test_run_tests_output_is_capped():
 
 
 # Codex S5 and red team #2: a timeout counted as a kill, and a timeout during generation changed the task.
+# Since the WASI review (P5) a persistent infrastructure failure is not scored at all: it is an error,
+# never a kill and never a 0, and the same submission is graded normally once the sandbox recovers.
 def test_a_mutant_timeout_is_never_a_kill(monkeypatch):
     task = make_task("qe_mutant_kill-d1", 93)
     p = task.private
@@ -147,11 +149,16 @@ def test_a_mutant_timeout_is_never_a_kill(monkeypatch):
 
     env = QEEnvironment()
     env.reset(seed=93, task_id=task.task_id)  # generate under normal conditions first
-    monkeypatch.setattr(sandbox, "run_calls", mutant_times_out)
     ref = real(p["original"], p["entry"], [p["inputs"][0]])[0]
     expected = {"raises": ref.value} if ref.kind == "exc" else ref.value
-    obs = env.step(QEAction(op="submit", answer={"tests": [{"args": p["inputs"][0], "expected": expected}]}))
-    assert obs.done and obs.reward == 0.0
+    answer = {"tests": [{"args": p["inputs"][0], "expected": expected}]}
+    monkeypatch.setattr(sandbox, "run_calls", mutant_times_out)
+    with pytest.raises(sandbox.InfraError):
+        env.step(QEAction(op="submit", answer=answer))
+    assert not env._done and env._reward == 0.0 and env.state.step_count == 0
+    monkeypatch.setattr(sandbox, "run_calls", real)
+    obs = env.step(QEAction(op="submit", answer=answer))
+    assert obs.done and obs.reward == tasks.grade_mutant_kill(task, answer)
 
 
 @pytest.mark.parametrize("task_id", ["qe_bugfix-d1", "qe_mutant_kill-d1"])
@@ -245,3 +252,49 @@ def test_mutant_kill_credit_does_not_depend_on_test_order():
     assert tasks.grade_mutant_kill(task, {"tests": [killing, looping]}) == 1.0
     assert tasks.grade_mutant_kill(task, {"tests": [looping, killing]}) == 1.0
     assert tasks.grade_mutant_kill(task, {"tests": [looping]}) == 0.0  # a loop is never a kill
+
+
+# Codex review of the WASI sandbox, P5: a persistent infrastructure failure graded as 0, so a correct
+# submission could earn different rewards depending on the machine. It must be an error frame instead.
+def _always_infra(source, entry, calls, **kw):
+    return [sandbox.CallResult(kind="infra", error="simulated worker failure") for _ in calls]
+
+
+def test_infrastructure_failure_at_submit_is_an_error_and_consumes_nothing(monkeypatch):
+    task = make_task("qe_bugfix-d1", 4)
+    env = QEEnvironment()
+    env.reset(seed=4, task_id=task.task_id)
+    env.step(QEAction(op="edit", path=MODULE, old=task.private["buggy"], new=task.private["original"]))
+    before = env.state.step_count
+    monkeypatch.setattr(sandbox, "run_calls", _always_infra)
+    with pytest.raises(sandbox.InfraError):
+        env.step(QEAction(op="submit", answer={}))
+    with pytest.raises(sandbox.InfraError):
+        env.step(QEAction(op="run_tests"))
+    assert not env._done and env.state.step_count == before and env._test_runs == 0
+    monkeypatch.undo()
+    assert env.step(QEAction(op="run_tests")).content.startswith("3/3")
+    obs = env.step(QEAction(op="submit", answer={}))
+    assert obs.done and obs.reward == 1.0
+
+
+def test_infrastructure_failure_reaches_the_client_as_an_error_frame_not_a_reward(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from qe_arena.app import app
+
+    task = make_task("qe_bugfix-d1", 4)
+    with TestClient(app).websocket_connect("/ws") as ws:
+        ws.send_text(json.dumps({"type": "reset", "data": {"task_id": task.task_id, "seed": 4}}))
+        assert json.loads(ws.receive_text())["type"] == "observation"
+        fix = {"op": "edit", "path": MODULE, "old": task.private["buggy"], "new": task.private["original"]}
+        ws.send_text(json.dumps({"type": "step", "data": fix}))  # an unedited file scores 0 without running
+        assert json.loads(ws.receive_text())["type"] == "observation"
+        monkeypatch.setattr(sandbox, "run_calls", _always_infra)
+        ws.send_text(json.dumps({"type": "step", "data": {"op": "submit", "answer": {}}}))
+        frame = json.loads(ws.receive_text())
+        assert frame["type"] == "error" and "reward" not in json.dumps(frame), frame
+        monkeypatch.undo()
+        ws.send_text(json.dumps({"type": "step", "data": {"op": "submit", "answer": {}}}))
+        graded = json.loads(ws.receive_text())
+        assert graded["type"] == "observation" and graded["data"]["done"] and graded["data"]["reward"] == 1.0

@@ -157,6 +157,14 @@ KINDS = ("ok", "exc", "fuel", "resource", "crash", "skipped", "rejected", "infra
 WORKER_KINDS = frozenset({"ok", "exc", "fuel", "resource", "crash", "skipped", "infra"})
 
 
+class InfraError(RuntimeError):
+    """The sandbox infrastructure failed (worker died, backstop, pool exhausted), not the code.
+
+    Never a reward: the environment lets it propagate, so the OpenEnv server answers with an error
+    frame and the episode stays open, instead of scoring a correct answer 0.
+    """
+
+
 @dataclass
 class CallResult:
     """One call's outcome. ``fuel`` is what the call consumed (0 when it never ran)."""

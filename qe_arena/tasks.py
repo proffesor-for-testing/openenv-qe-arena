@@ -95,13 +95,17 @@ def _settled(result: sandbox.CallResult) -> bool:
 def _outputs(source: str, entry: str, calls: list[list]) -> list[sandbox.CallResult]:
     """Run calls once: fuel metering makes every outcome deterministic, so machine load cannot decide one.
 
-    Callers treat any unsettled result (fuel, resource, crash, infra) as unusable, never as a
-    behavioural difference. Only ``infra`` (the sandbox worker itself failed; ``timeout`` is its
-    legacy alias) is transient, so a batch that reports it is run once more.
+    Callers treat any unsettled result (fuel, resource, crash, skipped) as unusable, never as a
+    behavioural difference. ``infra`` (the sandbox worker itself failed; ``timeout`` is its legacy
+    alias) is the only transient kind: the batch is run once more, and if it still fails this raises
+    InfraError instead of returning anything a grade could turn into a reward.
     """
     results = sandbox.run_calls(source, entry, calls)
     if any(r.kind in ("infra", "timeout") for r in results):
         results = sandbox.run_calls(source, entry, calls)
+        failed = [r for r in results if r.kind in ("infra", "timeout")]
+        if failed:
+            raise sandbox.InfraError(f"sandbox infrastructure failed twice: {failed[0].error}"[:300])
     return results
 
 
