@@ -136,6 +136,7 @@ MAX_RESULT_BYTES = 960 * 1024
 MAX_VALUE_BYTES = 128 * 1024
 MAX_RESPONSE_BYTES = 4 << 20
 
+DEFAULT_MEM_MB = 256              # linear-memory cap per instance
 FUEL_PER_CALL = 100_000_000       # ~90x the most expensive corpus call (1.1 M)
 MODULE_FUEL = 200_000_000         # executing the candidate's module body
 FUEL_PER_SECOND = 200_000_000     # only to translate a legacy per_call_timeout_s into fuel
@@ -436,7 +437,7 @@ def _parse_results(response: Any, n: int) -> list[CallResult]:
 
 
 def run_calls(source: str, entry: str, calls: list[list], *, timeout_s: float | None = None,
-              per_call_timeout_s: float | None = None, mem_mb: int = 256, fuel: int | None = None,
+              per_call_timeout_s: float | None = None, mem_mb: int = DEFAULT_MEM_MB, fuel: int | None = None,
               _skip_gate: bool = False) -> list[CallResult]:
     """Call ``entry(*args)`` for each args list in ``calls`` in one sandboxed guest instance.
 
@@ -474,7 +475,7 @@ def run_calls(source: str, entry: str, calls: list[list], *, timeout_s: float | 
     return [CallResult("infra", None, f"sandbox worker: {status}"[:200]) for _ in calls]
 
 
-def _probe_guest(kind: str = "surface", mem_mb: int = 256) -> dict:
+def _probe_guest(kind: str = "surface", mem_mb: int = DEFAULT_MEM_MB) -> dict:
     """Ask the guest harness to describe its own surface (test hook; runs no candidate code)."""
     response = _dispatch({"probe": kind, "nonce": secrets.token_hex(16), "modules": SAFE_EXPORTS,
                           "mem_mb": mem_mb})

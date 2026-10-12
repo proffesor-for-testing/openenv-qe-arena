@@ -349,22 +349,26 @@ def main() -> int:
     def send(obj: dict) -> None:
         out.write(json.dumps(obj, allow_nan=True).encode("utf-8", "surrogatepass") + b"\n")
 
-    send({"ready": True})
-    for line in sys.stdin.buffer:
-        try:
-            req = json.loads(line)
-        except ValueError:
-            send({"error": "bad request"})
-            continue
-        try:
-            if "probe" in req:
-                send({"id": req.get("id"), "probe": probe(runtime, req)})
-            else:
-                send({"id": req.get("id"), "results": run_batch(runtime, req)})
-        except Exception as exc:  # noqa: BLE001 - report, keep serving
-            send({"id": req.get("id"), "error": f"{type(exc).__name__}: {exc}"[:300]})
+    try:
+        send({"ready": True})
+        for line in sys.stdin.buffer:
+            send(_answer(runtime, line))
+    except BrokenPipeError:
+        pass  # the parent went away (server shutdown): nothing left to answer
     return 0
 
+
+def _answer(runtime: Runtime, line: bytes) -> dict:
+    try:
+        req = json.loads(line)
+    except ValueError:
+        return {"error": "bad request"}
+    try:
+        if "probe" in req:
+            return {"id": req.get("id"), "probe": probe(runtime, req)}
+        return {"id": req.get("id"), "results": run_batch(runtime, req)}
+    except Exception as exc:  # noqa: BLE001 - report, keep serving
+        return {"id": req.get("id"), "error": f"{type(exc).__name__}: {exc}"[:300]}
 
 if __name__ == "__main__":
     sys.exit(main())
