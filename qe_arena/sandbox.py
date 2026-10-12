@@ -140,7 +140,7 @@ DEFAULT_MEM_MB = 256              # linear-memory cap per instance
 FUEL_PER_CALL = 100_000_000       # ~90x the most expensive corpus call (1.1 M)
 MODULE_FUEL = 200_000_000         # executing the candidate's module body
 FUEL_PER_SECOND = 200_000_000     # only to translate a legacy per_call_timeout_s into fuel
-WORKER_STARTUP_S = 180.0          # compiling python.wasm takes ~3 s on 2 vCPU; generous for loaded hosts
+WORKER_STARTUP_S = 180.0          # compiling python.wasm takes ~5 s at --cpus=2; generous for loaded hosts
 BATCH_BACKSTOP_S = 300.0          # parent-side wait for one batch before the worker is replaced
 
 KINDS = ("ok", "exc", "fuel", "resource", "crash", "rejected", "infra", "timeout")
