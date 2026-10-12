@@ -95,9 +95,11 @@ The oracle never runs in the same process as model-influenced code, and no code 
    wasmtime fault or host bug cannot take down `/health`. The worker runs `python.wasm` (brettcannon/cpython-
    wasi-build v3.14.7) in wasmtime 47.0.1, with a fresh Store and Instance per batch:
    - **Fuel, not time.** Every call is metered in wasmtime fuel (about one unit per wasm instruction):
-     `FUEL_PER_CALL` = 100 M per call and `MODULE_FUEL` = 200 M for the module body. Corpus calls use
-     8.8 k to 1.11 M fuel (median 19 k), so the per-call budget is a 90x margin. A 60 s wall-clock epoch
-     deadline exists only as an infrastructure backstop.
+     `FUEL_PER_CALL` = 100 M per call and `MODULE_FUEL` = 200 M for the module body. A call's fuel includes
+     building its result row (normalizing, serializing, `str()` of an exception), so corpus calls use 24 k
+     to 1.34 M fuel (median 58 k), a 75x margin. Between calls the harness gets only 20 M
+     (`HARNESS_FUEL`); no candidate code runs there. A 60 s wall-clock epoch deadline exists only as an
+     infrastructure backstop.
    - **Memory and stack.** Linear memory is capped at 256 MiB (`DEFAULT_MEM_MB`); the wasm stack is bounded.
    - **No host.** The guest has no host directory at all: `qe_arena/wasi_fs.py` answers every `fd_*` and
      `path_*` call from memory, exposing one read-only directory `/lib` that holds one reproducible stdlib zip,
@@ -114,6 +116,13 @@ The oracle never runs in the same process as model-influenced code, and no code 
      batch closed, so nothing a candidate prints can forge a result or move fuel accounting.
    - **Restricted guest.** Inside, code runs with a restricted builtins map, and `import` returns only proxy
      modules that carry an audited list of names. Expected values never enter the worker or the guest.
+     Python-level `sys.stdout`/`sys.stderr` discard everything (only the harness writes fd 1, with
+     `os.write`), so `re.DEBUG`'s parse-tree printout or a warning cannot break the protocol. The gate also
+     refuses a literal `re.DEBUG` flag.
+   - **Candidate code only ever runs on its call's fuel.** The result row is built before the end marker:
+     the exception's `str()` (an instance can override what it calls), normalizing and serializing the
+     value, and dropping the call's objects (a generator's `finally:` runs there). The red team finished a
+     2.8e8-fuel loop inside an exception's `str()` on the harness's refill before this.
    - **Nothing worth reading above the candidate.** Candidate code runs below exactly two frames: the closure
      the harness's setup returns, and the root module frame, whose globals are cleared first. The nonce
      exists only inside `itertools.cycle` objects (no attribute or repr shows their bytes), the pending
@@ -133,10 +142,14 @@ The oracle never runs in the same process as model-influenced code, and no code 
      fuel of interpreter startup per call, so instead `grade_mutant_kill` runs each submitted test as its
      own batch: credit does not depend on test order, and a test that loops one mutant cannot cancel
      another test.
-   - **Every wait has a deadline.** Acquiring a pool worker, starting one, writing the request (non-blocking,
-     select-bounded) and reading the response all end by `BATCH_BACKSTOP_S`. A stopped or wedged worker is
-     killed and replaced, and the batch is retried once. `warm()` returns every worker it started even when
-     a later one fails.
+   - **Every wait has a deadline, and the pool is fair.** Acquiring a pool worker, starting one, writing the
+     request (non-blocking, select-bounded) and reading the response all end by `BATCH_BACKSTOP_S`. A
+     stopped or wedged worker is killed and replaced, and the batch is retried once. `warm()` returns every
+     worker it started even when a later one fails. Each environment instance grades under its own session
+     key. Waiters are served first come first served among sessions under their cap, and no session holds
+     more than `pool_size - 1` workers. Together with one instance per trapped batch, two sessions grading
+     looping code kept honest episodes at a median of 3.1 s and a max of 8.6 s on ruos (2 workers), where
+     the red team had measured 45 s and 154 s.
    - **Runtime identity.** At startup the worker hashes `python.wasm` and the stdlib zip, compares them with
      `qe_arena/runtime_pins.json`, and compiles and serves those exact bytes. It refuses to report ready on a
      mismatch.
@@ -191,7 +204,7 @@ The oracle never runs in the same process as model-influenced code, and no code 
    | `exc` | raised; compared by type name (`RecursionError` stays unsettled, as below) | yes |
    | `fuel` | used its whole fuel budget (loops, or far too slow) | no |
    | `resource` | hit the memory cap or exhausted the wasm stack | no |
-   | `crash` | unserializable result, oversized output, module-level error, missing entry | no |
+   | `crash` | unserializable result, oversized output, module-level error, missing entry, protocol violation; a candidate failure, never infra | no |
    | `skipped` | not run: an earlier call in the batch trapped and ended the instance | no |
    | `infra` | the worker died, hung or failed its identity check, or the backstop fired; `timeout` is its legacy alias | never graded |
    | `rejected` | the static gate refused the source | no |
@@ -223,7 +236,7 @@ The oracle never runs in the same process as model-influenced code, and no code 
      checks at startup. The Docker builder stage runs it. Both base images are pinned by digest, and wasmtime
      installs with `--require-hashes` (`requirements-wasmtime.lock`).
    - `scripts/fingerprint.py` hashes kind, value and fuel for every corpus function on 64 inputs (2,560
-     calls). `tests/test_sandbox.py` pins the result, currently `7cc2a917d4e9dcdd` with 65,614,239 total fuel,
+     calls). `tests/test_sandbox.py` pins the result, currently `301caf2f1ee2a77f` with 194,606,462 total fuel,
      identical on arm64 macOS, an amd64 Linux host and the amd64 image run with the arena flags. The commit that
      changes the pin says why.
    - Regenerate the pin only when the runtime, the guest harness, the budgets, `SAFE_EXPORTS` or the corpus
