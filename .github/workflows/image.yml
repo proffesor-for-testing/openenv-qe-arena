@@ -14,17 +14,44 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The gate: everything but the slow statistical and many-seed tests (tests/conftest.py).
   test:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      QE_ARENA_WASI_WORKERS: "1"  # one WASI worker per xdist process, so 4 processes fill 4 vCPUs
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - run: python -m pip install --no-cache-dir -r requirements.lock pytest
+      - run: python -m pip install --no-cache-dir -r requirements.lock pytest==9.1.1 pytest-xdist==3.8.0
       - run: python scripts/build_wasi_runtime.py --out runtime
-      - run: python -m pytest -q tests
+      - run: python -m pytest -q -n 4 -m "not slow" tests
+
+  # After the merge: the slow tests, in three shards. Not a gate for the image; a submission waits
+  # for it on the image's commit.
+  slow:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - tests/test_flaky.py
+          - tests/test_flaky_audit.py
+          - tests --ignore=tests/test_flaky.py --ignore=tests/test_flaky_audit.py
+    env:
+      QE_ARENA_WASI_WORKERS: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --no-cache-dir -r requirements.lock pytest==9.1.1 pytest-xdist==3.8.0
+      - run: python scripts/build_wasi_runtime.py --out runtime
+      - run: python -m pytest -q -n 4 -m slow ${{ matrix.shard }}
 
   image:
     needs: test
@@ -37,6 +64,9 @@ jobs:
       IMAGE: ghcr.io/${{ github.repository_owner }}/openenv-qe-arena
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
       - name: Build (linux/amd64)
         run: docker build --platform linux/amd64 -t qe-arena:ci .
       - name: Check image limits
@@ -50,7 +80,9 @@ jobs:
           test "$size" -lt 2147483648
       - name: Validate the running container
         run: |
-          python3 -m venv /tmp/v && /tmp/v/bin/pip install -q -r requirements.lock
+          python -m venv /tmp/v && /tmp/v/bin/pip install -q -r requirements.lock
+          # smoke_ws.py builds its reference tasks on the host, so the host needs the WASI runtime too
+          /tmp/v/bin/python scripts/build_wasi_runtime.py --out runtime
           docker run -d --name env --read-only --tmpfs /tmp -p 8000:8000 qe-arena:ci
           for i in $(seq 1 30); do curl -sf localhost:8000/health && break; sleep 1; done
           /tmp/v/bin/openenv validate --url http://127.0.0.1:8000
