@@ -1,8 +1,11 @@
 """Calibration statistics: Jeffreys posteriors, GRPO groups, and error rows kept apart.
 
-Rows with ``reward: null`` (harness errors) and rows that ended on a calibration budget
-(``global_budget``, ``context_budget``, ``completion_budget``) are artefacts of our harness, not of
-the model: both are counted, reported separately and excluded, never scored as 0."""
+Rows with ``reward: null`` (harness errors) and ``global_budget`` rows (the whole calibration run ran
+out of tokens) are artefacts of our harness: counted, reported apart and excluded, never scored as 0.
+``context_budget`` and ``completion_budget`` depend on the limits the episode ran under: at or above the
+submitted template's limits the arena would hit them too, so they are real failures (reward 0); under
+those limits they are artefacts and are excluded with a warning. ``episode_status`` is the one rule,
+shared by stats, select and search."""
 
 from __future__ import annotations
 
@@ -19,6 +22,10 @@ CI = 0.90
 TRAIN_GROUP = 4
 PROJECTED_GROUPS = (4, 5)
 BUDGET_ENDS = frozenset({"global_budget", "context_budget", "completion_budget"})
+# calibrate.py's documented per-episode defaults, used when a row does not record the limits it ran under
+CALIBRATE_LIMITS = {"completion_tokens": 4096, "context_tokens": 8192}
+ROW_LIMIT_FIELDS = {"completion_tokens": "episode_completion_tokens", "context_tokens": "episode_context_tokens"}
+BUDGET_LIMIT = {"completion_budget": "completion_tokens", "context_budget": "context_tokens"}
 
 
 def _betacf(a: float, b: float, x: float) -> float:
@@ -126,12 +133,29 @@ def is_error(row: dict) -> bool:
     return row.get("reward") is None
 
 
-def is_budget(row: dict) -> bool:
-    return not is_error(row) and row.get("end") in BUDGET_ENDS
+def episode_status(row: dict, limits: dict | None) -> str:
+    """'error', 'harness_budget' (global_budget), 'under_limit' (a per-episode budget end hit under the
+    submitted ``limits``, or with no limits to compare), 'budget_failure' (hit at or above them: the
+    arena would fail too) or 'valid'."""
+    if is_error(row):
+        return "error"
+    end = row.get("end")
+    if end == "global_budget":
+        return "harness_budget"
+    if end in BUDGET_LIMIT:
+        key = BUDGET_LIMIT[end]
+        ran = row.get(ROW_LIMIT_FIELDS[key], CALIBRATE_LIMITS[key])
+        submitted = (limits or {}).get(key)
+        return "under_limit" if submitted is None or ran < submitted else "budget_failure"
+    return "valid"
 
 
-def is_excluded(row: dict) -> bool:
-    return is_error(row) or is_budget(row)
+def is_excluded(row: dict, limits: dict | None = None) -> bool:
+    return episode_status(row, limits) in ("error", "harness_budget", "under_limit")
+
+
+def template_limits(template: list[dict] | None) -> dict:
+    return {e["task_id"]: {k: e.get(k) for k in CALIBRATE_LIMITS} for e in (template or [])}
 
 
 def group_key(row: dict, by_corpus: bool) -> tuple:
@@ -142,10 +166,11 @@ def all_equal(rewards: list[float]) -> bool:
     return len({round(float(r), 9) for r in rewards}) <= 1
 
 
-def summarize(rows: list[dict], by_corpus: bool = True) -> dict:
+def summarize(rows: list[dict], by_corpus: bool = True, limits: dict | None = None) -> dict:
     """Stats for one cell. Same-seed groups are (task_id, seed[, corpus]) across attempts and need two
     valid episodes; the projection treats every valid episode as one fresh instance."""
-    valid = [r for r in rows if not is_excluded(r)]
+    status = Counter(episode_status(r, limits) for r in rows)
+    valid = [r for r in rows if not is_excluded(r, limits)]
     rewards = [float(r["reward"]) for r in valid]
     groups = defaultdict(list)
     for r in valid:
@@ -154,7 +179,8 @@ def summarize(rows: list[dict], by_corpus: bool = True) -> dict:
     solves = sum(1 for x in rewards if x == 1.0)
     steps = sum(int(r.get("steps", 0)) for r in valid)
     return {
-        "episodes": len(rows), "errors": sum(map(is_error, rows)), "budget": sum(map(is_budget, rows)),
+        "episodes": len(rows), "errors": status["error"], "budget": status["harness_budget"] + status["under_limit"],
+        "under_limit": status["under_limit"], "budget_failures": status["budget_failure"],
         "valid": len(valid), "mean_reward": (sum(rewards) / len(rewards)) if rewards else None,
         "partial": sum(1 for x in rewards if 0.0 < x < 1.0),
         "solve": posterior(solves, len(valid)),
@@ -168,15 +194,24 @@ def summarize(rows: list[dict], by_corpus: bool = True) -> dict:
     }
 
 
-def compute_stats(rows: list[dict]) -> dict:
+def compute_stats(rows: list[dict], template: list[dict] | None = None) -> dict:
+    """Per cell and per (cell, corpus). ``template`` supplies the submitted limits that decide whether a
+    per-episode budget end is a failure or an artefact; without it every such end is an artefact."""
+    limits = template_limits(template)
     cells = defaultdict(list)
     per_corpus = defaultdict(list)
     for r in rows:
         cells[r["task_id"]].append(r)
         if r.get("corpus") is not None:
             per_corpus[(r["task_id"], r["corpus"])].append(r)
-    return {"cells": {t: summarize(rs) for t, rs in sorted(cells.items())},
-            "cell_corpus": {f"{t}|{c}": summarize(rs) for (t, c), rs in sorted(per_corpus.items())}}
+    out = {"cells": {t: summarize(rs, limits=limits.get(t)) for t, rs in sorted(cells.items())},
+           "cell_corpus": {f"{t}|{c}": summarize(rs, limits=limits.get(t)) for (t, c), rs in sorted(per_corpus.items())}}
+    under = sum(c["under_limit"] for c in out["cells"].values())
+    if under:
+        print(f"warning: {under} context/completion budget end(s) ran under the submitted limits (or no template "
+              "was given) and are excluded; calibrate at the template's limits to count them as failures",
+              file=sys.stderr)
+    return out
 
 
 def _fmt_post(p: dict) -> str:
@@ -185,7 +220,8 @@ def _fmt_post(p: dict) -> str:
     return f"{p['k']}/{p['n']} {p['mean']:.2f} [{p['lo']:.2f},{p['hi']:.2f}]"
 
 
-LEGEND = ("err = reward null, bud = calibration-budget end; both excluded, never 0. same-seed inf: measured "
+LEGEND = ("err = reward null, bud = global budget or a per-episode budget hit under the submitted limits; both "
+          "excluded, never 0 (a budget end at the submitted limits is a real failure). same-seed inf: measured "
           "share of (task, seed[, corpus]) groups whose rewards differ. p_mix@G: posterior mean chance that G "
           "fresh instances do not all get the same reward (partial credit counts). The arena trains on 4 of 5.")
 

@@ -2,12 +2,17 @@
 
 A result is one ``runs[]`` record from the public leaderboard (GET /api/leaderboard, no auth). Every
 entry keeps the record it was built from and is re-validated on every read; the chain head is anchored
-in a ``.head`` sidecar, so editing, reordering or deleting any line, the last included, fails."""
+in a ``.head`` sidecar, so editing, reordering or deleting any line, the last included, fails.
+
+The chain and the head catch ACCIDENTS (a hand edit, a truncated copy, a bad merge), not an adversary:
+anyone who can write the ledger can rewrite it and recompute both. For evidence, publish the head hash
+`show` prints somewhere the ledger's writer cannot edit."""
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sys
 import urllib.request
@@ -76,11 +81,11 @@ def parse_result(run: dict) -> tuple[str, dict]:
     return run["run_id"], clean
 
 
-def read_ledger(path: Path) -> list[dict]:
+def read_ledger(path: Path, check_head: bool = True) -> list[dict]:
     """Read and verify: chain, sequence, head anchor, and every entry against its own record."""
     head = head_path(path)
     if not path.exists():
-        if head.exists():
+        if head.exists() and check_head:
             raise SystemExit(f"{path} is missing but {head.name} anchors a head")
         return []
     text = path.read_text()
@@ -102,11 +107,14 @@ def read_ledger(path: Path) -> list[dict]:
             raise SystemExit(f"{path}:{n}: entry disagrees with its own run record")
         prev = last = line_sha(line)
         entries.append(entry)
+    if not check_head:
+        return entries
     if entries:
         anchor = json.loads(head.read_text()) if head.exists() else None
         if anchor != {"seq": len(entries), "sha256": last}:
             raise SystemExit(f"{path}: head anchor {anchor} does not match the last entry "
-                             f"(seq {len(entries)}, {last[:12]}); a line was removed or edited")
+                             f"(seq {len(entries)}, {last[:12]}); a line was removed or edited, or a write was "
+                             "interrupted (inspect the ledger, then `ledger repair-head --i-checked-the-ledger`)")
     elif head.exists():
         raise SystemExit(f"{path} is empty but {head.name} anchors a head")
     return entries
@@ -148,8 +156,29 @@ def append_run(ledger: Path, run: dict, receipt: dict, request: dict, source: st
     ledger.parent.mkdir(parents=True, exist_ok=True)
     with ledger.open("a") as handle:
         handle.write(line + "\n")
-    head_path(ledger).write_text(json.dumps({"seq": entry["seq"], "sha256": line_sha(line)}) + "\n")
+    write_head(ledger, entry["seq"], line_sha(line))
     return entry
+
+
+def write_head(ledger: Path, seq: int, sha: str) -> None:
+    """Atomic: a crash leaves the old head or the new one, never half a file."""
+    head = head_path(ledger)
+    tmp = head.with_name(head.name + ".tmp")
+    tmp.write_text(json.dumps({"seq": seq, "sha256": sha}) + "\n")
+    os.replace(tmp, head)
+
+
+def repair_head(ledger: Path, confirmed: bool) -> dict:
+    """Recompute the head from the ledger as it stands, after a crash between the append and the head
+    write. Every other check still runs; the confirmation is a human saying the lines are right."""
+    if not confirmed:
+        raise SystemExit("repair-head trusts the ledger's current lines; inspect them, then pass "
+                         "--i-checked-the-ledger")
+    entries = read_ledger(ledger, check_head=False)
+    if not entries:
+        raise SystemExit(f"{ledger} has no entries")
+    write_head(ledger, len(entries), line_sha(ledger.read_text().splitlines()[-1]))
+    return json.loads(head_path(ledger).read_text())
 
 
 def ledger_add(ledger: Path, receipt_path: Path, result_path: Path, request_path: Path | None = None,
@@ -171,6 +200,9 @@ def http_get_json(url: str, timeout: float = 30.0, max_bytes: int = MAX_BYTES) -
 def check_board(board: dict) -> dict:
     if not isinstance(board, dict) or not isinstance(board.get("runs"), list):
         raise SystemExit("leaderboard response has no runs list")
+    bad = [i for i, run in enumerate(board["runs"]) if not isinstance(run, dict)]
+    if bad:
+        raise SystemExit(f"leaderboard runs[{bad[0]}] is not an object ({len(bad)} such entries); refusing the board")
     validate_scores((board.get("baseline") or {}).get("scores"), "leaderboard baseline")
     return board
 
@@ -195,8 +227,9 @@ def fetch_leaderboard(get=http_get_json, url: str = LEADERBOARD, cursor_url: str
             raise SystemExit(f"leaderboard still paging after {max_pages} pages; stopping")
         seen.add(cursor)
         page = get(cursor_url.format(url=url, cursor=cursor))
-        if not isinstance(page, dict) or not isinstance(page.get("runs"), list):
-            raise SystemExit(f"leaderboard page {cursor!r} has no runs list")
+        if not isinstance(page, dict) or not isinstance(page.get("runs"), list) or \
+                not all(isinstance(run, dict) for run in page["runs"]):
+            raise SystemExit(f"leaderboard page {cursor!r} has no runs list of objects")
         board["runs"] += page["runs"]
         cursor, pages = page.get("next_cursor"), pages + 1
     return board

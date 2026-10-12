@@ -18,13 +18,40 @@ from pathlib import Path
 
 import numpy as np
 
-from .stats import TRAIN_GROUP, is_excluded
+from .stats import TRAIN_GROUP, episode_status
 
 ROOT = Path(__file__).resolve().parents[2]
 LEVELS = ("d1", "d2", "d3")
 METRICS = ("mixed_rate", "mean_reward", "solve_rate")
 BOOT = 2000
-ALPHA = 0.05  # one-sided: accept only when the 5th percentile of the paired bootstrap clears the bar
+ALPHA = 0.05  # total one-sided error budget per move, spent across its tests (see alpha_for)
+SEEDS = 64  # per split: the review measured >= 80% power for a 3-cell gain at 64, about 34% at 32
+# Fields that differ between two genuine runs of the same episode; `seconds` and the like do not count.
+STABLE = ("reward", "end", "steps", "invalid", "completion_tokens", "prompt_tokens_last", "corpus")
+
+
+def alpha_for(retest: int) -> float:
+    """Alpha spending for repeated tests of one move: ALPHA/2, ALPHA/4, ... sums to ALPHA."""
+    return ALPHA * 0.5 ** (retest + 1)
+
+
+def move_key(knob: str, value) -> tuple:
+    return knob, json.dumps(value, sort_keys=True)
+
+
+def history_status(history: list[dict]) -> tuple[set, Counter]:
+    """Blocked moves and retest counts from past ``decide`` results. A move is blocked when it was
+    accepted, or rejected with the discovery bootstrap UPPER bound below the margin (it cannot be a gain).
+    Any other rejection was inconclusive: the move may be tested again, at a smaller alpha."""
+    blocked, retests = set(), Counter()
+    for h in history:
+        key = move_key(h["knob"], h["to"])
+        disc = h.get("discovery") or {}
+        if h.get("accept") or ("upper_bound" in disc and disc["upper_bound"] < h.get("margin", 0.0)):
+            blocked.add(key)
+        else:
+            retests[key] += 1
+    return blocked, retests
 
 
 STEP = {"max_steps": (4, 4, 32), "max_test_runs": (1, 0, 8), "completion_tokens": (2048, 1024, 16384)}
@@ -97,14 +124,15 @@ def pick_seed_range(rng, count: int, taken: set[int]) -> int:
 
 
 def plan_sha(plan: dict) -> str:
+    """Catches an accidental edit between propose and decide; anyone can recompute it after a deliberate one."""
     body = {k: v for k, v in plan.items() if k != "plan_sha256"}
     return hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 def propose(config: dict, seed: int, seen_seeds: set[int], history: list[dict], tasks: list[str],
-            discovery_seeds: int = 32, confirm_seeds: int = 32, attempts: int = 1, margin: float = 0.0,
+            discovery_seeds: int = SEEDS, confirm_seeds: int = SEEDS, attempts: int = 1, margin: float = 0.0,
             confirm_tolerance: float = 0.05, metric: str = "mixed_rate", group_size: int = TRAIN_GROUP,
-            error_tolerance: float = 0.05) -> dict:
+            error_tolerance: float = 0.02) -> dict:
     validate_config(config)
     if metric not in METRICS:
         raise SystemExit(f"metric must be one of {METRICS}")
@@ -112,16 +140,18 @@ def propose(config: dict, seed: int, seen_seeds: set[int], history: list[dict], 
         raise SystemExit("mixed_rate treats every episode as a fresh instance; use --attempts 1")
     if min(discovery_seeds, confirm_seeds) * attempts < group_size:
         raise SystemExit(f"each task needs at least {group_size} episodes per split")
-    tried = {(h["knob"], json.dumps(h["to"], sort_keys=True)) for h in history}
-    moves = [m for m in candidate_moves(config) if (m[0], json.dumps(m[1], sort_keys=True)) not in tried]
+    blocked, retests = history_status(history)
+    moves = [m for m in candidate_moves(config) if move_key(*m) not in blocked]
     if metric != "mixed_rate":  # a mix shift toward easy cells wins on reward without any training
         moves = [m for m in moves if m[0] != "difficulty_mix"]
     if not moves:
-        raise SystemExit("every single-knob move from this config has been tried")
+        raise SystemExit("every single-knob move from this config has been accepted or ruled out")
     rng = np.random.default_rng(seed)
     knob, value = moves[int(rng.integers(len(moves)))]
     candidate = apply_move(config, knob, value)
     assert changed_knobs(config, candidate) == [knob]
+    retest = retests[move_key(knob, value)]
+    alpha = alpha_for(retest)
     taken = set(seen_seeds)
     disc = pick_seed_range(rng, discovery_seeds, taken)
     taken |= set(range(disc, disc + discovery_seeds))
@@ -131,9 +161,10 @@ def propose(config: dict, seed: int, seen_seeds: set[int], history: list[dict], 
     plan = {
         "kind": "onecell-plan", "seed": seed, "knob": knob, "from": knob_value(config, knob), "to": value,
         "baseline": config, "candidate": candidate, "metric": metric, "group_size": group_size,
-        "rule": {"discovery": f"paired-bootstrap {ALPHA:.0%} lower bound of candidate - baseline > {margin}",
-                 "confirmation": f"paired-bootstrap {ALPHA:.0%} lower bound > {-confirm_tolerance}",
-                 "margin": margin, "confirm_tolerance": confirm_tolerance, "alpha": ALPHA, "boot": BOOT,
+        "retest": retest,
+        "rule": {"discovery": f"paired-bootstrap {alpha:.2%} lower bound of candidate - baseline > {margin}",
+                 "confirmation": f"paired-bootstrap {alpha:.2%} lower bound > {-confirm_tolerance}",
+                 "margin": margin, "confirm_tolerance": confirm_tolerance, "alpha": alpha, "boot": BOOT,
                  "error_tolerance": error_tolerance},
         "discovery": split(disc, discovery_seeds), "confirmation": split(conf, confirm_seeds),
         "pairing": "baseline and candidate are independent runs on the SAME seeds and attempts within each "
@@ -171,24 +202,43 @@ def index_arm(rows: list[dict], split: dict, label: str) -> dict:
     return out
 
 
-def arm_values(b: dict, c: dict, split: dict, tolerance: float) -> tuple[dict, dict, dict]:
-    """Per-task (seeds x attempts) reward arrays. An excluded row (error or budget end) counts as a
-    failure (0) for the arm that produced it, and arms whose excluded rates differ by more than
-    ``tolerance`` are refused: an arm must not win by erroring on its hard episodes."""
-    rates = {label: sum(map(is_excluded, arm.values())) / len(arm) for label, arm in (("baseline", b), ("candidate", c))}
+def limits_of(config: dict, task_id: str) -> dict:
+    return {"completion_tokens": config["completion_tokens"].get(task_id),
+            "context_tokens": config.get("context_tokens", {}).get(task_id)}
+
+
+def arm_values(b: dict, c: dict, split: dict, plan: dict) -> tuple[dict, dict, dict]:
+    """Per-task (seeds x attempts) reward arrays. Which rows are excluded is stats.episode_status, under
+    each arm's own limits. For mixed_rate an excluded row is dropped, as the trainer keeps the first 4
+    valid episodes of 5; for the reward metrics it counts as a failure (0) for the arm that produced it.
+    Arms whose excluded rates differ by more than the plan's error tolerance are refused, so an arm
+    cannot win by erroring on the episodes it would fail."""
+    excluded = lambda arm, cfg: {k: episode_status(r, limits_of(cfg, k[0])) in  # noqa: E731
+                                 ("error", "harness_budget", "under_limit") for k, r in arm.items()}
+    flags = {"baseline": excluded(b, plan["baseline"]), "candidate": excluded(c, plan["candidate"])}
+    rates = {label: sum(f.values()) / len(f) for label, f in flags.items()}
+    tolerance = plan["rule"]["error_tolerance"]
     if abs(rates["baseline"] - rates["candidate"]) > tolerance:
         raise SystemExit(f"error/budget rates differ: baseline {rates['baseline']:.3f}, candidate "
                          f"{rates['candidate']:.3f} (tolerance {tolerance})")
     for key in b:
         if b[key].get("corpus") != c[key].get("corpus"):
             raise SystemExit(f"{key} ran different corpus functions in the two arms")
-    strip = lambda r: {k: v for k, v in r.items() if k != "_source"}  # noqa: E731
-    if all(strip(b[k]) == strip(c[k]) for k in b):
-        raise SystemExit("baseline and candidate are the same runs; each arm must be its own run")
-    value = lambda r: 0.0 if is_excluded(r) else float(r["reward"])  # noqa: E731
-    arrays = lambda arm: {t: np.array([[value(arm[(t, s, a)]) for a in range(split["attempts"])]  # noqa: E731
-                                       for s in split["seeds"]], dtype=float) for t in split["task_ids"]}
-    return arrays(b), arrays(c), rates
+    stable = lambda r: tuple(r.get(k) for k in STABLE)  # noqa: E731
+    if all(stable(b[k]) == stable(c[k]) for k in b):
+        raise SystemExit("baseline and candidate are the same runs (identical apart from timings); "
+                         "each arm must be its own run")
+    dropped = np.nan if plan["metric"] == "mixed_rate" else 0.0
+
+    def arrays(arm, flag):
+        out = {t: np.array([[dropped if flag[(t, s, a)] else float(arm[(t, s, a)]["reward"])
+                             for a in range(split["attempts"])] for s in split["seeds"]], dtype=float)
+               for t in split["task_ids"]}
+        short = [t for t, v in out.items() if np.sum(~np.isnan(v)) < plan["group_size"]]
+        if short:
+            raise SystemExit(f"fewer than {plan['group_size']} valid episodes for {short}")
+        return out
+    return arrays(b, flags["baseline"]), arrays(c, flags["candidate"]), rates
 
 
 def task_metric(values: np.ndarray, idx: np.ndarray, metric: str, g: int, codes=None) -> np.ndarray:
@@ -198,11 +248,13 @@ def task_metric(values: np.ndarray, idx: np.ndarray, metric: str, g: int, codes=
         return picked.mean(axis=(1, 2))
     if metric == "solve_rate":
         return (picked == 1.0).mean(axis=(1, 2))
-    onehot = codes[idx]  # B x seeds x attempts x K
+    onehot = codes[idx]  # B x seeds x attempts x K; a dropped (excluded) episode is all zeros
     counts = onehot.sum(axis=(1, 2)).astype(float)
-    n = float(idx.shape[1] * values.shape[1])
+    n = counts.sum(axis=1)
     falling = lambda x: np.prod([x - i for i in range(g)], axis=0)  # noqa: E731
-    return 1.0 - falling(counts.T).sum(axis=0) / falling(np.array(n))  # unbiased P(g draws all equal)
+    with np.errstate(divide="ignore", invalid="ignore"):  # a resample with fewer than g valid episodes
+        same = falling(counts.T).sum(axis=0) / falling(n)
+    return np.where(n >= g, 1.0 - same, np.nan)  # unbiased P(g valid draws not all equal)
 
 
 def weighted(per_task: dict, mix: dict) -> np.ndarray:
@@ -221,24 +273,26 @@ def weighted(per_task: dict, mix: dict) -> np.ndarray:
 
 def evaluate_split(base, cand, split, plan, rng) -> dict:
     b, c = index_arm(base, split, "baseline"), index_arm(cand, split, "candidate")
-    bv, cv, rates = arm_values(b, c, split, plan["rule"]["error_tolerance"])
+    bv, cv, rates = arm_values(b, c, split, plan)
     n_seeds = len(split["seeds"])
     idx = np.vstack([np.arange(n_seeds), rng.integers(n_seeds, size=(plan["rule"]["boot"], n_seeds))])
     per = {"b": {}, "c": {}}
     for t in split["task_ids"]:  # stratified by task, paired by seed: one index matrix for both arms
         codes = None
         if plan["metric"] == "mixed_rate":
-            _, inverse = np.unique(np.round(np.concatenate([bv[t], cv[t]]), 9), return_inverse=True)
-            onehot = np.eye(inverse.max() + 1)[inverse.reshape(2 * n_seeds, -1)]
+            both = np.round(np.concatenate([bv[t], cv[t]]), 9)
+            values = np.unique(both[~np.isnan(both)])
+            onehot = (both[..., None] == values).astype(float)  # NaN matches nothing
             codes_b, codes_c = onehot[:n_seeds], onehot[n_seeds:]
         for arm, vals in (("b", bv[t]), ("c", cv[t])):
             if plan["metric"] == "mixed_rate":
                 codes = codes_b if arm == "b" else codes_c
             per[arm][t] = task_metric(vals, idx, plan["metric"], plan["group_size"], codes)
     delta = weighted(per["c"], plan["candidate"]["difficulty_mix"]) - weighted(per["b"], plan["baseline"]["difficulty_mix"])
-    lower = float(np.quantile(delta[1:], plan["rule"]["alpha"]))
+    lower = float(np.nanquantile(delta[1:], plan["rule"]["alpha"]))
+    upper = float(np.nanquantile(delta[1:], 1.0 - ALPHA))
     return {"episodes": len(b), "excluded_rate": rates, "delta": float(delta[0]), "lower_bound": lower,
-            "bootstrap_90": np.quantile(delta[1:], [0.05, 0.95]).tolist()}
+            "upper_bound": upper, "bootstrap_90": np.nanquantile(delta[1:], [0.05, 0.95]).tolist()}
 
 
 def decide(plan: dict, base_disc, cand_disc, base_conf, cand_conf) -> dict:
@@ -264,6 +318,7 @@ def decide(plan: dict, base_disc, cand_disc, base_conf, cand_conf) -> dict:
         reasons.append(f"confirmation lower bound {conf['lower_bound']:+.4f} (delta {conf['delta']:+.4f}) "
                        f"does not rule out a loss beyond {rule['confirm_tolerance']}")
     return {"knob": plan["knob"], "from": plan["from"], "to": plan["to"], "metric": plan["metric"],
+            "margin": rule["margin"], "retest": plan.get("retest", 0), "alpha": rule["alpha"],
             "accept": gain and no_loss, "discovery": disc, "confirmation": conf,
             "reasons": reasons or ["discovery gain and no confirmation loss, both beyond bootstrap noise"]}
 
@@ -276,4 +331,5 @@ def init_config(template: list[dict]) -> dict:
     mix = {lv: round(levels.get(lv, 0) / len(template), 6) for lv in LEVELS}
     mix[max(mix, key=mix.get)] += round(1.0 - sum(mix.values()), 6)
     return {"max_steps": consts["MAX_STEPS"], "max_test_runs": consts["MAX_TEST_RUNS"], "difficulty_mix": mix,
-            "completion_tokens": {e["task_id"]: e["completion_tokens"] for e in template}}
+            "completion_tokens": {e["task_id"]: e["completion_tokens"] for e in template},
+            "context_tokens": {e["task_id"]: e["context_tokens"] for e in template}}

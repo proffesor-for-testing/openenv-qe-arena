@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -352,9 +353,14 @@ def test_show_labels_the_composite_against_the_model_null(tmp_path, capsys):
     assert {r: v["model_p"] for r, v in summary["per_run"].items()} == {
         "run-1": pytest.approx(null.tail(single, 3)), "run-2": pytest.approx(null.tail(single, 2))}
     assert f"{null.tail(single, 3):.3f}" in printed and "model-based null" in printed
-    assert "EMPIRICAL NULL unavailable" in printed and "sensitivity, model-based" in printed
+    assert "RANK AMONG OTHER ENTRANTS' RUNS unavailable" in printed and "sensitivity, model-based" in printed
     assert "p_zero=0.05" in printed and "lower reference" in printed
     assert "ledger head: seq 2" in printed and "selection-inflated" in printed
+    # review v2 N4: the comparison with the untrained baseline comes first
+    assert printed.index("AGAINST THE UNTRAINED BASELINE") < printed.index("PER-RUN SCORES")
+    assert summary["per_run"]["run-1"]["vs_baseline"] == 3 - 4
+    assert summary["per_run"]["run-1"]["vs_baseline_domains"]["natural-science"] == 1
+    assert summary["per_run"]["run-2"]["vs_baseline_domains"]["industrial-physical-systems"] == -2
 
 
 def test_show_refuses_to_mix_benchmarks(tmp_path):
@@ -382,21 +388,53 @@ def test_empirical_null_hand_worked():
     s = empirical.summary(pop)
     assert (s["runs"], s["mean"], s["min"], s["max"]) == (2, 1.0, 1, 1)
     assert s["rates"]["industrial-physical-systems"] == pytest.approx(1 / 10)  # 1 solve over 2 runs x 5 tasks
-    # one draw: the composite is 1 either way; two draws: AB or BA give 2, AA or BB give 1
+    # one run: the composite is 1 either way; two DISTINCT runs are always A and B, so 2 (review v2 m-b:
+    # with replacement, AA and BB gave 1 and the expectation was 1.5)
     one, two = empirical.composite_null(pop, 1, 1), empirical.composite_null(pop, 2, 2)
     assert (one["expected"], one["p_ge"]) == (1.0, 1.0) and "exact" in one["method"]
-    assert (two["expected"], two["p_ge"]) == (1.5, 0.5)
+    assert (two["expected"], two["p_ge"]) == (2.0, 1.0)
+    with pytest.raises(SystemExit, match="3 distinct runs from 2"):
+        empirical.composite_null(pop, 3, 2)
     assert empirical.run_position(pop, 1) == {"percentile": 50.0, "p_other_ge": 1.0}
     assert empirical.run_position(pop, 2) == {"percentile": 100.0, "p_other_ge": 0.0}
     deltas = empirical.domain_deltas(pop, lg.parse_result(run_record("x", "s", {"industrial-physical-systems": 2}))[1])
     assert deltas["industrial-physical-systems"] == pytest.approx(1.5) and deltas["office-white-collar"] == -0.5
 
 
-def test_empirical_bootstrap_agrees_with_the_closed_form():
-    # k = 18 is past the exact limit (2^18 > 200k): the composite is 2 unless all draws are one run
-    result = empirical.composite_null(tiny_population(), 18, 2)
-    assert "bootstrap" in result["method"]
-    assert result["expected"] == pytest.approx(2 - 2 * 0.5 ** 18, abs=1e-3)
+def test_empirical_monte_carlo_agrees_with_the_closed_form():
+    # 40 other runs: 6 solve one industrial task, 10 one office task, 24 nothing. k = 6 distinct runs is past
+    # the exact limit (C(40,6) > 200k). E = 2 - P(no industrial run) - P(no office run), hypergeometric.
+    runs = [run_record(f"r{i}", f"s{i}", {"industrial-physical-systems": 1} if i < 6 else
+                       {"office-white-collar": 1} if i < 16 else {}, user=f"u{i}") for i in range(40)]
+    pop = empirical.population(runs, "heldout-v2", set(), lg.parse_result)
+    result = empirical.composite_null(pop, 6, 2)
+    assert "Monte Carlo" in result["method"]
+    none = lambda bad: math.comb(40 - bad, 6) / math.comb(40, 6)  # noqa: E731
+    assert result["expected"] == pytest.approx(2 - none(6) - none(10), abs=0.01)
+    assert result["p_ge"] == pytest.approx((1 - none(6)) * 1 - (none(10) - none(16)), abs=0.01)
+
+
+def test_population_filters_benchmark_users_runs_and_non_objects():
+    # review v2 m-g: a heldout-v3 run must not enter a heldout-v2 population; m-e: non-dict entries
+    runs = [run_record("a", "sa", {"office-white-collar": 1}, user="u1"),
+            run_record("b", "sb", {"office-white-collar": 5}, user="u2", benchmark="heldout-v3"),
+            run_record("c", "sc", {"office-white-collar": 5}, user="me"),
+            run_record("d", "sd", {"office-white-collar": 5}, user="u3"), "junk"]
+    pop = empirical.population(runs, "heldout-v2", {"me"}, lg.parse_result, exclude_runs={"d"})
+    assert pop["runs"] == ["a"] and pop["skipped"] == 1
+    junk = dict(board(), runs=board()["runs"] + ["junk"])
+    with pytest.raises(SystemExit, match="not an object"):
+        lg.ledger_fetch(Path("/nonexistent/l.jsonl"), "Profa-QE", board=junk)
+
+
+def test_empirical_bayes_prior_for_the_zero_domains():
+    pop = tiny_population()  # pooled: industrial 1 of 10 tasks, office 1 of 10, the rest 0 of 10
+    prior = empirical.zero_domain_prior(pop)
+    assert prior["industrial-physical-systems"] == (1.5, 9.5) and prior["cybersecurity"] == (0.5, 10.5)
+    domains = {"industrial-physical-systems": (5, 2), "cybersecurity": (5, 0)}
+    one = null.composite_pmf(1, domains, zero_prior=prior)
+    # k = 1: cyber is BetaBinomial(5, .5, 10.5 + 5), mean 5 * .5 / 16; industrial keeps Jeffreys from 2/5
+    assert null.mean(one) == pytest.approx(5 * 0.5 / 16 + 5 * 2.5 / 6)
 
 
 def test_empirical_null_on_the_saved_leaderboard():
@@ -428,8 +466,12 @@ def test_show_reports_v1_against_other_entrants(tmp_path, capsys):
     assert row["p_other_ge"] == empirical.run_position(pop, 4)["p_other_ge"]
     assert row["deltas"]["finance-economics"] == pytest.approx(1 - 5 * empirical.summary(pop)["rates"]["finance-economics"])
     assert summary["empirical"]["expected"] == pytest.approx(empirical.summary(pop)["mean"])  # k = 1
-    assert "EMPIRICAL NULL: 38 other runs" in printed and "excluding ['Profa-QE']" in printed
-    assert printed.index("empirical null, best-per-domain") < printed.index("sensitivity, model-based")
+    assert row["vs_baseline"] == 0 and row["vs_baseline_domains"]["industrial-physical-systems"] == -1
+    assert "RANK AMONG OTHER ENTRANTS' RUNS (not a test of whether training helped): 38 runs" in printed
+    assert "excluding ['Profa-QE']" in printed and "upper bound on evaluation noise" in printed
+    assert printed.index("AGAINST THE UNTRAINED BASELINE") < printed.index("RANK AMONG OTHER")
+    assert printed.index("rank among other entrants: best-per-domain") < printed.index("sensitivity, model-based")
+    assert summary["eb_expected"] < summary["model_expected"]
 
 
 def test_cli_fetch_and_show_from_a_saved_board(tmp_path, capsys):
@@ -440,4 +482,50 @@ def test_cli_fetch_and_show_from_a_saved_board(tmp_path, capsys):
                      "--from-file", str(FULL)]) == 0
     assert cli.main(["ledger", "show", "--ledger", ledger]) == 0
     printed = capsys.readouterr().out
-    assert "EMPIRICAL NULL: 38 other runs" in printed and "c583c91a8555ec252893d574" in printed
+    assert "RANK AMONG OTHER ENTRANTS' RUNS" in printed and "c583c91a8555ec252893d574" in printed
+
+
+def test_a_manual_entry_does_not_remove_its_user_from_the_population(tmp_path):
+    # review v2 a_ledger: a hand-entered run in someone else's name used to drop that user's real runs
+    ledger = tmp_path / "ledger.jsonl"
+    (tmp_path / "receipt-v1.json").write_text(RECEIPT.read_text())
+    (tmp_path / "request-v1.json").write_text((ROOT / "submission" / "request-v1.json").read_text())
+    full = json.loads(FULL.read_text())
+    lg.ledger_fetch(ledger, "Profa-QE", receipts=tmp_path, board=full)
+    other = next(r for r in full["runs"] if r["user"] == "ruv")
+    add(ledger, tmp_path, write_receipt(tmp_path, "v9", "profa-qe-arena-v9"),
+        run_record("fake", "profa-qe-arena-v9", {"office-white-collar": 1}, user=other["user"]))
+    summary = report.ledger_show(lg.read_ledger(ledger), lg.resolve_baseline(ledger, None)[0],
+                                 lg.load_population(ledger), include_manual=True, out=open(os.devnull, "w"))
+    assert summary["empirical"]["population"] == 38  # only Profa-QE is excluded, not ruv
+
+
+def test_atomic_head_and_repair_after_an_interrupted_write(tmp_path):
+    # review v2 a_ledger: a crash between the append and the head write
+    ledger = two_entries(tmp_path)
+    lg.head_path(ledger).unlink()
+    with pytest.raises(SystemExit, match="repair-head"):
+        lg.read_ledger(ledger)
+    with pytest.raises(SystemExit, match="--i-checked-the-ledger"):
+        lg.repair_head(ledger, confirmed=False)
+    assert lg.repair_head(ledger, confirmed=True)["seq"] == 2 and len(lg.read_ledger(ledger)) == 2
+    assert not lg.head_path(ledger).with_name(lg.head_path(ledger).name + ".tmp").exists()
+    assert cli.main(["ledger", "repair-head", "--ledger", str(ledger), "--i-checked-the-ledger"]) == 0
+    ledger.write_text(ledger.read_text().replace('"solved":3', '"solved":4', 1))  # repair never hides damage
+    with pytest.raises(SystemExit):
+        lg.repair_head(ledger, confirmed=True)
+
+
+def test_a_deliberate_consistent_rewrite_is_not_detected(tmp_path):
+    # documented limit (review v2 m-c): the chain and head catch accidents, not someone with write access
+    ledger = two_entries(tmp_path)
+    lines = ledger.read_text().splitlines()
+    last = json.loads(lines[-1])
+    last["record"]["scores"]["office-white-collar"]["solved"] = 5
+    last["record"]["solved"] = last["solved"] = 5
+    last["domains"]["office-white-collar"]["solved"] = 5
+    lines[-1] = json.dumps(last, sort_keys=True, separators=(",", ":"))
+    ledger.write_text("\n".join(lines) + "\n")
+    lg.write_head(ledger, 2, lg.line_sha(lines[-1]))
+    assert lg.read_ledger(ledger)[-1]["solved"] == 5
+    assert "catch ACCIDENTS" in lg.__doc__

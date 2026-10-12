@@ -29,27 +29,31 @@ def _beta_grid(a: float, b: float) -> tuple[np.ndarray, np.ndarray]:
     return p, w / w.sum()
 
 
-def max_pmf(n: int, k: int, p: float | None = None, solved: int | None = None) -> np.ndarray:
+def max_pmf(n: int, k: int, p: float | None = None, solved: int | None = None,
+            prior: tuple[float, float] = (PRIOR, PRIOR)) -> np.ndarray:
     """pmf of the max of k runs on n tasks: binomial at a fixed rate ``p``, or the beta-binomial
-    predictive from the baseline's ``solved`` of n (shared rate across the k runs)."""
+    predictive from the baseline's ``solved`` of n under a Beta ``prior`` (rate shared by the k runs)."""
     if p is not None:
         cdf = np.cumsum(binom_pmf(n, p)) ** k
     else:
-        grid, weight = _beta_grid(solved + PRIOR, n - solved + PRIOR)
+        grid, weight = _beta_grid(solved + prior[0], n - solved + prior[1])
         cdfs = np.cumsum(np.array([binom_pmf(n, q) for q in grid]), axis=1) ** k  # nodes x (n+1)
         cdf = np.minimum(weight @ cdfs, 1.0)
     return np.diff(np.concatenate([[0.0], cdf]))
 
 
 def composite_pmf(k: int, domains: dict[str, tuple[int, int]], mode: str = "model",
-                  p_zero: float | None = None) -> np.ndarray:
+                  p_zero: float | None = None, zero_prior: dict[str, tuple[float, float]] | None = None) -> np.ndarray:
     """Distribution of the best-per-domain composite of k null runs. ``domains`` maps a domain to
     (tasks, baseline solved). mode "model": beta-binomial predictive per domain; "plugin": binomial at
-    solved/tasks. ``p_zero`` fixes the rate of domains the baseline scored 0 in."""
+    solved/tasks. ``p_zero`` fixes the rate of domains the baseline scored 0 in; ``zero_prior`` instead
+    gives those domains an empirical-Bayes Beta prior (e.g. from other entrants' runs)."""
     dist = np.array([1.0])
-    for n, solved in domains.values():
+    for name, (n, solved) in domains.items():
         if p_zero is not None and solved == 0:
             pmf = max_pmf(n, k, p=p_zero)
+        elif zero_prior is not None and solved == 0:
+            pmf = max_pmf(n, k, solved=0, prior=zero_prior[name])
         elif mode == "plugin":
             pmf = max_pmf(n, k, p=solved / n)
         else:

@@ -10,6 +10,7 @@ decision here is paired and pre-registered, and every composite is shown next to
     flywheel.py ledger fetch --user Profa-QE [--submission-id ID]
     flywheel.py ledger add --receipt submission/receipt-v1.json --result run.json
     flywheel.py ledger show
+    flywheel.py ledger repair-head --i-checked-the-ledger
     flywheel.py onecell-search init --template submission/tasks-v1.json --out knobs.json
     flywheel.py onecell-search propose --config knobs.json --seed 1 --runs RUNS.jsonl... --out plan.json
     flywheel.py onecell-search decide --plan plan.json --baseline-discovery A --candidate-discovery B \\
@@ -48,6 +49,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("stats", help="per-cell posteriors from calibration runs")
     p.add_argument("runs", nargs="+", type=Path)
+    p.add_argument("--template", type=Path, default=SUBMISSION / "tasks-v1.json",
+                   help="submitted limits: a context/completion budget end at or above them is a real failure")
     p.add_argument("--json", type=Path)
     p = sub.add_parser("select", help="Thompson-sample a task list")
     p.add_argument("runs", nargs="+", type=Path)
@@ -66,7 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="G for the projected objective (arena trains on 4 of 5 episodes)")
     p = sub.add_parser("ledger", help="append-only ledger of arena runs")
     lsub = p.add_subparsers(dest="action", required=True)
-    for name in ("fetch", "add", "show"):
+    for name in ("fetch", "add", "show", "repair-head"):
         q = lsub.add_parser(name)
         q.add_argument("--ledger", type=Path, default=SUBMISSION / "ledger.jsonl")
         if name == "fetch":
@@ -81,6 +84,9 @@ def build_parser() -> argparse.ArgumentParser:
             q.add_argument("--receipt", type=Path, required=True)
             q.add_argument("--result", type=Path, required=True, help="one leaderboard runs[] record")
             q.add_argument("--request", type=Path, help="default: the receipt's sibling request-vN.json")
+        elif name == "repair-head":
+            q.add_argument("--i-checked-the-ledger", dest="confirmed", action="store_true",
+                           help="you inspected the lines; recompute the head anchor from them")
         else:
             q.add_argument("--baseline", help="name=solved,... or a saved leaderboard JSON; default: last fetch")
             q.add_argument("--include-manual", action="store_true", help="also show hand-entered runs")
@@ -94,14 +100,15 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--config", type=Path, required=True)
     q.add_argument("--seed", type=int, required=True)
     q.add_argument("--runs", nargs="*", type=Path, default=[], help="seeds seen here are never confirmation seeds")
-    q.add_argument("--history", type=Path, help="JSONL of past decisions; their moves are not re-proposed")
-    q.add_argument("--discovery-seeds", type=int, default=32)
-    q.add_argument("--confirm-seeds", type=int, default=32)
+    q.add_argument("--history", type=Path, help="JSONL of past `decide` results: accepted or ruled-out moves are "
+                                                 "not re-proposed; inconclusive ones are retested at half the alpha")
+    q.add_argument("--discovery-seeds", type=int, default=search.SEEDS)
+    q.add_argument("--confirm-seeds", type=int, default=search.SEEDS)
     q.add_argument("--attempts", type=int, default=1)
     q.add_argument("--margin", type=float, default=0.0, help="discovery bootstrap lower bound must exceed this")
     q.add_argument("--confirm-tolerance", type=float, default=0.05,
                    help="confirmation bootstrap lower bound must exceed minus this")
-    q.add_argument("--error-tolerance", type=float, default=0.05, help="max gap in error/budget rate between arms")
+    q.add_argument("--error-tolerance", type=float, default=0.02, help="max gap in error/budget rate between arms")
     q.add_argument("--metric", choices=search.METRICS, default="mixed_rate",
                    help="mixed_rate (default): P(G fresh instances not all equal), the trainer's gradient signal")
     q.add_argument("--out", type=Path, required=True)
@@ -114,11 +121,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run_select(args) -> int:
-    cell_stats = stats.compute_stats(stats.load_runs(args.runs))
     template = json.loads(args.template.read_text())
+    cell_stats = stats.compute_stats(stats.load_runs(args.runs), template)
     tasks, reasons = select.select_cells(cell_stats, template, args.max_cells, args.seed, args.min_mixed,
                                          args.min_groups, args.min_episodes, args.objective, args.group_size)
-    write_json(args.out, tasks)
+    if tasks:
+        write_json(args.out, tasks)
     why = args.why or args.out.with_suffix(".why.json")
     write_json(why, {"seed": args.seed, "max_cells": args.max_cells, "objective": args.objective,
                      "measure": select.OBJECTIVES[args.objective], "group_size": args.group_size,
@@ -128,10 +136,10 @@ def run_select(args) -> int:
     print(f"objective {args.objective}: {select.OBJECTIVES[args.objective]} (G={args.group_size})")
     for r in reasons:
         print(f"{r['decision']:<9} {r['task_id']:<22} {r['reason']}")
-    print(f"\n{len(tasks)} cells -> {args.out}; reasons -> {why}")
     if not tasks:
-        print("no cell qualified; nothing to submit", file=sys.stderr)
+        print(f"\nno cell qualified; nothing to submit, {args.out} not written; reasons -> {why}", file=sys.stderr)
         return 4
+    print(f"\n{len(tasks)} cells -> {args.out}; reasons -> {why}")
     return 0
 
 
@@ -141,6 +149,8 @@ def run_ledger(args) -> int:
             lambda url: ledger.http_get_json(url, args.timeout), cursor_url=args.cursor_url)
         fetched = ledger.ledger_fetch(args.ledger, args.user, args.submission_id, args.receipts, board=board)
         print(json.dumps(fetched, indent=2))
+    elif args.action == "repair-head":
+        print(json.dumps(ledger.repair_head(args.ledger, args.confirmed)))
     elif args.action == "add":
         print(json.dumps(ledger.ledger_add(args.ledger, args.receipt, args.result, args.request), indent=2))
     else:
@@ -184,7 +194,8 @@ def run_search(args) -> int:
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     if args.cmd == "stats":
-        cell_stats = stats.compute_stats(stats.load_runs(args.runs))
+        template = json.loads(args.template.read_text()) if args.template.exists() else None
+        cell_stats = stats.compute_stats(stats.load_runs(args.runs), template)
         stats.print_stats(cell_stats)
         if args.json:
             write_json(args.json, cell_stats)

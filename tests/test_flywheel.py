@@ -95,6 +95,41 @@ def test_budget_rows_are_excluded_and_reported_apart():
     assert s["ends"]["global_budget"] == 2
 
 
+def budget_row(end, seed, **limits):
+    return row("qe_bugfix-d3", seed, 0, 0.0, end=end, **limits)
+
+
+TEMPLATE_LIMITS = {"completion_tokens": 6144, "context_tokens": 12288}
+
+
+@pytest.mark.parametrize("r, status", [
+    (budget_row("global_budget", 1), "harness_budget"),  # the whole calibration run ran dry: never the model's
+    (budget_row("context_budget", 1), "under_limit"),  # calibrate.py's default 8192 < the template's 12288
+    (budget_row("context_budget", 1, episode_context_tokens=12288), "budget_failure"),
+    (budget_row("completion_budget", 1, episode_completion_tokens=4096), "under_limit"),
+    (budget_row("completion_budget", 1, episode_completion_tokens=8192), "budget_failure"),
+    (row("qe_bugfix-d3", 1, 0, None), "error"),
+    (row("qe_bugfix-d3", 1, 0, 0.0, end="step_cap"), "valid"),
+])
+def test_episode_status_compares_the_limits_an_episode_ran_under(r, status):
+    assert stats.episode_status(r, TEMPLATE_LIMITS) == status
+    assert stats.is_excluded(r, TEMPLATE_LIMITS) == (status in ("error", "harness_budget", "under_limit"))
+
+
+def test_budget_ends_at_the_template_limits_are_failures(capsys):
+    # review v2 c_budget: calibrated AT the template's limits, half the episodes ran out of context;
+    # the arena would see the same, so the cell is mixed, not always solved
+    rows = [row("qe_bugfix-d3", s, 0, 1.0) for s in range(16)]
+    at_limit = rows + [budget_row("context_budget", 100 + s, episode_context_tokens=12288) for s in range(16)]
+    cell = stats.compute_stats(at_limit, template())["cells"]["qe_bugfix-d3"]
+    assert (cell["valid"], cell["budget_failures"], cell["budget"]) == (32, 16, 0)
+    assert cell["projected_mixed"]["4"] == pytest.approx(stats.projected_mixed([1.0] * 16 + [0.0] * 16, 4))
+    under = rows + [budget_row("context_budget", 100 + s) for s in range(16)]  # calibrate.py defaults
+    cell = stats.compute_stats(under, template())["cells"]["qe_bugfix-d3"]
+    assert (cell["valid"], cell["under_limit"]) == (16, 16)
+    assert "ran under the submitted limits" in capsys.readouterr().err
+
+
 def test_step_cap_is_a_real_failure():
     s = stats.summarize([row("qe_bugfix-d2", 1, 0, 0.0, end="step_cap"), row("qe_bugfix-d2", 1, 1, 1.0)])
     assert s["valid"] == 2 and s["budget"] == 0  # the arena caps steps too
@@ -228,7 +263,8 @@ def test_select_cli_exits_nonzero_when_nothing_qualifies(tmp_path):
     runs = write_jsonl(tmp_path / "r.jsonl", [row("qe_bugfix-d2", s, 0, 1.0) for s in range(20)])
     code = cli.main(["select", str(runs), "--max-cells", "6", "--seed", "1", "--template", str(TEMPLATE),
                      "--out", str(tmp_path / "t.json")])
-    assert code != 0 and json.loads((tmp_path / "t.json").read_text()) == []
+    assert code == 4 and not (tmp_path / "t.json").exists()  # nothing to submit, so no task list
+    assert (tmp_path / "t.why.json").exists()
 
 
 def test_select_is_deterministic_and_respects_max_cells():
