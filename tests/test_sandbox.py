@@ -236,6 +236,20 @@ def test_runtime_is_the_pinned_reproducible_build():
     assert json.loads(build_wasi_runtime.DEFAULT_PINS.read_text()) == wasi_worker.PINS
 
 
+# Codex P7: base images by digest and wasmtime by hash, and the pins agree with each other.
+def test_image_build_inputs_are_pinned():
+    dockerfile = (ROOT / "Dockerfile").read_text()
+    froms = [line.split()[1] for line in dockerfile.splitlines() if line.startswith("FROM ")]
+    assert len(froms) == 2 and all("@sha256:" in image and len(image.split("@sha256:")[1]) == 64 for image in froms)
+    assert "--require-hashes -r /build/requirements-wasmtime.lock" in dockerfile
+    assert "--require-hashes -r /app/requirements-wasmtime.lock" in dockerfile
+    hashed = (ROOT / "requirements-wasmtime.lock").read_text()
+    locked = [ln for ln in (ROOT / "requirements.lock").read_text().splitlines() if ln.startswith("wasmtime==")]
+    assert locked == ["wasmtime==47.0.1"] and "wasmtime==47.0.1 \\" in hashed
+    assert hashed.count("--hash=sha256:") >= 2
+    assert importlib.metadata.version("wasmtime") == "47.0.1"
+
+
 # Codex P6: the worker used whatever runtime its path pointed at; only the tests checked identity.
 def test_a_worker_refuses_a_runtime_that_is_not_the_pinned_build(tmp_path, monkeypatch):
     root = tmp_path / "runtime"
