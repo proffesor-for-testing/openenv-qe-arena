@@ -11,6 +11,7 @@ from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import Action, Observation, State
 from pydantic import Field
 
+from . import flaky
 from .tasks import MODULE, TASK_IDS, Task, grade_bugfix, grade_mutant_kill, make_task, run_visible
 
 MAX_STEPS = 12
@@ -23,14 +24,17 @@ MAX_ANSWER_BYTES = 8192
 class QEAction(Action):
     op: Literal["read", "run_tests", "edit", "submit"] = Field(description=(
         "One action per reply. Start with read path * to see every file. "
-        "read: show a file. run_tests: run the visible tests on your edited code (bug-fix tasks). "
-        "edit: replace old with new in a file (bug-fix tasks). submit: end the episode and get graded."))
+        "read: show a file. run_tests: run the visible tests on your edited code (bug-fix and flaky-test tasks). "
+        "edit: replace old with new in a file (bug-fix tasks and flaky-test repair). "
+        "submit: end the episode and get graded."))
     path: str = Field(default="", description="read/edit: the file name, or * with read for all files.")
     old: str = Field(default="", description="edit: exact text copied from the file; it must occur exactly once.")
     new: str = Field(default="", description="edit: the text that replaces old.")
     answer: dict[str, Any] = Field(default_factory=dict, description=(
         "submit: {} grades your edited file in a bug-fix task; "
-        '{"tests": [{"args": [...], "expected": ...}]} in a mutant-kill task.'))
+        '{"tests": [{"args": [...], "expected": ...}]} in a mutant-kill task; '
+        '{"test": "test_name" or null, "cause": ...} in a flaky-test task, where cause is one of '
+        + ", ".join(flaky.CAUSES) + "."))
 
 
 class QEObservation(Observation):
@@ -91,13 +95,14 @@ class QEEnvironment(Environment[QEAction, QEObservation, State]):
             if action.path not in self._files:
                 return self._observe(error=f"unknown file; files are {sorted(self._files)}")
             return self._observe(content=self._files[action.path])
-        if family != "qe_bugfix":
+        if family == "qe_mutant_kill" or (family == "qe_flaky" and action.op == "edit" and self._task.difficulty != 3):
             return self._observe(error=f"{action.op} is not available in this task; read the files, then submit")
         if action.op == "run_tests":
             if self._test_runs >= MAX_TEST_RUNS:
                 return self._observe(error="no test runs left; submit when ready")
             self._test_runs += 1
-            return self._observe(content=run_visible(self._task, self._files[MODULE]))
+            run = run_visible if family == "qe_bugfix" else flaky.run_shown
+            return self._observe(content=run(self._task, self._files[MODULE]))
         return self._edit(action)
 
     def _edit(self, action: QEAction) -> QEObservation:
@@ -127,7 +132,12 @@ class QEEnvironment(Environment[QEAction, QEObservation, State]):
             else:
                 encoded = json.dumps(action.answer, allow_nan=False, separators=(",", ":"))
                 too_big = len(encoded.encode()) > MAX_ANSWER_BYTES
-                self._reward = 0.0 if too_big else grade_mutant_kill(self._task, action.answer)
+                if too_big:
+                    self._reward = 0.0
+                elif self._task.family == "qe_flaky":
+                    self._reward = flaky.grade(self._task, action.answer, self._files[MODULE])
+                else:
+                    self._reward = grade_mutant_kill(self._task, action.answer)
         except Exception:  # noqa: BLE001 - any grading failure on a model answer scores 0, never an error frame
             self._reward = 0.0
         return self._observe()

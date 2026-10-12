@@ -23,6 +23,18 @@
     {
       "task_id": "qe_mutant_kill-d3",
       "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-d3",
+      "split": "train"
     }
   ]
 }
