@@ -131,32 +131,40 @@ def _definitions(tree: ast.AST) -> list[tuple]:
             for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
 
 
-def _truth(test: ast.AST) -> bool | None:
+def _truth(test: ast.AST, bound: frozenset = frozenset()) -> bool | None:
     """The truth value of ``test`` when it cannot depend on the input, else None.
 
-    Tautologies are open-ended. This catches the shapes a rewrite needs to hide behind:
-    literals and displays (`{0}`, `()`, f-strings), anything with no variable in it,
-    `x OP x`, `x or <truthy>` / `x and <falsy>`, `isinstance(_, object)` and `len(...) >= 0`.
+    Tautologies are open-ended: this catches the shapes a rewrite needs to hide behind, and the
+    token allowance bounds the rest. Caught: literals and displays (`{0}`, `()`, f-strings),
+    anything with no variable in it, a bare builtin such as `zip` (when no name in the file shadows
+    it), `x OP x`, `x or not x`, `x in (x,)`, `x or <truthy>` / `x and <falsy>`,
+    `isinstance(_, object)` and `len(...) >= 0`. ``bound`` is every name the file binds.
     """
+    if isinstance(test, ast.Name) and test.id in _BUILTINS and test.id not in bound:
+        return True  # a builtin function object is always truthy
     if isinstance(test, (ast.Set, ast.List, ast.Tuple, ast.Dict)):
         return bool(test.keys if isinstance(test, ast.Dict) else test.elts)
     if isinstance(test, ast.JoinedStr):
         if any(isinstance(v, ast.Constant) and v.value for v in test.values):
             return True
         return None if any(isinstance(v, ast.FormattedValue) for v in test.values) else False
-    if not any(isinstance(n, ast.Name) and n.id not in _CONSTANT_NAMES for n in ast.walk(test)):
+    if not any(isinstance(n, ast.Name) and (n.id not in _CONSTANT_NAMES or n.id in bound) for n in ast.walk(test)):
         try:
             return bool(ast.literal_eval(test))
         except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
             return True  # no variable in it, so its value is fixed even if we cannot compute it here
     if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
-        inner = _truth(test.operand)
+        inner = _truth(test.operand, bound)
         return None if inner is None else not inner
     if isinstance(test, ast.BoolOp):
-        values = [_truth(v) for v in test.values]
+        values = [_truth(v, bound) for v in test.values]
         decisive = True if isinstance(test.op, ast.Or) else False
         if decisive in values:
             return decisive
+        dumps = [ast.dump(v) for v in test.values]
+        negated = {ast.dump(v.operand) for v in test.values if isinstance(v, ast.UnaryOp) and isinstance(v.op, ast.Not)}
+        if negated & set(dumps):
+            return decisive  # x or not x is always true; x and not x is always false
         return None if None in values else not decisive
     if isinstance(test, ast.Compare) and len(test.ops) == 1:
         left, op, right = test.left, test.ops[0], test.comparators[0]
@@ -164,6 +172,9 @@ def _truth(test: ast.AST) -> bool | None:
             if isinstance(op, (ast.In, ast.NotIn)):
                 return None  # x in x is not fixed for lists
             return isinstance(op, (ast.Eq, ast.Is, ast.LtE, ast.GtE))
+        if isinstance(op, (ast.In, ast.NotIn)) and isinstance(right, (ast.Tuple, ast.List, ast.Set)) \
+                and any(ast.dump(e) == ast.dump(left) for e in right.elts):
+            return isinstance(op, ast.In)  # x in (x,) is always true
         if _is_len(left) and _int_value(right) is not None:
             bound = _int_value(right)
             if (isinstance(op, ast.GtE) and bound <= 0) or (isinstance(op, ast.Gt) and bound < 0):
@@ -178,6 +189,7 @@ def _truth(test: ast.AST) -> bool | None:
     return None
 
 
+_BUILTINS = frozenset(n for n in dir(__import__("builtins")) if not n.startswith("_"))
 _CONSTANT_NAMES = frozenset({"True", "False", "None", "object", "len", "int", "str", "bool", "float", "abs",
                              "min", "max", "sum", "round", "isinstance", "ord", "chr"})
 
@@ -194,9 +206,49 @@ def _int_value(node: ast.AST) -> int | None:
     return value if type(value) is int else None
 
 
-def _constant_test(test: ast.AST) -> bool:
+def _constant_test(test: ast.AST, bound: frozenset = frozenset()) -> bool:
     """A test whose value does not depend on the input (see _truth)."""
-    return _truth(test) is not None
+    return _truth(test, bound) is not None
+
+
+def _bound_names(tree: ast.AST) -> frozenset:
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            names.add(node.id)
+        elif isinstance(node, ast.arg):
+            names.add(node.arg)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.alias):
+            names.add((node.asname or node.name).split(".")[0])
+    return frozenset(names)
+
+
+_RUNS = ("range", "zip", "sorted", "reversed", "list", "tuple", "enumerate", "str", "set", "map", "filter")
+
+
+def _must_iterate(node: ast.AST, bound: frozenset) -> bool:
+    """A for-loop iterable that is certainly non-empty: a non-empty literal, or a builtin over literals."""
+    if _nonempty_literal(node):
+        return True
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in _RUNS
+            and node.func.id not in bound and not node.keywords):
+        try:
+            args = [ast.literal_eval(a) for a in node.args]
+        except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+            return False
+        try:
+            if node.func.id == "range":
+                return all(type(a) is int and abs(a) < 10**9 for a in args) and len(range(*args)) > 0
+            if node.func.id in ("map", "filter"):
+                return False  # needs a function; never a plain wrapper
+            if any(not isinstance(a, (str, bytes, list, tuple, set, dict)) for a in args) or len(str(args)) > 1000:
+                return False
+            return len(list(getattr(__import__("builtins"), node.func.id)(*args))) > 0
+        except Exception:  # noqa: BLE001 - a call that fails on literals is not a wrapper we can prove
+            return False
+    return False
 
 
 def _loop_body_jumps_out(body: list[ast.stmt]) -> bool:
@@ -220,7 +272,7 @@ def _nonempty_literal(node: ast.AST) -> bool:
     return False
 
 
-def _ends(block: list[ast.stmt], jumps: bool) -> bool:
+def _ends(block: list[ast.stmt], jumps: bool, bound: frozenset = frozenset()) -> bool:
     """True if control can never fall off the end of ``block``.
 
     ``jumps`` says whether break/continue end it (they do inside a loop body). The analysis is
@@ -229,28 +281,30 @@ def _ends(block: list[ast.stmt], jumps: bool) -> bool:
     its body (a constant-true while, a for over a non-empty literal) with a body that ends and
     no break. A branch on a test that is not constant may go either way.
     """
-    return any(_stmt_ends(stmt, jumps) for stmt in block)
+    return any(_stmt_ends(stmt, jumps, bound) for stmt in block)
 
 
-def _stmt_ends(stmt: ast.stmt, jumps: bool) -> bool:
+def _stmt_ends(stmt: ast.stmt, jumps: bool, bound: frozenset = frozenset()) -> bool:
     if isinstance(stmt, (ast.Return, ast.Raise)):
         return True
     if isinstance(stmt, (ast.Break, ast.Continue)):
         return jumps
     if isinstance(stmt, ast.If):
-        if _constant_test(stmt.test):
-            return _ends(stmt.body, jumps) or _ends(stmt.orelse, jumps)  # either branch may be the live one
-        return bool(stmt.orelse) and _ends(stmt.body, jumps) and _ends(stmt.orelse, jumps)
+        if _constant_test(stmt.test, bound):
+            return _ends(stmt.body, jumps, bound) or _ends(stmt.orelse, jumps, bound)  # either may be live
+        return bool(stmt.orelse) and _ends(stmt.body, jumps, bound) and _ends(stmt.orelse, jumps, bound)
     if isinstance(stmt, (ast.With, ast.AsyncWith)):
-        return _ends(stmt.body, jumps)
+        return _ends(stmt.body, jumps, bound)
     if isinstance(stmt, ast.Try) or type(stmt).__name__ == "TryStar":
         # Conservative: a try whose body or finally ends is treated as ending, even if a handler could
-        # fall through. The corpus never needs that shape, and a rewrite hides behind it.
-        return _ends(stmt.body, jumps) or _ends(stmt.finalbody, jumps)
+        # fall through (`try: return X / except: pass`). The corpus never needs that shape, and a
+        # rewrite hides behind it; the d4 prompt says so.
+        return _ends(stmt.body, jumps, bound) or _ends(stmt.finalbody, jumps, bound)
     if isinstance(stmt, ast.While):
-        return _constant_test(stmt.test) and not _loop_body_jumps_out(stmt.body)
+        return _constant_test(stmt.test, bound) and not _loop_body_jumps_out(stmt.body)
     if isinstance(stmt, (ast.For, ast.AsyncFor)):
-        return _nonempty_literal(stmt.iter) and _ends(stmt.body, False) and not _loop_body_jumps_out(stmt.body)
+        return (_must_iterate(stmt.iter, bound) and _ends(stmt.body, False, bound)
+                and not _loop_body_jumps_out(stmt.body))
     return False
 
 
@@ -262,8 +316,9 @@ def _dead_code(tree: ast.AST) -> list[tuple[str, str, str]]:
     new ones.
     """
     found = []
+    bound = _bound_names(tree)
     for node in ast.walk(tree):
-        if isinstance(node, (ast.If, ast.While, ast.IfExp)) and _constant_test(node.test):
+        if isinstance(node, (ast.If, ast.While, ast.IfExp)) and _constant_test(node.test, bound):
             found.append((f"const:{ast.dump(node.test)}", str(node.lineno), f"a constant condition at line {node.lineno}"))
     for node in ast.walk(tree):
         blocks = [getattr(node, field, None) for field in ("body", "orelse", "finalbody")]
@@ -272,7 +327,7 @@ def _dead_code(tree: ast.AST) -> list[tuple[str, str, str]]:
             if not isinstance(block, list) or not all(isinstance(s, ast.stmt) for s in block):
                 continue
             for stmt, nxt in zip(block, block[1:]):
-                if _stmt_ends(stmt, jumps=True):
+                if _stmt_ends(stmt, True, bound):
                     found.append((f"dead:{ast.dump(nxt)}", str(nxt.lineno),
                                   f"line {nxt.lineno} can never run (after line {stmt.lineno})"))
     return found

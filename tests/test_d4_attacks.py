@@ -224,7 +224,8 @@ def test_compact_reimplementation_behind_a_display_guard_is_refused(seed):
 
 
 @pytest.mark.parametrize("guard", ["{0}", "()", "[0]", "f'x'", "{fn_arg} or 1", "isinstance({fn_arg}, object)",
-                                   "len(str({fn_arg})) >= 0", "len(str({fn_arg})) > -1"])
+                                   "len(str({fn_arg})) >= 0", "len(str({fn_arg})) > -1",
+                                   "zip", "any", "{fn_arg} or not {fn_arg}", "{fn_arg} in ({fn_arg},)"])
 def test_guarded_rewrites_behind_any_fixed_test_never_pay(d4_tasks, guard):
     for task in d4_tasks[:100]:
         p = task.private
@@ -252,3 +253,26 @@ def test_exits_that_end_the_block_make_the_old_body_dead(d4_tasks, shape):
         lines = p["buggy"].splitlines(keepends=True)
         attacked = "".join(lines[:lineno - 1]) + text + "".join(lines[lineno - 1:])
         assert edit_budget.structure_violation(p["buggy"], attacked) is not None, (task.seed, shape)
+
+
+@pytest.mark.parametrize("wrapper", ["for _ in range(1):", "for _ in zip([0]):", "for _ in sorted('a'):",
+                                     "for _ in enumerate([0]):", "while any:"])
+def test_builtin_loop_wrappers_around_a_rewrite_never_pay(d4_tasks, wrapper):
+    """A loop that must run once (a builtin over literals), or a while on a bare builtin, around the correct body."""
+    for task in d4_tasks[:100]:
+        p = task.private
+        lineno, ind = _first_code_line(p["buggy"], p["entry"])
+        text = f"{ind}{wrapper}\n" + _indent(_correct_body(p["original"], p["entry"]), ind + "    ")
+        lines = p["buggy"].splitlines(keepends=True)
+        attacked = "".join(lines[:lineno - 1]) + text + "".join(lines[lineno - 1:])
+        assert edit_budget.structure_violation(p["buggy"], attacked) is not None, (task.seed, wrapper)
+        assert tasks.grade_bugfix(task, attacked) == 0.0, (task.seed, wrapper)
+
+
+def test_a_shadowed_builtin_is_a_variable_not_a_constant():
+    from qe_arena.edit_budget import _truth  # noqa: PLC0415
+
+    assert _truth(ast.parse("zip", mode="eval").body) is True
+    assert _truth(ast.parse("zip", mode="eval").body, frozenset({"zip"})) is None
+    base = "def f(zip, b):\n    if zip:\n        return 1\n    return b\n"
+    assert edit_budget.structure_violation(base, base.replace("return b", "return b + 0")) is None
