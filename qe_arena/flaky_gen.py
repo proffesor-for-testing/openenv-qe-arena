@@ -71,7 +71,7 @@ def _mutant(function: str, entry: str, rows: list, rng: random.Random) -> tuple[
     for (never a raise, which would fail a test that asserts nothing), every other test only unchanged ones."""
     calls = [a for a, _ in rows]
     reference = _outputs(function, entry, calls)
-    sites = mutation.enumerate_sites(function)
+    sites = mutation.enumerate_sites(function, mutation.CLASSIC_OPERATORS)  # realistic operators would shift tasks
     rng.shuffle(sites)
     for site in sites[:12]:
         mutant = mutation.apply(function, [site])
