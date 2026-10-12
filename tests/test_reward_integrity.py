@@ -316,6 +316,8 @@ GOLDEN = {
     "qe_bugfix-d2:2": "af8819b151c56e35", "qe_bugfix-d2:3": "3a4e674811293e8f",
     "qe_bugfix-d3:0": "9a179b75b06d8c3c", "qe_bugfix-d3:1": "694a306e26f85371",
     "qe_bugfix-d3:2": "baf3006a24382d1e", "qe_bugfix-d3:3": "1ec2c7078bb50b63",
+    "qe_bugfix-d4:0": "b0624d5982593853", "qe_bugfix-d4:1": "f866253811705486",
+    "qe_bugfix-d4:2": "9fb9413779f54a81", "qe_bugfix-d4:3": "c4f08af226002001",
     "qe_mutant_kill-d1:0": "2c18117ee463689c", "qe_mutant_kill-d1:1": "8bfe4fb2a811ab6b",
     "qe_mutant_kill-d1:2": "a29fa8404c66b6ff", "qe_mutant_kill-d1:3": "7579e245d91a9739",
     "qe_mutant_kill-d2:0": "0b352307ed8023d3", "qe_mutant_kill-d2:1": "1ea3d0f1e672b099",

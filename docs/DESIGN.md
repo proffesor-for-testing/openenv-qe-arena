@@ -71,6 +71,7 @@ Faults come from two sources, drawn per task. Nothing in the prompt or files say
 | d1 | One fault. An input that the bug breaks, without its expected value (derive it from the docstring). Visible tests pass |
 | d2 | Two faults, at least one subtle (at most 15% of hidden inputs reveal it). No failing input |
 | d3 | Three faults, at least two subtle. No failing input |
+| d4 | d3's faults plus a total edit budget (below). No failing input |
 
 Calibration v1 (thinking off, 8 episodes per cell) showed that giving the expected value of a failing test made
 the task trivial (d1 and the old d3 both 8/8), so no level shows an expected value for a failing input. Calibration v2 (12 episodes per cell) still
@@ -80,6 +81,27 @@ are, so the model has to keep checking the code against the spec instead of stop
 Reward: **1.0 only if every hidden differential test passes** (edge cases plus seeded random inputs,
 compared against the original function's outputs). Otherwise 0. Unchanged code is 0. Partial credit is
 deliberately absent: a mutant already passes most inputs, so a pass fraction would pay for doing nothing.
+
+#### `qe_bugfix-d4`: the edit budget
+
+d4 is d3's fault generation plus a total edit budget. Its random stream is `qe_bugfix-d4:<seed>`, and the
+task ID was appended to `TASK_IDS`, so d1-d3 and every existing pin are byte-identical.
+
+- **Budget:** `qe_arena/edit_budget.py`. The budget is 40% of the buggy file's length, rounded up to a
+  multiple of 50 characters, and counts `len(old) + len(new)` over all edits. A task is served only if the
+  minimal fix fits and a full rewrite (`len(buggy) + len(original)`) does not. The minimal fix is one edit
+  per changed hunk, widened by context lines until `old` is unique.
+- **What the model sees:** the reset prompt states the budget. Every applied edit reports what is left.
+  An edit that would exceed the budget is refused, is not applied and does not use a step. Only the first
+  `MAX_FREE_REFUSALS` (4) refusals are free; after that a refusal uses a step, so episodes stay bounded.
+- **Why the budget ignores the faults:** the calibrated prototype used 1.5x the faults' line diff. Showing
+  that number would tell the model roughly how many characters the faulty lines hold, a side channel on
+  their size, and with the line lengths on screen on which lines they might be. The shipped budget depends
+  only on the shown file. A budget of 0.4 of the file matches the prototype's median (0.39). The minimal fix
+  fits for about 85% of d3 fault sets; the rest are not served as d4. The only thing this conditioning
+  reveals is the same for every d4 task: the fix is small relative to the file.
+- **Oracle:** the reference solution uses the minimal fix. It earns 1.0 on 200 seeds within the budget
+  and the 12-step limit (read, up to 3 edits, run_tests, submit).
 
 ### `qe_mutant_kill`: write a test that kills a mutant
 

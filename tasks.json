@@ -23,6 +23,10 @@
     {
       "task_id": "qe_mutant_kill-d3",
       "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-d4",
+      "split": "train"
     }
   ]
 }

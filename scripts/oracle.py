@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from qe_arena import sandbox  # noqa: E402
+from qe_arena import edit_budget, sandbox  # noqa: E402
 from qe_arena.tasks import MODULE, Task  # noqa: E402
 
 
@@ -36,10 +36,10 @@ def kill_tests(task: Task, *, wrong_expected: bool = False) -> list[dict]:
 def solve_actions(task: Task) -> list[dict]:
     """Actions that earn reward 1.0."""
     if task.family == "qe_bugfix":
-        return [
-            {"op": "read", "path": "*"},
-            {"op": "edit", "path": MODULE, "old": task.private["buggy"], "new": task.private["original"]},
-            {"op": "run_tests"},
-            {"op": "submit", "answer": {}},
-        ]
+        if task.private.get("edit_budget") is not None:  # d4: a whole-file edit would be refused
+            edits = [{"op": "edit", "path": MODULE, **e}
+                     for e in edit_budget.minimal_fix(task.private["buggy"], task.private["original"])]
+        else:
+            edits = [{"op": "edit", "path": MODULE, "old": task.private["buggy"], "new": task.private["original"]}]
+        return [{"op": "read", "path": "*"}, *edits, {"op": "run_tests"}, {"op": "submit", "answer": {}}]
     return [{"op": "read", "path": "*"}, {"op": "submit", "answer": {"tests": kill_tests(task)}}]

@@ -69,6 +69,7 @@ def main() -> int:
                 "task_id": task_id, "seed": seed, "split": "train", "domain": DOMAIN,
                 "family": task.family, "difficulty": task.difficulty,
                 "prompt": task.prompt, "files": json.dumps(task.files, sort_keys=True),
+                "edit_budget": task.private.get("edit_budget"),  # d4 only; the prompt states it too
             })
     data = "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows)
     (args.out / "tasks.jsonl").write_text(data)
