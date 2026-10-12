@@ -34,7 +34,7 @@ CORPUS = ROOT / "qe_arena" / "corpus"
 
 # Cross-host golden: identical on arm64 macOS, amd64 Linux and the amd64 arena image. Regenerate only
 # when the runtime, guest harness, budgets, SAFE_EXPORTS or corpus change, and say why in the commit.
-CORPUS_FINGERPRINT = ("02b78a39267076c5", 197_806_563, 2560)
+CORPUS_FINGERPRINT = ("dc04044963628f04", 221_670_568, 2880)
 
 
 def ok(value):
