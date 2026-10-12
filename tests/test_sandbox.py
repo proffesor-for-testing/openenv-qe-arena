@@ -571,14 +571,25 @@ def test_a_stopped_worker_cannot_block_a_write_past_its_deadline():
 
 
 def test_a_stopped_pool_worker_is_replaced_within_the_backstop(monkeypatch):
-    monkeypatch.setattr(sandbox, "BATCH_BACKSTOP_S", 2.0)
+    # The request to a stopped worker must end at its own deadline (not hang the thread), the worker must be
+    # killed, and run_calls' retry must run on another worker. The test sets each attempt's deadline itself:
+    # with one module-wide 2 s backstop the retry also had to start a fresh worker inside those 2 s, which
+    # takes 4-6 s on a loaded host, so the test failed under load (fix/pool-backstop-under-load).
     worker = sandbox._acquire(time.monotonic() + 60)
     os.kill(worker.proc.pid, signal.SIGSTOP)
-    sandbox._release(worker, True)  # back in the pool, apparently healthy
-    t = time.monotonic()
+    sandbox._release(worker, True)  # back in the pool, apparently healthy; acquired next (LIFO)
+    real, attempts, backstops = sandbox._dispatch, [], iter([0.5, 300.0])
+
+    def dispatch(payload):
+        monkeypatch.setattr(sandbox, "BATCH_BACKSTOP_S", next(backstops))
+        response = real(payload)
+        attempts.append(response if isinstance(response, str) else "response")
+        return response
+    monkeypatch.setattr(sandbox, "_dispatch", dispatch)
     results = run_calls("def f(s):\n    return len(s)\n", "f", [BIG])
-    assert [r.value for r in results] == [1_000_000]  # the retry ran on a fresh worker
-    assert worker.proc.poll() is not None and time.monotonic() - t < 2.0 + sandbox.WORKER_STARTUP_S
+    assert attempts == ["timeout", "response"]       # a stopped worker can only time out, never answer
+    assert [r.value for r in results] == [1_000_000]  # the retry ran on another worker
+    assert worker.proc.poll() is not None             # and the stopped one was killed, not reused
 
 
 class _FakeWorker:
