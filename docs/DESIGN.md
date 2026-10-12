@@ -160,39 +160,156 @@ At most 12 steps per episode.
 
 ## Verifier integrity
 
-The oracle never runs in the same process as model-influenced code.
+The oracle never runs in the same process as model-influenced code, and no code we grade ever runs natively.
 
-1. **Reference outputs** come from running the original corpus function in the sandbox. Calls are JSON
-   in, JSON out.
-2. **Candidate code** (a `qe_bugfix` working copy) runs in a separate child process (`python -S -s -P` with
-   `PYTHONHASHSEED=0`; `-I` is not used because it ignores the hash seed, and set ordering would then differ
-   between the reference and the candidate):
-   - an environment set entirely by the parent, and a temporary working directory;
-   - rlimits on CPU, address space, file size (0), open files and core dumps, set by the child on itself
-     before any candidate code is compiled. There is no process-count limit, because RLIMIT_NPROC is
-     per-user; the static gate makes forking unreachable;
-   - stdout and stderr redirected away, and results returned on a private channel tagged with a nonce;
-   - per-call and per-batch wall-clock timeouts.
-   The child returns only the outputs for the given inputs. Expected values never enter the child.
+1. **Reference outputs** come from running the original corpus function in the same sandbox as the
+   candidate. Calls are JSON in, JSON out. Never compare a native result with a sandbox result: the guest is
+   CPython 3.14 on wasm32 (4-byte pointers, 32-bit `hash()`), the server is CPython 3.12 on 64-bit.
+2. **Candidate code runs in CPython-on-WASI under wasmtime fuel.** `qe_arena/sandbox.py` sends each batch over
+   a pipe to a long-lived worker process (`qe_arena/wasi_worker.py`), so the server never loads wasmtime and a
+   wasmtime fault or host bug cannot take down `/health`. The worker runs `python.wasm` (brettcannon/cpython-
+   wasi-build v3.14.7) in wasmtime 47.0.1, with a fresh Store and Instance per batch:
+   - **Fuel, not time.** Every call is metered in wasmtime fuel (about one unit per wasm instruction):
+     `FUEL_PER_CALL` = 100 M per call and `MODULE_FUEL` = 200 M for the module body. A call's fuel includes
+     building its result row (normalizing, serializing, `str()` of an exception) and releasing what the call
+     left behind (a full `gc.collect()` of objects created since setup, which the harness freezes), so corpus
+     calls use 542 k to 2.05 M fuel (median 580 k), a 49x margin. Between calls the harness gets only 20 M
+     (`HARNESS_FUEL`); no candidate code runs there. A 60 s wall-clock epoch deadline exists only as an
+     infrastructure backstop.
+   - **Memory and stack.** Linear memory is capped at 256 MiB (`DEFAULT_MEM_MB`); the wasm stack is bounded.
+   - **No host.** The guest has no host directory at all: `qe_arena/wasi_fs.py` answers every `fd_*` and
+     `path_*` call from memory, exposing one read-only directory `/lib` that holds one reproducible stdlib zip,
+     with canonical metadata (fixed times, fixed inode numbers, nlink 1). wasmtime's own preopen passed host
+     inode numbers, link counts, directory sizes and real access times into the guest; the access time was
+     effectively the host clock, and because the interpreter stats its stdlib at startup the values shifted
+     heap layout and fuel between a host and a container on the same machine. The environment holds only
+     `PYTHONHASHSEED=0`. Clocks and clock resolution are fixed or stepped, `random_get` is a seeded SHAKE-256
+     stream, `poll_oneoff` is unsupported, and there are no sockets, so the guest cannot reach the network even
+     though the arena machine can.
+   - **Call boundaries.** The guest harness (`qe_arena/guest_harness.py`) writes `B`, `E` and `R` markers to
+     fd 1, each tagged with a per-batch random nonce. The host sets the call's fuel at `B`, reads what was
+     used at `E` and takes the result row from `R`. Order is enforced, and anything else on fd 1 fails the
+     batch closed, so nothing a candidate prints can forge a result or move fuel accounting.
+   - **Restricted guest.** Inside, code runs with a restricted builtins map, and `import` returns only proxy
+     modules that carry an audited list of names. Expected values never enter the worker or the guest.
+     Python-level `sys.stdout`/`sys.stderr` discard everything (only the harness writes fd 1, with
+     `os.write`), so `re.DEBUG`'s parse-tree printout or a warning cannot break the protocol. The gate also
+     refuses a literal `re.DEBUG` flag, and the `re` proxy clears that bit from any flags value.
+   - **Why the nonce is not the barrier.** Harness and candidate share one interpreter, and stock
+     `python.wasm` has no host import that Python code can call. So anything the harness can say to the
+     host, a candidate holding a writer could say too, nonce included: a red-team run with the gate
+     deliberately bypassed forged a protocol-valid stream. The barrier is that no writer exists: `os`/`sys`
+     are unreachable, there is no string-driven attribute lookup, stdout is discarded, and `re` cannot print.
+     What a forged stream could add is also nothing beyond `return`: a value the candidate chose, or the name
+     of an exception it could raise. The nonce and the strict marker order only make accidental output fail
+     closed.
+   - **Candidate code only ever runs on its call's fuel.** The result row is built before the end marker:
+     the exception's `str()` (an instance can override what it calls), normalizing and serializing the
+     value, dropping the call's objects and collecting cycles (a generator's `finally:` runs there). The
+     resource flag is checked only after that cleanup, so a `RecursionError` raised and caught in a `finally:`
+     during release still makes the call `resource`. The red team finished a 2.8e8-fuel loop inside an
+     exception's `str()` on the harness's refill before this.
+   - **Nothing worth reading above the candidate.** Candidate code runs below exactly two frames: the closure
+     the harness's setup returns, and the root module frame, whose globals are cleared first. The nonce
+     exists only inside `itertools.cycle` objects (no attribute or repr shows their bytes), the pending
+     inputs only inside a list iterator, and the request, `sys.argv` and `sys.orig_argv` are gone. A test
+     with the gate switched off walks every ancestor frame and `sys` and finds neither the nonce nor a
+     pending input.
+   - **Resource failures cannot be caught away.** Before any candidate code runs, the harness registers a
+     `sys.monitoring` RAISE callback under its own tool id. The candidate cannot reach it: `sys` is not
+     importable and no traversal route exists. It flags every `MemoryError` or `RecursionError` raised
+     during a call or the module body, including ones raised inside C calls and ones the candidate catches
+     with `except Exception`. A flagged call is `resource` whatever it returned, so the memory cap can
+     never choose a settled value. Cost: about 3,100 fuel per raised exception, +1.8% over the corpus.
+   - **One rule after a trap.** A batch runs in one instance, in order. A trap (fuel, wasm stack, any other
+     trap) ends the instance. The call it interrupted gets `fuel`, `resource` or `crash`, and every later call
+     is `skipped`; nothing re-runs on reconstructed state. A `MemoryError` the guest survives is not a trap,
+     so later calls still run on real state. Isolating every call in its own instance would cost about 290 M
+     fuel of interpreter startup per call, so instead `grade_mutant_kill` runs each submitted test as its
+     own batch: credit does not depend on test order, and a test that loops one mutant cannot cancel
+     another test.
+   - **Every wait has a deadline, and the pool is fair.** Acquiring a pool worker, starting one, writing the
+     request (non-blocking, select-bounded) and reading the response all end by `BATCH_BACKSTOP_S`. A
+     stopped or wedged worker is killed and replaced, and the batch is retried once. `warm()` returns every
+     worker it started even when a later one fails. Each environment instance grades under its own session
+     key. Waiters are served first come first served among sessions under their cap, and no session holds
+     more than `pool_size - 1` workers. Together with one instance per trapped batch, two sessions grading
+     looping code kept honest episodes at a median of 3.1 s and a max of 8.6 s on ruos (2 workers), where
+     the red team had measured 45 s and 154 s.
+   - **Runtime identity.** At startup the worker hashes `python.wasm` and the stdlib zip, compares them with
+     `qe_arena/runtime_pins.json`, and compiles and serves those exact bytes. It refuses to report ready on a
+     mismatch.
+   - **Workers.** One worker per CPU the container may use: the cgroup v2 `cpu.max` quota (then cgroup v1,
+     the affinity mask, `os.cpu_count()`), clamped to 1..4. `QE_ARENA_WASI_WORKERS` overrides it. The app
+     starts and warms them in a background thread; each compiles `python.wasm` once (about 5 s each at
+     `--cpus=2`, 10.4 s for both, measured in the image), while `/health` keeps answering.
 3. **A static gate runs before execution.** It rejects imports outside an allowlist (`math`, `re`,
    `itertools`, `functools`, `collections`, `string`, `bisect`, `heapq`, `statistics`, `decimal`,
-   `fractions`). It also rejects dunder attribute access and the names `open`, `exec`, `eval`, `compile`,
-   `__import__`, `globals`, `locals`, `vars`, `getattr`, `setattr`, `delattr`, `breakpoint`, `input`, `help`
-   and `memoryview`. Code runs with a restricted builtins map. This stops the obvious hack: reading the
-   reference implementation from the image.
+   `fractions`, `typing`, `operator`) and any `from X import Y` whose `Y` is not exported. It rejects dunder
+   names and attributes, attributes that reach frames, code or tracebacks (`gi_`, `cr_`, `ag_`, `f_`, `tb_`,
+   `co_`, any leading `_`), class definitions, `global`/`nonlocal`, `match`, async code and oversize or overly
+   deep source. It bans the names `open`, `exec`, `eval`, `compile`, `__import__`, `globals`, `locals`,
+   `vars`, `getattr`, `setattr`, `delattr`, `breakpoint`, `input`, `help`, `memoryview`, `exit`, `quit` and
+   `MemoryError` (so a guest `MemoryError` can only come from the memory cap).
+   - **No string-driven attribute lookups.** `str.format` resolves `{0.attr}` and `{0[key]}` at runtime, out of
+     reach of the AST checks. The Codex review used it to read the nonce
+     (`'{0.__traceback__.tb_frame.f_back.f_locals[nonce]}'.format(e)`), the batch inputs and real module
+     globals (`'{0.__class__.__init__.__globals__[sys]}'.format(typing.List)`). So:
+     - a string that reaches a format path (the literal receiver of `.format`, the literal spec of
+       `format()`) may not contain `__` or a frame-attribute name (`tb_frame`, `f_back`, `f_locals`,
+       `f_globals`, `gi_frame`, …, matched as whole identifier words). Other literals (docstrings,
+       `x.split('__')`, dict keys) are free: none of them can drive an attribute lookup, because `getattr`,
+       `vars`, `globals`, `format_map`, `string.Formatter` and `operator.attrgetter` are unavailable;
+     - `.format` needs a string-literal receiver whose fields are plain positions or names, with no `.` or
+       `[` even in nested specs;
+     - `format()` needs a literal spec and cannot be aliased.
+
+     Ordinary formatting (`"{:.2f}"`, `"{0}-{1}"`, named fields, `"{0:{1}}"`, f-strings, `%`) still works.
+   - `SAFE_EXPORTS` is frozen as literals for the 3.14 guest. Every export was audited for anything that reads
+     or writes an attribute or evaluates code from a runtime string, or that hands back a module. So
+     `functools.update_wrapper`/`wraps`/`singledispatch`, `string.Formatter`, `operator.attrgetter`/
+     `methodcaller`/`call`, and `typing.get_type_hints`/`get_args`/`ForwardRef`/`evaluate_forward_ref`/
+     `TypeVar`/`NamedTuple`/`Protocol` are absent, as are `typing`'s re-exported modules (`sys`,
+     `functools`, `collections`, `types`, `copyreg`, `operator`). The gate also denies those helper names as
+     attributes.
+   - `tests/test_sandbox.py` walks every public attribute reachable from the exports inside the guest (depth
+     4, about 2,400 objects) and asserts that no module, frame, code object or loader is among them. Exporting
+     `typing.sys` on purpose makes that walk report it.
+   - The walk deliberately does not follow dunders: every export's dunder graph reaches a module
+     (`math.floor.__self__` is `math`, and any Python function's `__globals__` is its module), so no export
+     list could pass such a walk. The defence is that no route to a dunder exists: the AST gate blocks them as
+     attributes, and the formatting rules above block the only string-driven lookup.
 4. **Results are compared in the parent.** Values must be JSON-equal with strict types (bool is not int,
    int is not float). Floats match to `1e-9` relative or `1e-12` absolute. An exception compares by type
    name, so a function that is specified to raise `ValueError` must keep raising it. In `qe_mutant_kill`, an
    int `expected` is read as a float wherever the original returned a float, at any depth, because JSON
    writes `2.0` as `2`. Whether `{"raises": ...}` means an exception depends on what the original actually
-   did.
-5. **Machine load and sandbox limits never decide an outcome.** A timed-out call is re-probed alone with a
-   200x margin over the corpus's 5 ms budget; only code that still times out is treated as looping, and the
-   rerun is capped at 10 s so slow code cannot multiply cost. A timeout, a crash, or a `MemoryError` or
-   `RecursionError` (our 256 MiB cap and stack depth, not the code's behaviour) is never a behavioural
-   difference: never a fault, never a kill, never a reason to switch function. The planned move to
-   CPython-on-WASI with fuel metering makes all of this deterministic by construction (identical outcome and
-   fuel across hosts and load, measured).
+   did. Fuel is never compared: a call's fuel depends on what ran earlier in the same instance.
+5. **Sandbox limits never decide an outcome, and machine load cannot.** Each call ends as one of these kinds:
+
+   | Kind | Meaning | Settled? |
+   |---|---|---|
+   | `ok` | returned a JSON value | yes |
+   | `exc` | raised; compared by type name (`RecursionError` stays unsettled, as below) | yes |
+   | `fuel` | used its whole fuel budget (loops, or far too slow) | no |
+   | `resource` | hit the memory cap or exhausted the wasm stack | no |
+   | `crash` | unserializable result, oversized output, module-level error, missing entry, protocol violation; a candidate failure, never infra | no |
+   | `skipped` | not run: an earlier call in the batch trapped and ended the instance | no |
+   | `infra` | the worker died, hung or failed its identity check, or the backstop fired; `timeout` is its legacy alias | never graded |
+   | `rejected` | the static gate refused the source | no |
+
+   `resource` covers `MemoryError` and `RecursionError` however the code handled them (see the RAISE monitor
+   above). An unsettled result is never a behavioural difference: never a fault, never a kill, never a
+   reason to switch function, and never a pass. Outcomes and fuel are deterministic, so `tasks._outputs`
+   runs a batch once.
+
+   `infra` is the one transient kind, and it is never scored. `run_calls` replaces a failed worker and
+   retries once, and `tasks._outputs` reruns an `infra` batch once more. If it is still `infra`, `_outputs`
+   raises `sandbox.InfraError`. The environment lets that propagate without consuming the step or the test
+   run and without ending the episode. OpenEnv's WebSocket server then answers with an `error` frame
+   (`EXECUTION_ERROR`) and no reward, and the client can resend the same action. A persistent sandbox
+   failure therefore never becomes a 0 that GRPO would learn from. The retries keep task generation stable
+   when a worker dies mid-batch, and they can never turn `fuel` or `resource` into anything else.
 6. **No partial credit by accident.** Every non-empty proper subset of a task's faults must still fail some
    hidden input, so faults that cancel each other out can never let a partial fix pass. A d1 fault must be
    revealed by at least 3 distinct hidden calls, so special-casing the one reported call cannot pass.
@@ -200,6 +317,32 @@ The oracle never runs in the same process as model-influenced code.
    excludes every graded input, so outputs of the fixed edge cases are never shown and cannot be learned
    as a lookup table across episodes. In mutant-kill, the original plus the diff is
    the mutant. Values echoed by `run_tests` are capped at 200 characters each.
+8. **Every host computes the same thing, and the test suite pins it.**
+   - `scripts/build_wasi_runtime.py` checks the release's sha256 and compiles the stdlib inside `python.wasm`
+     to unchecked-hash pycs, in sorted path order (compileall follows readdir order, which changed one pyc).
+     It packs them into a zip with fixed timestamps. It refuses any output that does not match
+     `qe_arena/runtime_pins.json` (`python.wasm` d24bd98d…, `python314.zip` 959c807f…), which the worker also
+     checks at startup. The Docker builder stage runs it. Both base images are pinned by digest, and wasmtime
+     installs with `--require-hashes` (`requirements-wasmtime.lock`).
+   - `scripts/fingerprint.py` hashes kind, value and fuel for every corpus function on 64 inputs.
+     `tests/test_sandbox.py` pins the result, currently `f50dbb1dd3917498` with 1,732,616,699 total fuel over 45
+     functions (2,880 calls), identical on arm64 macOS, an amd64 Linux host and the amd64 image run with the
+     arena flags. The commit that changes the pin says why.
+   - Regenerate the pin only when the runtime, the guest harness, the budgets, `SAFE_EXPORTS` or the corpus
+     change, and say why in the commit.
+9. **Signed task manifests.** Because grading is deterministic, `qe_arena/manifest.py` describes a task by
+   hashes only. It records:
+   - sha256 of `python.wasm`, the stdlib zip, the guest harness and the corpus file, plus the wasmtime version;
+   - the task ID and seed;
+   - sha256 of the hidden inputs, the reference outputs with their fuel, the grading sources and the
+     observation;
+   - the fuel budgets and the memory cap.
+
+   `scripts/sign_manifest.py` generates keys, signs and verifies offline with Ed25519 (`cryptography`).
+   `verify_task` checks the signature, rebuilds the task from (task_id, seed) and compares every field, so a
+   validly signed but wrong manifest still fails. The server never imports the module and never holds the
+   private key; the public key belongs at `qe_arena/keys/manifest_ed25519.pub`. Signed manifests are meant to
+   ship with the HF dataset export.
 
 Items 4 to 7 came from independent review of the grader: an adversarial Codex review, a red team that built
 exploits, and mutation testing of the verifier (305 mutants; the first suite caught 72.1%, the hardened
@@ -223,9 +366,10 @@ def gen_inputs(rng, n):
 ```
 
 Rules:
-- Standard library only, and only modules from the static-gate allowlist.
+- Standard library only, and only modules and names the static gate allows (`sandbox.SAFE_EXPORTS`).
 - Pure and deterministic: no I/O, no time, no global state.
-- Total over `gen_inputs` within 5 ms per call.
+- Cheap over `gen_inputs`: within 5 ms per call natively and far below `FUEL_PER_CALL` in the sandbox (the
+  most expensive corpus call uses 1.1 M of its 100 M fuel).
 - Arguments and return values are JSON-serializable: int, str, bool, None, lists, and dicts with
   string keys. Avoid floats unless they are essential.
 - The entry function plus helpers is 12–45 lines.
@@ -261,6 +405,10 @@ reproduces the pre-fix behaviour rather than copying pre-fix code.
 - The submission request is rendered and checked with the same discipline as rUv's MetaHarness entry:
   exact image digest, anonymous pull, `openenv validate`, `/schema` equality, and native replay of
   every task ID.
+- The image runs as uid 10001 with a read-only root filesystem, but it needs a writable `/tmp`
+  (`docker run --read-only --tmpfs /tmp`, as CI does). The sandbox itself writes nothing. openenv imports
+  gradio, which needs a temporary directory at import time, so a bare `--read-only` fails at startup;
+  the image from before the WASI sandbox failed the same way.
 
 ## Daily flywheel (`scripts/flywheel.py`, logic in `scripts/qe_flywheel/`)
 

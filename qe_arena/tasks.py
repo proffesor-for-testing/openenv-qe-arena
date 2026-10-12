@@ -97,21 +97,20 @@ def _settled(result: sandbox.CallResult) -> bool:
 
 
 def _outputs(source: str, entry: str, calls: list[list]) -> list[sandbox.CallResult]:
-    """Run calls so that machine load cannot decide an outcome.
+    """Run calls once: fuel metering makes every outcome deterministic, so machine load cannot decide one.
 
-    A timeout is re-probed alone with a 200x margin over the corpus's 5 ms
-    budget, and the rerun is capped at 10 s so slow code cannot multiply cost. Code that still times out really loops; otherwise the batch is
-    rerun with generous limits. Callers treat any unsettled result (timeout,
-    crash) as unusable, never as a behavioural difference.
+    Callers treat any unsettled result (fuel, resource, crash, skipped) as unusable, never as a
+    behavioural difference. ``infra`` (the sandbox worker itself failed; ``timeout`` is its legacy
+    alias) is the only transient kind: the batch is run once more, and if it still fails this raises
+    InfraError instead of returning anything a grade could turn into a reward.
     """
     results = sandbox.run_calls(source, entry, calls)
-    timed_out = [i for i, r in enumerate(results) if r.kind == "timeout"]
-    if not timed_out:
-        return results
-    probe = sandbox.run_calls(source, entry, [calls[timed_out[0]]], timeout_s=2.0, per_call_timeout_s=1.0)
-    if probe and probe[0].kind == "timeout":
-        return results
-    return sandbox.run_calls(source, entry, calls, timeout_s=10.0, per_call_timeout_s=1.0)
+    if any(r.kind in ("infra", "timeout") for r in results):
+        results = sandbox.run_calls(source, entry, calls)
+        failed = [r for r in results if r.kind in ("infra", "timeout")]
+        if failed:
+            raise sandbox.InfraError(f"sandbox infrastructure failed twice: {failed[0].error}"[:300])
+    return results
 
 
 def _killing(reference: list, outputs: list) -> list[int]:
@@ -466,10 +465,12 @@ def grade_mutant_kill(task: Task, answer: Any) -> float:
             return 0.0
         calls.append(test["args"])
         expecteds.append(test["expected"])
-    reference = _outputs(p["original"], p["entry"], calls)
+    # One batch per test: a trap ends a batch and skips the calls after it, so tests sharing a batch
+    # would score differently depending on their order.
+    reference = [r for call in calls for r in _outputs(p["original"], p["entry"], [call])]
     scores = []
     for m in p["mutants"]:
-        outputs = _outputs(m["source"], p["entry"], calls)
+        outputs = [r for call in calls for r in _outputs(m["source"], p["entry"], [call])]
         best = 0.0
         for i in _killing(reference, outputs):  # only settled, differing results count as a kill
             best = max(best, 1.0 if _expected_matches(expecteds[i], reference[i]) else 0.5)
