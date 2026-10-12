@@ -114,6 +114,32 @@ The oracle never runs in the same process as model-influenced code, and no code 
      batch closed, so nothing a candidate prints can forge a result or move fuel accounting.
    - **Restricted guest.** Inside, code runs with a restricted builtins map, and `import` returns only proxy
      modules that carry an audited list of names. Expected values never enter the worker or the guest.
+   - **Nothing worth reading above the candidate.** Candidate code runs below exactly two frames: the closure
+     the harness's setup returns, and the root module frame, whose globals are cleared first. The nonce
+     exists only inside `itertools.cycle` objects (no attribute or repr shows their bytes), the pending
+     inputs only inside a list iterator, and the request, `sys.argv` and `sys.orig_argv` are gone. A test
+     with the gate switched off walks every ancestor frame and `sys` and finds neither the nonce nor a
+     pending input.
+   - **Resource failures cannot be caught away.** Before any candidate code runs, the harness registers a
+     `sys.monitoring` RAISE callback under its own tool id. The candidate cannot reach it: `sys` is not
+     importable and no traversal route exists. It flags every `MemoryError` or `RecursionError` raised
+     during a call or the module body, including ones raised inside C calls and ones the candidate catches
+     with `except Exception`. A flagged call is `resource` whatever it returned, so the memory cap can
+     never choose a settled value. Cost: about 3,100 fuel per raised exception, +1.8% over the corpus.
+   - **One rule after a trap.** A batch runs in one instance, in order. A trap (fuel, wasm stack, any other
+     trap) ends the instance. The call it interrupted gets `fuel`, `resource` or `crash`, and every later call
+     is `skipped`; nothing re-runs on reconstructed state. A `MemoryError` the guest survives is not a trap,
+     so later calls still run on real state. Isolating every call in its own instance would cost about 290 M
+     fuel of interpreter startup per call, so instead `grade_mutant_kill` runs each submitted test as its
+     own batch: credit does not depend on test order, and a test that loops one mutant cannot cancel
+     another test.
+   - **Every wait has a deadline.** Acquiring a pool worker, starting one, writing the request (non-blocking,
+     select-bounded) and reading the response all end by `BATCH_BACKSTOP_S`. A stopped or wedged worker is
+     killed and replaced, and the batch is retried once. `warm()` returns every worker it started even when
+     a later one fails.
+   - **Runtime identity.** At startup the worker hashes `python.wasm` and the stdlib zip, compares them with
+     `qe_arena/runtime_pins.json`, and compiles and serves those exact bytes. It refuses to report ready on a
+     mismatch.
    - **Workers.** One worker per CPU the container may use: the cgroup v2 `cpu.max` quota (then cgroup v1,
      the affinity mask, `os.cpu_count()`), clamped to 1..4. `QE_ARENA_WASI_WORKERS` overrides it. The app
      starts and warms them in a background thread; each compiles `python.wasm` once (about 5 s each at
@@ -126,6 +152,17 @@ The oracle never runs in the same process as model-influenced code, and no code 
    deep source. It bans the names `open`, `exec`, `eval`, `compile`, `__import__`, `globals`, `locals`,
    `vars`, `getattr`, `setattr`, `delattr`, `breakpoint`, `input`, `help`, `memoryview`, `exit`, `quit` and
    `MemoryError` (so a guest `MemoryError` can only come from the memory cap).
+   - **No string-driven attribute lookups.** `str.format` resolves `{0.attr}` and `{0[key]}` at runtime, out of
+     reach of the AST checks. The Codex review used it to read the nonce
+     (`'{0.__traceback__.tb_frame.f_back.f_locals[nonce]}'.format(e)`), the batch inputs and real module
+     globals (`'{0.__class__.__init__.__globals__[sys]}'.format(typing.List)`). So:
+     - a string literal may not contain `__` or a frame-attribute name (`tb_frame`, `f_back`, `f_locals`,
+       `f_globals`, `gi_frame`, …, matched as whole words);
+     - `.format` needs a string-literal receiver whose fields are plain positions or names, with no `.` or
+       `[` even in nested specs;
+     - `format()` needs a literal spec and cannot be aliased.
+
+     Ordinary formatting (`"{:.2f}"`, `"{0}-{1}"`, named fields, `"{0:{1}}"`, f-strings, `%`) still works.
    - `SAFE_EXPORTS` is frozen as literals for the 3.14 guest. Every export was audited for anything that reads
      or writes an attribute or evaluates code from a runtime string, or that hands back a module. So
      `functools.update_wrapper`/`wraps`/`singledispatch`, `string.Formatter`, `operator.attrgetter`/
@@ -136,6 +173,10 @@ The oracle never runs in the same process as model-influenced code, and no code 
    - `tests/test_sandbox.py` walks every public attribute reachable from the exports inside the guest (depth
      4, about 2,400 objects) and asserts that no module, frame, code object or loader is among them. Exporting
      `typing.sys` on purpose makes that walk report it.
+   - The walk deliberately does not follow dunders: every export's dunder graph reaches a module
+     (`math.floor.__self__` is `math`, and any Python function's `__globals__` is its module), so no export
+     list could pass such a walk. The defence is that no route to a dunder exists: the AST gate blocks them as
+     attributes, and the formatting rules above block the only string-driven lookup.
 4. **Results are compared in the parent.** Values must be JSON-equal with strict types (bool is not int,
    int is not float). Floats match to `1e-9` relative or `1e-12` absolute. An exception compares by type
    name, so a function that is specified to raise `ValueError` must keep raising it. In `qe_mutant_kill`, an
@@ -151,16 +192,22 @@ The oracle never runs in the same process as model-influenced code, and no code 
    | `fuel` | used its whole fuel budget (loops, or far too slow) | no |
    | `resource` | hit the memory cap or exhausted the wasm stack | no |
    | `crash` | unserializable result, oversized output, module-level error, missing entry | no |
-   | `infra` | the worker died or the wall-clock backstop fired; `timeout` is its legacy alias | no |
+   | `skipped` | not run: an earlier call in the batch trapped and ended the instance | no |
+   | `infra` | the worker died, hung or failed its identity check, or the backstop fired; `timeout` is its legacy alias | never graded |
    | `rejected` | the static gate refused the source | no |
 
-   An unsettled result, or an `exc` of `MemoryError` or `RecursionError` (our limits, not the code's
-   behaviour), is never a behavioural difference: never a fault, never a kill, never a reason to switch
-   function, and never a pass. Outcomes and fuel are deterministic, so `tasks._outputs` runs a batch once.
-   The one exception is `infra`, which is the only transient kind: such a batch is run once more.
-   `run_calls` also replaces a dead worker and retries once on its own. This retry keeps the generator stable
-   if a worker dies mid-batch (`tests/test_review_findings.py` simulates exactly that), and it can never turn
-   `fuel` or `resource` into anything else.
+   `resource` covers `MemoryError` and `RecursionError` however the code handled them (see the RAISE monitor
+   above). An unsettled result is never a behavioural difference: never a fault, never a kill, never a
+   reason to switch function, and never a pass. Outcomes and fuel are deterministic, so `tasks._outputs`
+   runs a batch once.
+
+   `infra` is the one transient kind, and it is never scored. `run_calls` replaces a failed worker and
+   retries once, and `tasks._outputs` reruns an `infra` batch once more. If it is still `infra`, `_outputs`
+   raises `sandbox.InfraError`. The environment lets that propagate without consuming the step or the test
+   run and without ending the episode. OpenEnv's WebSocket server then answers with an `error` frame
+   (`EXECUTION_ERROR`) and no reward, and the client can resend the same action. A persistent sandbox
+   failure therefore never becomes a 0 that GRPO would learn from. The retries keep task generation stable
+   when a worker dies mid-batch, and they can never turn `fuel` or `resource` into anything else.
 6. **No partial credit by accident.** Every non-empty proper subset of a task's faults must still fail some
    hidden input, so faults that cancel each other out can never let a partial fix pass. A d1 fault must be
    revealed by at least 3 distinct hidden calls, so special-casing the one reported call cannot pass.
@@ -171,11 +218,14 @@ The oracle never runs in the same process as model-influenced code, and no code 
 8. **Every host computes the same thing, and the test suite pins it.**
    - `scripts/build_wasi_runtime.py` checks the release's sha256 and compiles the stdlib inside `python.wasm`
      to unchecked-hash pycs, in sorted path order (compileall follows readdir order, which changed one pyc).
-     It packs them into a zip with fixed timestamps. It refuses any output that does not match the pinned
-     digests (`python.wasm` d24bd98d…, `python314.zip` 959c807f…); the Docker builder stage runs it.
+     It packs them into a zip with fixed timestamps. It refuses any output that does not match
+     `qe_arena/runtime_pins.json` (`python.wasm` d24bd98d…, `python314.zip` 959c807f…), which the worker also
+     checks at startup. The Docker builder stage runs it. Both base images are pinned by digest, and wasmtime
+     installs with `--require-hashes` (`requirements-wasmtime.lock`).
    - `scripts/fingerprint.py` hashes kind, value and fuel for every corpus function on 64 inputs (2,560
-     calls). `tests/test_sandbox.py` pins the result: `eb43ccdc9b4a0149` with 77,667,303 total fuel,
-     identical on arm64 macOS, an amd64 Linux host and the amd64 image run with the arena flags.
+     calls). `tests/test_sandbox.py` pins the result, currently `7cc2a917d4e9dcdd` with 65,614,239 total fuel,
+     identical on arm64 macOS, an amd64 Linux host and the amd64 image run with the arena flags. The commit that
+     changes the pin says why.
    - Regenerate the pin only when the runtime, the guest harness, the budgets, `SAFE_EXPORTS` or the corpus
      change, and say why in the commit.
 9. **Signed task manifests.** Because grading is deterministic, `qe_arena/manifest.py` describes a task by

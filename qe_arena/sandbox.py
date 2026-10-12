@@ -15,10 +15,13 @@ Layers, outermost first:
    enter the worker or the guest.
 
 Outcomes are deterministic: the same source and calls give the same kind, value and fuel on any
-host and under any load (pinned by the corpus fingerprint test). ``fuel`` (budget exhausted) and
-``resource`` (memory cap, wasm stack) are limits of the sandbox, never behaviour; ``infra`` (worker
-died, wall-clock backstop) is transient and never graded. ``timeout`` is kept as an alias of
-``infra`` for callers written against the subprocess sandbox.
+host and under any load (pinned by the corpus fingerprint test). ``fuel`` (budget exhausted),
+``resource`` (memory cap, MemoryError or RecursionError however the code handled it, wasm stack) and
+``skipped`` (an earlier call trapped and ended the instance) are limits of the sandbox, never
+behaviour. ``infra`` (worker died, hung or failed its identity check) is transient and never graded:
+tasks._outputs turns a persistent one into InfraError. ``timeout`` is kept as an alias of ``infra``
+for callers written against the subprocess sandbox. docs/DESIGN.md "Verifier integrity" has the
+full contract.
 
 The guest is CPython 3.14 on wasm32 while the server is 3.12 on 64-bit: pointers are 4 bytes and
 ``hash()`` is 32-bit. That is harmless because reference and candidate both run in the guest; never
