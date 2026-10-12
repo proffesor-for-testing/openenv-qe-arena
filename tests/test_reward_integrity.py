@@ -120,7 +120,8 @@ def test_bugfix_task_contract(level, seed):
         [got] = sandbox.run_calls(p["buggy"], p["entry"], [v["args"]])
         assert sandbox.compare(v["expected"], got)
     # Descriptions omit the column, so resolve the exact sites by reproducing the buggy file.
-    candidates = [s for s in mutation.enumerate_sites(p["original"]) if s.description in p["sites"]]
+    pool = dict.fromkeys([*mutation.enumerate_sites(p["original"]), *p["fault_sites"]])  # real faults too
+    candidates = [s for s in pool if s.description in p["sites"]]
     want = tasks.FAULTS[level]
     assert len(p["sites"]) == want
     combos = [list(c) for c in itertools.combinations(candidates, want)]
@@ -309,12 +310,12 @@ def test_edit_and_answer_caps_are_inclusive():
 
 
 GOLDEN = {
-    "qe_bugfix-d1:0": "75d2aad48067724f", "qe_bugfix-d1:1": "40d7a7adcade783c",
-    "qe_bugfix-d1:2": "ed425d24818208ea", "qe_bugfix-d1:3": "4fb6ccb4939a55d5",
-    "qe_bugfix-d2:0": "749aa6a90458636a", "qe_bugfix-d2:1": "5e57aea783ea7e46",
-    "qe_bugfix-d2:2": "fe2081f6aa3d6c35", "qe_bugfix-d2:3": "ee2a196f31a2929c",
-    "qe_bugfix-d3:0": "9464240e26d05fed", "qe_bugfix-d3:1": "5f1d5f81243a49ae",
-    "qe_bugfix-d3:2": "140bb796dcdb6dd8", "qe_bugfix-d3:3": "41de52e393b01531",
+    "qe_bugfix-d1:0": "fa129947dec18115", "qe_bugfix-d1:1": "24559b6fa19b3a65",
+    "qe_bugfix-d1:2": "c485566cf41da3f6", "qe_bugfix-d1:3": "7637736f4a4b27e9",
+    "qe_bugfix-d2:0": "793c43825074f5ef", "qe_bugfix-d2:1": "2eb2deb692c9c106",
+    "qe_bugfix-d2:2": "af8819b151c56e35", "qe_bugfix-d2:3": "3a4e674811293e8f",
+    "qe_bugfix-d3:0": "0c61446267d6adb0", "qe_bugfix-d3:1": "f59e33fdce1d2471",
+    "qe_bugfix-d3:2": "baf3006a24382d1e", "qe_bugfix-d3:3": "2fd4c51e81859407",
     "qe_mutant_kill-d1:0": "2c18117ee463689c", "qe_mutant_kill-d1:1": "8bfe4fb2a811ab6b",
     "qe_mutant_kill-d1:2": "a29fa8404c66b6ff", "qe_mutant_kill-d1:3": "7579e245d91a9739",
     "qe_mutant_kill-d2:0": "0b352307ed8023d3", "qe_mutant_kill-d2:1": "1ea3d0f1e672b099",

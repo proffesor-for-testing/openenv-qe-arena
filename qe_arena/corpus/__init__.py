@@ -2,6 +2,11 @@
 
 Each module in this package follows the corpus contract in docs/DESIGN.md: a one-line module
 docstring, a ``META`` dict, the entry function plus any helpers, and ``gen_inputs(rng, n)``.
+
+An entry whose META has ``real_faults`` is a real-bug entry: the function is the fixed upstream code
+and each real fault records the pre-fix logic as an exact text replacement in ``function_source``.
+Real-bug entries are served only by the qe_bugfix real tier (``REAL_NAMES``); the injected tiers and
+qe_mutant_kill draw from ``INJECTED_NAMES``.
 """
 from __future__ import annotations
 
@@ -16,6 +21,18 @@ _PACKAGE_DIR = Path(__file__).resolve().parent
 
 
 @dataclass(frozen=True)
+class RealFault:
+    """A defect that existed upstream before a fix, as an exact replacement in ``function_source``."""
+
+    id: str
+    kind: str
+    summary: str
+    origin: str
+    find: str
+    replace: str
+
+
+@dataclass(frozen=True)
 class CorpusEntry:
     name: str
     entry: str
@@ -24,6 +41,7 @@ class CorpusEntry:
     source: str
     function_source: str
     summary: str
+    real_faults: tuple[RealFault, ...] = ()
 
 
 def _is_kept(node: ast.stmt) -> bool:
@@ -88,11 +106,14 @@ def _load_entries() -> dict[str, CorpusEntry]:
             source=text,
             function_source=extract_function_source(text),
             summary=_summary(text),
+            real_faults=tuple(RealFault(**fault) for fault in meta.get("real_faults", ())),
         )
     return entries
 
 
 ENTRIES: dict[str, CorpusEntry] = _load_entries()
+REAL_NAMES: tuple[str, ...] = tuple(name for name, e in ENTRIES.items() if e.real_faults)
+INJECTED_NAMES: tuple[str, ...] = tuple(name for name, e in ENTRIES.items() if not e.real_faults)
 
 
 def _module(name: str):
@@ -112,4 +133,5 @@ def gen_inputs(name: str, seed: int, n: int) -> list[list]:
     return _module(name).gen_inputs(random.Random(seed), n)
 
 
-__all__ = ["CorpusEntry", "ENTRIES", "call_reference", "extract_function_source", "gen_inputs"]
+__all__ = ["CorpusEntry", "ENTRIES", "INJECTED_NAMES", "REAL_NAMES", "RealFault", "call_reference",
+           "extract_function_source", "gen_inputs"]

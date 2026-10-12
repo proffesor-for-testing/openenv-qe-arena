@@ -29,10 +29,37 @@ finding and fixing a bug, and reasoning precisely about what code does.
 
 Native task IDs follow `<family>-d<1|2|3>`, for example `qe_bugfix-d2`.
 
-### `qe_bugfix`: repair an injected bug
+### `qe_bugfix`: repair an injected or real bug
 
-A corpus function gets 1, 2 or 3 injected faults (by level). The model sees the buggy module, a short spec and
+A corpus function gets 1, 2 or 3 faults (by level). The model sees the buggy module, a short spec and
 visible tests. It can read files, run the visible tests, edit with an exact string replacement, and submit.
+
+Faults come from two sources, drawn per task. Nothing in the prompt or files says which:
+
+- **Injected** (the default, 1 − `REAL_SHARE`): mutation sites on one of the 40 injected-tier functions. The
+  mutation engine has 20 operators. 12 are classic one-token flips (`cmp_boundary`, `cmp_negate`,
+  `arith_swap`, `const_off_by_one`, `bool_swap`, `not_drop`, `slice_shift`, `range_bound`, `return_flip`,
+  `augassign_swap`, `min_max_swap`, `break_continue_swap`). 8 are realistic defect shapes from the
+  HumanEvalFix/DebugBench taxonomy and RuVector PR #1125:
+  - missing logic: `guard_delete` (an early-exit guard is gone), `arm_drop` (one if/elif arm of a dispatch
+    is gone), `member_drop` (an allowlist literal lost a member) and `condition_drop` (one operand of an
+    and/or is gone);
+  - excess logic: `extra_condition` (a branch also requires one of its variables to be truthy);
+  - function misuse: `call_swap` (a sibling call with a compatible signature: startswith/endswith,
+    strip/lstrip/rstrip, find/rfind, append/extend, any/all, floor/ceil, round/int, sorted/reversed where
+    the result is iterated, and similar);
+  - variable misuse: `var_swap` (another variable of the same inferred type that is bound on every path);
+  - value misuse: `const_sibling` (another literal of the same type from the same function).
+  Bug-fix candidates are taken round-robin over operators, realistic operators first in every round, so
+  operators with many sites (constants, variables) cannot crowd out the rest. `qe_mutant_kill` keeps the 12
+  classic operators.
+- **Real** (`REAL_SHARE` = 25%): one of the real-bug entries, ported from merged RuVector PR #1125
+  (`32033a8b`). The fixed upstream code is the reference; each recorded real fault is the pre-fix logic
+  from the parent commit `3e1d1886`, stored as an exact replacement in META `real_faults`. The task leads
+  with a real fault and fills the remaining slots of its level with injected faults, under the same
+  filters (revealing inputs, subtle share, no cancelling subsets). Real-bug entries are never drawn by the
+  injected tier or by `qe_mutant_kill`. If no real fault fits a level and seed, the task falls back to the
+  injected tier.
 
 | Level | What the model gets |
 |---|---|
@@ -154,13 +181,28 @@ Rules:
 - Arguments and return values are JSON-serializable: int, str, bool, None, lists, and dicts with
   string keys. Avoid floats unless they are essential.
 - The entry function plus helpers is 12–45 lines.
+- No string that Qwen's tokenizer reads as a control token (`<|im_end|>`, `<|endoftext|>`, `<think>`,
+  `<tool_call>` and the like) in the code or the generated inputs. The policy cannot write such a string as
+  text: it ends the reply, so an edit or an expected value containing one is cut off mid-JSON. Local
+  calibration hit this on a real-bug entry; GGUF token names are written without the `|` delimiters.
 - At least 6 mutation sites, with at least 80% of single mutants killed by `gen_inputs(rng, 64)`.
+
+A real-bug entry also has `META["real_faults"]`: a list of `{"id", "kind", "summary", "origin", "find",
+"replace"}`. `origin` is `owner/repo@<pre-fix sha>:<path>` of the code that had the bug, and `find` must
+occur exactly once in the function source. The docstring is the spec and comes from the fixed code's own
+docs and tests, never from the diff. Each real fault must be revealed by at least `MIN_REVEALING_D1`
+distinct graded inputs, so its deterministic edge cases include enough revealing calls.
 
 ## Calibration and submission
 
 - `scripts/calibrate.py` drives the environment in-process with the arena-style system prompt. It calls
   `Qwen/Qwen3.8-27B` through the HF router with `enable_thinking: false` and records each episode's
   trajectory, usage and reward.
+- For free local runs, `--base-url http://localhost:11434/v1 --model qwen3.8:27b-mlx` uses Ollama. Ollama
+  ignores `chat_template_kwargs`, so with `--thinking off` the script also sends `reasoning_effort: "none"`
+  to any non-HF endpoint. A local MLX quantization is not the trainer's serving stack, so local numbers are
+  a relative signal, not the calibration of record. `--fault-kind real|injected` forces the bug-fix fault
+  source for per-tier calibration.
 - The submission request is rendered and checked with the same discipline as rUv's MetaHarness entry:
   exact image digest, anonymous pull, `openenv validate`, `/schema` equality, and native replay of
   every task ID.

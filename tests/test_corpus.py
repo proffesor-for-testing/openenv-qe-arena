@@ -24,7 +24,8 @@ BANNED_NAMES = {
 MAX_FILE_BYTES = 6000
 SOURCE_REPOS = ("sentinel-api-testing", "lionagi-qe-fleet", "agentic-qe")
 ORIGIN_RE = re.compile(
-    r"^proffesor-for-testing/(?:%s)@[0-9a-f]{40}:[\w./-]+\.(?:py|ts)$" % "|".join(SOURCE_REPOS)
+    r"^(?:proffesor-for-testing/(?:%s)|ruvnet/RuVector)@[0-9a-f]{40}:[\w./-]+\.(?:py|ts|rs)$"
+    % "|".join(SOURCE_REPOS)
 )
 ALLOWED_EXCEPTIONS = (ValueError, TypeError, KeyError)
 SEEDS = (0, 1, 7)
@@ -62,7 +63,8 @@ def _call(name: str, args: list):
 
 
 def test_corpus_size_and_provenance():
-    assert len(ENTRIES) >= 40
+    assert len(corpus.INJECTED_NAMES) >= 40
+    assert len(corpus.REAL_NAMES) >= 5
     adapted = [e for e in ENTRIES.values() if e.origin != "Original."]
     assert len(adapted) >= 28
 
@@ -71,7 +73,7 @@ def test_corpus_size_and_provenance():
 def test_contract_fields(name):
     entry = ENTRIES[name]
     module = corpus._module(name)
-    assert set(module.META) == {"entry", "origin", "tags"}
+    assert set(module.META) - {"real_faults"} == {"entry", "origin", "tags"}
     assert entry.entry == module.META["entry"]
     assert callable(getattr(module, entry.entry))
     assert callable(module.gen_inputs)
@@ -238,3 +240,16 @@ def test_extract_function_source_keeps_formatting():
         "def helper(x):\n    # comment kept\n    return x\n\n\n"
         "def entry(x):\n    return helper(x)\n"
     )
+
+
+# Qwen's tokenizer turns these strings into control tokens, so the policy cannot write them as text:
+# an edit or an expected value containing one ends its reply mid-JSON (seen in local calibration).
+SPECIAL_TOKEN_RE = re.compile(r"<\|[A-Za-z_]+\|>|</?think>|</?tool_call>|</?tool_response>")
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_no_model_special_tokens_in_code_or_inputs(name):
+    entry = ENTRIES[name]
+    assert not SPECIAL_TOKEN_RE.search(entry.source)
+    for seed in SEEDS:
+        assert not SPECIAL_TOKEN_RE.search(json.dumps(gen_inputs(name, seed, N_INPUTS), ensure_ascii=False))

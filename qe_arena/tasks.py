@@ -29,6 +29,9 @@ MIN_REVEALING_D1 = 3  # distinct hidden calls that reveal a d1 fault; the bug re
 MAX_TESTS = {1: 1, 2: 1, 3: 3}
 MAX_ARGS_BYTES = 2048
 MODULE = "module.py"
+BUGFIX_CANDIDATES = 24  # fault candidates tried per corpus function
+REAL_SHARE = 0.25  # share of qe_bugfix tasks that carry a real upstream fault (when real entries exist)
+FAULT_KINDS = ("injected", "real")
 
 
 @dataclass
@@ -183,15 +186,56 @@ def _kill_prompt(entry: str, level: int, diffs: list[str]) -> str:
 
 
 def _candidate_sites(source: str, rng: random.Random) -> list[mutation.Site]:
-    sites = mutation.enumerate_sites(source)
+    """Mutant-kill candidates: classic one-token operators only, in random order."""
+    sites = mutation.enumerate_sites(source, mutation.CLASSIC_OPERATORS)
     rng.shuffle(sites)
     return sites
 
 
-def _make_bugfix(task_id: str, level: int, seed: int, rng: random.Random, pool: tuple[str, ...]) -> Task:
+def _bugfix_sites(source: str, rng: random.Random) -> list[mutation.Site]:
+    """Bug-fix fault candidates, round-robin over operators with the realistic ones first.
+
+    Every round takes one site from each realistic operator, then one from each classic operator,
+    so no operator with many sites (constants, variables) crowds out the others.
+    """
+    groups: dict[str, list[mutation.Site]] = {}
+    for site in mutation.enumerate_sites(source):
+        groups.setdefault(site.operator, []).append(site)
+    for sites in groups.values():
+        rng.shuffle(sites)
+    realistic = [op for op in mutation.REALISTIC_OPERATORS if op in groups]
+    classic = [op for op in mutation.CLASSIC_OPERATORS if op in groups]
+    rng.shuffle(realistic)
+    rng.shuffle(classic)
+    order: list[mutation.Site] = []
+    while len(order) < BUGFIX_CANDIDATES and any(groups.values()):
+        for op in realistic + classic:
+            if groups[op]:
+                order.append(groups[op].pop())
+    return order[:BUGFIX_CANDIDATES]
+
+
+def _real_sites(item: corpus.CorpusEntry, original: str, renaming: dict[str, str]) -> dict:
+    """Each recorded real fault of ``item`` as one site on the renamed ``original``: {site: fault}."""
+    found = {}
+    for fault in item.real_faults:
+        variant = item.function_source.replace(fault.find, fault.replace, 1)
+        try:
+            renamed = mutation.rename_with(variant, renaming)
+        except ValueError:
+            continue  # the pre-fix code would collide with a chosen name: skip, never mis-rename
+        site = mutation.block_site(original, renamed, "real", f"{fault.id}: {fault.summary}")
+        if site is not None:
+            found[site] = fault
+    return found
+
+
+def _make_bugfix(task_id: str, level: int, seed: int, rng: random.Random, pool: tuple[str, ...],
+                 kind: str = "injected") -> Task:
     for name in rng.sample(sorted(pool), len(pool)):
         item = corpus.ENTRIES[name]
-        original = mutation.rename_locals(item.function_source, random.Random(rng.random()))
+        renaming = mutation.local_renaming(item.function_source, random.Random(rng.random()))
+        original = mutation.rename_with(item.function_source, renaming)
         inputs = corpus.gen_inputs(name, rng.randrange(2**31), HIDDEN_INPUTS)
         graded = {json.dumps(a, sort_keys=True) for a in inputs}
         display = [a for a in corpus.gen_inputs(name, rng.randrange(2**31), HIDDEN_INPUTS)
@@ -199,8 +243,13 @@ def _make_bugfix(task_id: str, level: int, seed: int, rng: random.Random, pool: 
         reference = _outputs(original, item.entry, inputs)
         if not _usable(reference) or not display:
             continue
+        real = _real_sites(item, original, renaming) if kind == "real" else {}
+        if kind == "real" and not real:
+            continue
+        real_first = list(real)
+        rng.shuffle(real_first)
         chosen, buggy, killed, subtle = [], original, [], 0
-        for site in _candidate_sites(original, rng)[:24]:
+        for site in real_first + _bugfix_sites(original, rng):
             try:
                 trial = mutation.apply(original, [site] + chosen)
             except ValueError:
@@ -223,7 +272,7 @@ def _make_bugfix(task_id: str, level: int, seed: int, rng: random.Random, pool: 
             chosen, buggy, killed, subtle = chosen + [site], trial, kills, subtle + is_subtle
             if len(chosen) == FAULTS[level]:
                 break
-        if len(chosen) != FAULTS[level]:
+        if len(chosen) != FAULTS[level] or (kind == "real" and not any(s in real for s in chosen)):
             continue
         shown_ref = _outputs(original, item.entry, display)
         shown_bug = _outputs(buggy, item.entry, display)
@@ -250,9 +299,18 @@ def _make_bugfix(task_id: str, level: int, seed: int, rng: random.Random, pool: 
                 "corpus": name, "entry": item.entry, "original": original, "buggy": buggy,
                 "sites": [s.description for s in chosen], "inputs": inputs, "reference": reference,
                 "visible": visible, "report_args": display[revealing[0]] if level == 1 else None,
+                "fault_kind": kind, "fault_sites": chosen,
+                "faults": [_fault_record(s, real.get(s)) for s in chosen],
             },
         )
-    raise RuntimeError(f"no usable bugfix task for {task_id} seed {seed}")
+    raise RuntimeError(f"no usable {kind} bugfix task for {task_id} seed {seed}")
+
+
+def _fault_record(site: mutation.Site, fault) -> dict:
+    if fault is None:
+        return {"kind": "injected", "operator": site.operator, "description": site.description}
+    return {"kind": "real", "id": fault.id, "fault_kind": fault.kind, "origin": fault.origin,
+            "summary": fault.summary, "description": site.description}
 
 
 def _kill_rate(reference: list, outputs: list) -> float:
@@ -300,24 +358,40 @@ def _make_mutant_kill(task_id: str, level: int, seed: int, rng: random.Random, p
     raise RuntimeError(f"no usable mutant_kill task for {task_id} seed {seed}")
 
 
-def make_task(task_id: str, seed: int, *, pool: tuple[str, ...] | None = None) -> Task:
+def make_task(task_id: str, seed: int, *, pool: tuple[str, ...] | None = None,
+              fault_kind: str | None = None) -> Task:
     """Build the task for (task_id, seed).
 
-    ``pool`` restricts which corpus functions may be drawn. It exists for
-    per-function calibration and is never reachable from an episode: the
-    server constructs environments without it.
+    ``pool`` restricts which corpus functions may be drawn, and ``fault_kind`` ("injected" or
+    "real") forces the qe_bugfix fault source. Both exist for per-function and per-tier
+    calibration and are never reachable from an episode: the server constructs environments
+    without them. By default a qe_bugfix task carries a real upstream fault with probability
+    REAL_SHARE (from a real-bug entry) and injected faults otherwise; qe_mutant_kill and the
+    injected tier never draw real-bug entries.
     """
     family, level = parse_task_id(task_id)
     if type(seed) is not int or not 0 <= seed < 2**64:
         raise ValueError("seed must be an unsigned 64 bit integer")
-    if pool is None:
-        pool = tuple(corpus.ENTRIES)
-    elif not pool or any(name not in corpus.ENTRIES for name in pool):
+    if pool is not None and (not pool or any(name not in corpus.ENTRIES for name in pool)):
         raise ValueError("pool must name corpus entries")
+    if fault_kind is not None and (family != "qe_bugfix" or fault_kind not in FAULT_KINDS):
+        raise ValueError(f"fault_kind must be one of {FAULT_KINDS} for qe_bugfix")
+    injected = tuple(pool) if pool is not None else corpus.INJECTED_NAMES
+    real = tuple(n for n in (pool if pool is not None else corpus.REAL_NAMES) if corpus.ENTRIES[n].real_faults)
     rng = random.Random(f"{task_id}:{seed}")
-    if family == "qe_bugfix":
-        return _make_bugfix(task_id, level, seed, rng, tuple(pool))
-    return _make_mutant_kill(task_id, level, seed, rng, tuple(pool))
+    if family == "qe_mutant_kill":
+        return _make_mutant_kill(task_id, level, seed, rng, injected)
+    if fault_kind == "real" and not real:
+        raise ValueError("fault_kind 'real' needs a pool with real-bug entries")
+    kind = fault_kind or ("real" if real and rng.random() < REAL_SHARE else "injected")
+    if kind == "injected":
+        return _make_bugfix(task_id, level, seed, rng, injected)
+    try:
+        return _make_bugfix(task_id, level, seed, rng, real, "real")
+    except RuntimeError:
+        if fault_kind == "real":
+            raise
+        return _make_bugfix(task_id, level, seed, rng, injected)  # no real fault fits this level and seed
 
 
 def run_visible(task: Task, source: str) -> str:
