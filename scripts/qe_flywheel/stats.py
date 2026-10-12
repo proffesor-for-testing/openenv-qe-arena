@@ -1,4 +1,8 @@
-"""Calibration statistics: Jeffreys posteriors, GRPO groups, and error rows kept apart."""
+"""Calibration statistics: Jeffreys posteriors, GRPO groups, and error rows kept apart.
+
+Rows with ``reward: null`` (harness errors) and rows that ended on a calibration budget
+(``global_budget``, ``context_budget``, ``completion_budget``) are artefacts of our harness, not of
+the model: both are counted, reported separately and excluded, never scored as 0."""
 
 from __future__ import annotations
 
@@ -14,6 +18,7 @@ CI = 0.90
 # so the trainer's group is G independent instances, not G attempts at one seed. Both sizes are shown.
 TRAIN_GROUP = 4
 PROJECTED_GROUPS = (4, 5)
+BUDGET_ENDS = frozenset({"global_budget", "context_budget", "completion_budget"})
 
 
 def _betacf(a: float, b: float, x: float) -> float:
@@ -72,8 +77,31 @@ def projected_informative(a: float, b: float, g: int) -> float:
 
 
 
+def expected_all_equal(alphas, g: int) -> float:
+    """E[sum_v q_v^g] for q ~ Dirichlet(alphas): the chance that g independent episodes all land on
+    the same reward value. Each marginal q_v is Beta(alpha_v, alpha_0 - alpha_v)."""
+    total = float(sum(alphas))
+    return sum(math.prod((a + i) / (total + i) for i in range(g)) for a in alphas)
+
+
+def reward_categories(rewards) -> tuple[list[float], list[float]]:
+    """Distinct reward values (always including 0 and 1) and their Jeffreys-style Dirichlet alphas.
+    With only 0/1 rewards this is exactly the Beta(k + .5, n - k + .5) solve posterior."""
+    counts = Counter(round(float(r), 9) for r in rewards)
+    values = sorted(set(counts) | {0.0, 1.0})
+    return values, [counts.get(v, 0) + PRIOR for v in values]
+
+
+def projected_mixed(rewards, g: int) -> float:
+    """Posterior mean chance that g fresh instances do NOT all get the same reward, partial credit
+    included: a mutant-kill group of [0.5, 0, 0, 0] has an advantage signal just as [1, 0, 0, 0] does."""
+    return 1.0 - expected_all_equal(reward_categories(rewards)[1], g)
+
+
 def load_runs(paths) -> list[dict]:
-    rows = []
+    """Read calibrate.py JSONL. A repeated (task, seed, corpus, attempt) key is a hard error: two
+    files from different runs that share seeds would otherwise merge into one fake group."""
+    rows, origin = [], {}
     for path in paths:
         with open(path) as handle:
             for line_no, line in enumerate(handle, 1):
@@ -84,18 +112,26 @@ def load_runs(paths) -> list[dict]:
                 for key in ("task_id", "seed", "attempt"):
                     if key not in row:
                         raise SystemExit(f"{path}:{line_no}: missing {key}")
+                key = (row["task_id"], row["seed"], row.get("corpus"), row["attempt"])
+                if key in origin:
+                    raise SystemExit(f"{path}:{line_no}: duplicate (task, seed, corpus, attempt) {key}, "
+                                     f"first seen at {origin[key]}; runs that share seeds cannot be pooled")
+                origin[key] = f"{path}:{line_no}"
                 row["_source"] = str(path)
                 rows.append(row)
-    seen = Counter((r["task_id"], r["seed"], r.get("corpus"), r["attempt"]) for r in rows)
-    dupes = [k for k, v in seen.items() if v > 1]
-    if dupes:
-        print(f"warning: {len(dupes)} duplicate (task, seed, corpus, attempt) keys; "
-              f"files from different runs share seeds, e.g. {dupes[0]}", file=sys.stderr)
     return rows
 
 
 def is_error(row: dict) -> bool:
     return row.get("reward") is None
+
+
+def is_budget(row: dict) -> bool:
+    return not is_error(row) and row.get("end") in BUDGET_ENDS
+
+
+def is_excluded(row: dict) -> bool:
+    return is_error(row) or is_budget(row)
 
 
 def group_key(row: dict, by_corpus: bool) -> tuple:
@@ -107,26 +143,26 @@ def all_equal(rewards: list[float]) -> bool:
 
 
 def summarize(rows: list[dict], by_corpus: bool = True) -> dict:
-    """Stats for one cell. Groups are (task_id, seed[, corpus]) across attempts; a group needs
-    two valid episodes to say anything about informativeness, so shorter ones are counted apart."""
-    valid = [r for r in rows if not is_error(r)]
+    """Stats for one cell. Same-seed groups are (task_id, seed[, corpus]) across attempts and need two
+    valid episodes; the projection treats every valid episode as one fresh instance."""
+    valid = [r for r in rows if not is_excluded(r)]
+    rewards = [float(r["reward"]) for r in valid]
     groups = defaultdict(list)
     for r in valid:
         groups[group_key(r, by_corpus)].append(float(r["reward"]))
     usable = [g for g in groups.values() if len(g) >= 2]
-    solves = sum(1 for r in valid if float(r["reward"]) == 1.0)
-    informative = sum(1 for g in usable if not all_equal(g))
+    solves = sum(1 for x in rewards if x == 1.0)
     steps = sum(int(r.get("steps", 0)) for r in valid)
-    solve_post = posterior(solves, len(valid))
     return {
-        "episodes": len(rows), "errors": len(rows) - len(valid), "valid": len(valid),
-        "mean_reward": (sum(float(r["reward"]) for r in valid) / len(valid)) if valid else None,
-        "solve": solve_post,
+        "episodes": len(rows), "errors": sum(map(is_error, rows)), "budget": sum(map(is_budget, rows)),
+        "valid": len(valid), "mean_reward": (sum(rewards) / len(rewards)) if rewards else None,
+        "partial": sum(1 for x in rewards if 0.0 < x < 1.0),
+        "solve": posterior(solves, len(valid)),
         "groups": len(usable), "short_groups": len(groups) - len(usable),
         "group_sizes": dict(sorted(Counter(len(g) for g in usable).items())),
-        "informative": posterior(informative, len(usable)),
-        "projected_informative": {str(g): projected_informative(solve_post["a"], solve_post["b"], g)
-                                  for g in PROJECTED_GROUPS},
+        "informative": posterior(sum(1 for g in usable if not all_equal(g)), len(usable)),
+        "projected_mixed": {str(g): projected_mixed(rewards, g) for g in PROJECTED_GROUPS},
+        "reward_dirichlet": dict(zip(("values", "alphas"), reward_categories(rewards))),
         "invalid_per_step": (sum(int(r.get("invalid", 0)) for r in valid) / steps) if steps else None,
         "ends": dict(sorted(Counter(r.get("end", "") for r in rows).items())),
     }
@@ -149,27 +185,28 @@ def _fmt_post(p: dict) -> str:
     return f"{p['k']}/{p['n']} {p['mean']:.2f} [{p['lo']:.2f},{p['hi']:.2f}]"
 
 
+LEGEND = ("err = reward null, bud = calibration-budget end; both excluded, never 0. same-seed inf: measured "
+          "share of (task, seed[, corpus]) groups whose rewards differ. p_mix@G: posterior mean chance that G "
+          "fresh instances do not all get the same reward (partial credit counts). The arena trains on 4 of 5.")
+
+
 def print_stats(stats: dict, out=None) -> None:
     out = out or sys.stdout
-    header = (f"{'cell':<42}{'eps':>4}{'err':>4} {'mean':>5}  {'solve k/n post [90%]':<26}"
+    header = (f"{'cell':<42}{'eps':>4}{'err':>4}{'bud':>4} {'mean':>5}  {'solve k/n post [90%]':<26}"
               f"{'same-seed inf k/n post [90%]':<31}{'sizes':<7}"
-              + "".join(f"{'p_inf@' + str(g):>8}" for g in PROJECTED_GROUPS) + f"{'inv/step':>9}  ends")
-    legend = ("same-seed inf: measured share of (task, seed[, corpus]) groups whose rewards differ; "
-              "p_inf@G: projected chance that G independent instances are mixed (solved vs not), "
-              "from the solve posterior. The arena trains on 4 of 5 unseeded episodes.")
+              + "".join(f"{'p_mix@' + str(g):>8}" for g in PROJECTED_GROUPS) + f"{'inv/step':>9}  ends")
     for title, table in (("per cell", stats["cells"]), ("per (cell, corpus function)", stats["cell_corpus"])):
         if not table:
             continue
-        print(f"\n{title}  (Jeffreys Beta(0.5,0.5) posteriors; error rows excluded, not zeroed)", file=out)
-        print(legend, file=out)
+        print(f"\n{title}  (Jeffreys posteriors)\n{LEGEND}", file=out)
         print(header, file=out)
         for name, s in table.items():
             mean = "-" if s["mean_reward"] is None else f"{s['mean_reward']:.2f}"
             inv = "-" if s["invalid_per_step"] is None else f"{s['invalid_per_step']:.3f}"
             proj = "".join(f"{'-' if s['valid'] == 0 else format(v, '.2f'):>8}"
-                           for v in s["projected_informative"].values())
+                           for v in s["projected_mixed"].values())
             sizes = ",".join(f"{k}x{v}" for k, v in s["group_sizes"].items()) or "-"
             ends = ",".join(f"{k}:{v}" for k, v in s["ends"].items())
-            print(f"{name:<42}{s['episodes']:>4}{s['errors']:>4} {mean:>5}  {_fmt_post(s['solve']):<26}"
-                  f"{_fmt_post(s['informative']):<31}{sizes:<7}{proj}"
+            print(f"{name:<42}{s['episodes']:>4}{s['errors']:>4}{s['budget']:>4} {mean:>5}  "
+                  f"{_fmt_post(s['solve']):<26}{_fmt_post(s['informative']):<31}{sizes:<7}{proj}"
                   f"{inv:>9}  {ends}", file=out)

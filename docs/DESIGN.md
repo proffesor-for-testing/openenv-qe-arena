@@ -170,36 +170,53 @@ Rules:
 One submission per day, and one arena run is noise, so the flywheel keeps three disciplines. The
 package lives under `scripts/`, not `qe_arena/`, so none of it ships in the image.
 
-- **`stats`** reports, per cell and per (cell, corpus function), Jeffreys Beta(0.5, 0.5) posteriors with
-  equal-tailed 90% intervals for two measures. Error rows (`reward: null`) are counted and excluded,
-  never scored as 0.
+- **`stats`** reports Jeffreys posteriors per cell and per (cell, corpus function). Rows with
+  `reward: null` (harness errors) and rows that ended on a calibration budget (`global_budget`,
+  `context_budget`, `completion_budget`) are counted in their own columns and excluded, never scored
+  as 0; `step_cap` is a real failure because the arena caps steps too. Two measures of learning signal:
   - *same-seed informative*: the measured share of `(task_id, seed[, corpus])` groups whose rewards are
     not all equal.
-  - *`p_inf@4`, `p_inf@5`*: the projected chance that 4 or 5 independent instances are mixed (solved vs
-    not), computed exactly from the solve posterior. The arena plays 5 episodes of one task per step and
-    trains on the first 4 with a valid reward; its contract has no seed, and an unseeded reset here
-    draws a fresh instance. So the trainer's group is several instances, not several attempts at one
-    seed, and same-seed groups understate mixing (on `cal-percorpus-d2`, `flaky_run_summary` solved
-    2/4 yet had no mixed same-seed group).
-- **`select`** drops saturated (mean solve >= 0.9) and dead (<= 0.05) cells, then Thompson-samples the
-  rest. The default objective is `projected` (`p_inf@G`, G = 4, `--group-size` to change); `--objective
-  group` uses the same-seed posterior instead. The measure used is printed and written to the
-  `.why.json` sidecar. Limits are copied verbatim from the template.
-- **`ledger`** is an append-only, hash-chained JSONL of arena runs. `fetch --user Profa-QE
-  [--submission-id ID]` reads the public leaderboard (`GET /api/leaderboard`, no auth, following
-  `next_cursor`), appends this user's runs that are not in the ledger yet (idempotent by `run_id`, and
-  only with the local `receipt-vN.json`, so every entry carries a verified request sha), and saves the
-  leaderboard's own `baseline` beside the ledger. `add` takes one `runs[]` record by hand. `show` prints
-  per-run scores and, separately, the best-per-domain composite next to its exact null: the composite
-  expected if every run were the baseline (today 4/40: industrial-physical-systems 2/5 +
-  office-white-collar 2/5). The hard-coded baseline is only an offline fallback, and `show` says when
-  it is used.
-- **`onecell-search`** proposes exactly one knob change (Darwin's one-knob idea, reimplemented) with a
-  pre-registered paired plan: identical seeds for baseline and candidate on a discovery split, and fresh
-  seeds for a confirmation split. `decide` accepts only a strict discovery gain above the plan's margin
-  and no confirmation loss. It does not call a model; the caller runs both arms and passes the files.
+  - *`p_mix@4`, `p_mix@5`*: the posterior-mean chance that 4 or 5 fresh instances do not all get the
+    same reward, from a Dirichlet over the observed reward values, so partial credit counts (a mutant-kill
+    group of `[0.5, 0, 0, 0]` has an advantage signal). The arena plays 5 episodes of one task per step
+    and trains on the first 4 with a valid reward; its contract has no seed and an unseeded reset here
+    draws a fresh instance, so same-seed groups understate mixing.
+  - A repeated `(task, seed, corpus, attempt)` key across files is a hard error.
+- **`select`** keeps a cell when its posterior-mean `p_mix@4` is at least `--min-mixed` (0.15), then
+  Thompson-samples by the default objective `projected` (`p_mix@G`, G = 4; `--objective group` uses the
+  same-seed posterior). The gate is a posterior mean, so evidence matters: 0/8 scores 0.18 and stays
+  eligible as exploration, 0/16 and 16/16 score 0.10 and are excluded, 15/16 scores 0.29. Limits are
+  copied verbatim from the template, the measure is recorded in `.why.json`, and the command exits
+  non-zero when no cell qualifies.
+- **`ledger`** is an append-only, hash-chained JSONL of arena runs. Each entry keeps the leaderboard
+  record it came from and is re-validated on every read; the head is anchored in `ledger.jsonl.head`, so
+  editing or deleting any line, the last included, fails. `fetch --user Profa-QE [--submission-id ID]`
+  reads the public leaderboard (8 MiB cap) and appends that user's new runs (idempotent by `run_id`,
+  exact user match) only with a local receipt whose state is `recorded` and `post_attempted` is true.
+  It refuses a paged response: the cursor format could not be verified (the Space's page never sends
+  one), unless `--cursor-url` names it. The leaderboard baseline is kept, versioned by fetch time, in
+  `ledger-baselines.jsonl`. `add` enters a record by hand as `source: manual`; `show` leaves manual
+  entries out unless `--include-manual`, refuses to mix benchmarks, and prints per-run scores apart from
+  the best-per-domain composite. The composite's null is model-based: each domain's rate is drawn from
+  Beta(s + .5, n - s + .5) given the baseline's single attempt (4/40 today), shared by the k runs. A
+  sensitivity line fixes the rate of the baseline's 0/5 domains at 0, .02 and .05, and the plug-in
+  binomial is printed as a lower reference.
+- **`onecell-search`** proposes exactly one knob change (Darwin's one-knob idea, reimplemented). The plan
+  is hashed at proposal and refused if edited. Its default metric is `mixed_rate`, the unbiased chance
+  that G = 4 fresh instances of a cell are not all equal, averaged per difficulty level and weighted by
+  the mix. A leniency knob (more steps, tokens, test runs) or a mix shift toward easy cells raises solve
+  rates, but on this metric it only wins where it moves a cell toward mixed outcomes; pushing an easy
+  cell toward always-solved loses, so `difficulty_mix` may only be scored this way. Both arms must be
+  independent runs covering every planned `(task, seed, attempt)`; an error or budget row counts as a
+  failure for the arm that produced it, and arms whose error rates differ by more than 0.05 are refused.
+  `decide` accepts only when the 5th percentile of a paired, task-stratified bootstrap exceeds the margin
+  (0) on discovery and exceeds -0.05 on confirmation. With iid arms at the default 32 seeds x 1 attempt
+  x 5 tasks per split, a test holds false acceptance at or below 5%. It does not call a model.
 
 **Calibrating for the trainer's regime.** Run `scripts/calibrate.py --attempts 1 --seeds N` (N >= 16 per
-cell) when the question is "will GRPO get a gradient here": one attempt on each of many fresh instances
-measures the solve rate the projection needs, with no seed effect hidden inside a group. Use `--attempts
->= 2` only to study seed difficulty itself (how much of the variance is the instance, not the model).
+cell): one attempt on each of many fresh instances is what the projection and `mixed_rate` assume. Use
+`--attempts >= 2` only to study seed difficulty itself. Also note that calibrate.py's per-episode
+defaults (`--episode-completion-tokens 4096`, `--episode-context-tokens 8192`) are tighter than the
+template's limits (`completion_tokens` 6144, `context_tokens` 12288); pass
+`--episode-completion-tokens 6144 --episode-context-tokens 12288` to measure under the submitted limits,
+otherwise budget ends appear that the arena would not produce (they are excluded either way).

@@ -56,9 +56,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--template", type=Path, required=True)
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--why", type=Path, help="sidecar; default <out>.why.json")
-    p.add_argument("--saturated", type=float, default=0.9, help="exclude posterior mean solve >= this")
-    p.add_argument("--dead", type=float, default=0.05, help="exclude posterior mean solve <= this")
-    p.add_argument("--min-groups", type=int, default=1)
+    p.add_argument("--min-mixed", type=float, default=select.MIN_MIXED,
+                   help="exclude cells whose posterior-mean p_mix@G is below this (rarely mixed)")
+    p.add_argument("--min-groups", type=int, default=1, help="same-seed groups needed (group objective only)")
+    p.add_argument("--min-episodes", type=int, default=4, help="valid episodes needed")
     p.add_argument("--objective", choices=sorted(select.OBJECTIVES), default="projected",
                    help="; ".join(f"{k}: {v}" for k, v in select.OBJECTIVES.items()))
     p.add_argument("--group-size", type=int, default=stats.TRAIN_GROUP,
@@ -74,12 +75,15 @@ def build_parser() -> argparse.ArgumentParser:
             q.add_argument("--receipts", type=Path, default=SUBMISSION, help="where receipt-vN.json files live")
             q.add_argument("--from-file", type=Path, help="a saved leaderboard response instead of the network")
             q.add_argument("--timeout", type=float, default=30.0)
+            q.add_argument("--cursor-url", help="pagination URL template, e.g. '{url}?cursor={cursor}'; unverified, "
+                                                 "so a paged response is refused without it")
         elif name == "add":
             q.add_argument("--receipt", type=Path, required=True)
             q.add_argument("--result", type=Path, required=True, help="one leaderboard runs[] record")
             q.add_argument("--request", type=Path, help="default: the receipt's sibling request-vN.json")
         else:
             q.add_argument("--baseline", help="name=solved,... or a saved leaderboard JSON; default: last fetch")
+            q.add_argument("--include-manual", action="store_true", help="also show hand-entered runs")
             q.add_argument("--json", type=Path)
     p = sub.add_parser("onecell-search", help="Darwin-style one-knob proposal and paired decision")
     osub = p.add_subparsers(dest="action", required=True)
@@ -91,12 +95,15 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--seed", type=int, required=True)
     q.add_argument("--runs", nargs="*", type=Path, default=[], help="seeds seen here are never confirmation seeds")
     q.add_argument("--history", type=Path, help="JSONL of past decisions; their moves are not re-proposed")
-    q.add_argument("--discovery-seeds", type=int, default=8)
-    q.add_argument("--confirm-seeds", type=int, default=8)
-    q.add_argument("--attempts", type=int, default=4)
-    q.add_argument("--margin", type=float, default=0.05)
-    q.add_argument("--confirm-tolerance", type=float, default=0.0)
-    q.add_argument("--metric", choices=["mean_reward", "solve_rate", "informative_rate"], default="mean_reward")
+    q.add_argument("--discovery-seeds", type=int, default=32)
+    q.add_argument("--confirm-seeds", type=int, default=32)
+    q.add_argument("--attempts", type=int, default=1)
+    q.add_argument("--margin", type=float, default=0.0, help="discovery bootstrap lower bound must exceed this")
+    q.add_argument("--confirm-tolerance", type=float, default=0.05,
+                   help="confirmation bootstrap lower bound must exceed minus this")
+    q.add_argument("--error-tolerance", type=float, default=0.05, help="max gap in error/budget rate between arms")
+    q.add_argument("--metric", choices=search.METRICS, default="mixed_rate",
+                   help="mixed_rate (default): P(G fresh instances not all equal), the trainer's gradient signal")
     q.add_argument("--out", type=Path, required=True)
     q = osub.add_parser("decide")
     q.add_argument("--plan", type=Path, required=True)
@@ -109,35 +116,38 @@ def build_parser() -> argparse.ArgumentParser:
 def run_select(args) -> int:
     cell_stats = stats.compute_stats(stats.load_runs(args.runs))
     template = json.loads(args.template.read_text())
-    tasks, reasons = select.select_cells(cell_stats, template, args.max_cells, args.seed, args.saturated,
-                                         args.dead, args.min_groups, args.objective, args.group_size)
+    tasks, reasons = select.select_cells(cell_stats, template, args.max_cells, args.seed, args.min_mixed,
+                                         args.min_groups, args.min_episodes, args.objective, args.group_size)
     write_json(args.out, tasks)
     why = args.why or args.out.with_suffix(".why.json")
     write_json(why, {"seed": args.seed, "max_cells": args.max_cells, "objective": args.objective,
                      "measure": select.OBJECTIVES[args.objective], "group_size": args.group_size,
-                     "saturated": args.saturated, "dead": args.dead, "min_groups": args.min_groups,
+                     "min_mixed": args.min_mixed, "min_groups": args.min_groups, "min_episodes": args.min_episodes,
                      "template": {"path": str(args.template), "sha256": file_sha(args.template)},
                      "runs": [{"path": str(r), "sha256": file_sha(r)} for r in args.runs], "cells": reasons})
     print(f"objective {args.objective}: {select.OBJECTIVES[args.objective]} (G={args.group_size})")
     for r in reasons:
         print(f"{r['decision']:<9} {r['task_id']:<22} {r['reason']}")
     print(f"\n{len(tasks)} cells -> {args.out}; reasons -> {why}")
+    if not tasks:
+        print("no cell qualified; nothing to submit", file=sys.stderr)
+        return 4
     return 0
 
 
 def run_ledger(args) -> int:
     if args.action == "fetch":
         board = json.loads(args.from_file.read_text()) if args.from_file else ledger.fetch_leaderboard(
-            lambda url: ledger.http_get_json(url, args.timeout))
+            lambda url: ledger.http_get_json(url, args.timeout), cursor_url=args.cursor_url)
         report = ledger.ledger_fetch(args.ledger, args.user, args.submission_id, args.receipts, board=board)
         print(json.dumps(report, indent=2))
     elif args.action == "add":
-        receipt, request = ledger.load_receipt(args.receipt, args.request)
-        print(json.dumps(ledger.append_run(args.ledger, json.loads(args.result.read_text()), receipt, request),
-                         indent=2))
+        print(json.dumps(ledger.ledger_add(args.ledger, args.receipt, args.result, args.request), indent=2))
     else:
         baseline, source = ledger.resolve_baseline(args.ledger, args.baseline)
-        summary = ledger.ledger_show(ledger.read_ledger(args.ledger), baseline, source=source)
+        entries = ledger.read_ledger(args.ledger)
+        head = json.loads(ledger.head_path(args.ledger).read_text()) if entries else None
+        summary = ledger.ledger_show(entries, baseline, source=source, include_manual=args.include_manual, head=head)
         if args.json:
             write_json(args.json, summary)
     return 0
@@ -155,7 +165,7 @@ def run_search(args) -> int:
             if args.history and args.history.exists() else []
         plan = search.propose(config, args.seed, seen, history, sorted(config["completion_tokens"]),
                               args.discovery_seeds, args.confirm_seeds, args.attempts, args.margin,
-                              args.confirm_tolerance, args.metric)
+                              args.confirm_tolerance, args.metric, error_tolerance=args.error_tolerance)
         write_json(args.out, plan)
         print(f"knob {plan['knob']}: {plan['from']} -> {plan['to']}; discovery seeds "
               f"{plan['discovery']['seed_base']}+{len(plan['discovery']['seeds'])}, confirmation "

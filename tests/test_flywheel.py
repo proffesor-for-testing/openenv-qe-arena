@@ -1,4 +1,6 @@
-"""Flywheel tooling: posterior math, grouping, selection, the ledger's null, and one-knob decisions."""
+"""Flywheel stats and select: posterior math, grouping, excluded rows, and cell selection.
+
+Ledger tests are in test_flywheel_ledger.py, one-knob search in test_flywheel_search.py."""
 
 from __future__ import annotations
 
@@ -15,13 +17,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import flywheel as cli  # noqa: E402
-from qe_flywheel import ledger as lg  # noqa: E402
-from qe_flywheel import search, stats  # noqa: E402
+from qe_flywheel import stats  # noqa: E402
 from qe_flywheel import select as sel  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures" / "flywheel"
 TEMPLATE = ROOT / "submission" / "tasks-v1.json"
-RECEIPT = ROOT / "submission" / "receipt-v1.json"
 
 
 def row(task_id, seed, attempt, reward, corpus=None, **extra):
@@ -82,7 +82,43 @@ def test_projected_informative_closed_forms():
     assert stats.projected_informative(3e6, 7e6, 5) == pytest.approx(1 - 0.3 ** 5 - 0.7 ** 5, abs=1e-6)
 
 
-# ---------------------------------------------------------------- grouping and error rows
+# ---------------------------------------------------------------- grouping and excluded rows
+
+def test_budget_rows_are_excluded_and_reported_apart():
+    # review r5 H: rows that ran out of OUR calibration budget used to count as failures
+    good = [row("qe_bugfix-d2", s, a, 1.0) for s in range(4) for a in range(2)]
+    budget = [row("qe_bugfix-d2", s, a, 0.0, end=end) for s, end in
+              zip(range(4, 7), ("global_budget", "context_budget", "completion_budget")) for a in range(2)]
+    s = stats.summarize(good + budget)
+    assert (s["budget"], s["errors"], s["valid"]) == (6, 0, 8)
+    assert (s["solve"]["k"], s["solve"]["n"]) == (8, 8) and s["mean_reward"] == 1.0
+    assert s["ends"]["global_budget"] == 2
+
+
+def test_step_cap_is_a_real_failure():
+    s = stats.summarize([row("qe_bugfix-d2", 1, 0, 0.0, end="step_cap"), row("qe_bugfix-d2", 1, 1, 1.0)])
+    assert s["valid"] == 2 and s["budget"] == 0  # the arena caps steps too
+
+
+def test_duplicate_keys_across_files_are_a_hard_error(tmp_path):
+    # review r5 J: two runs that share seeds merged into fake mixed groups
+    a = write_jsonl(tmp_path / "a.jsonl", [row("qe_bugfix-d2", 500000, 0, 1.0)])
+    b = write_jsonl(tmp_path / "b.jsonl", [row("qe_bugfix-d2", 500000, 0, 0.0)])
+    with pytest.raises(SystemExit, match="duplicate"):
+        stats.load_runs([a, b])
+
+
+def test_projected_mixed_counts_partial_credit():
+    # binary rewards reduce exactly to the Jeffreys solve posterior
+    assert stats.projected_mixed([1.0, 0.0, 0.0], 4) == pytest.approx(stats.projected_informative(1.5, 2.5, 4))
+    # review r5 G: [2/3, 0, 0.5, 0] never solves, yet its groups are mixed
+    partial = stats.projected_mixed([2 / 3, 0.0, 0.5, 0.0] * 8, 4)
+    assert partial > 0.6 and stats.projected_informative(0.5, 32.5, 4) < 0.07
+    # Dirichlet moments, by hand: values {0, 1} plus {0.5}; alphas 2.5, 0.5, 1.5 (total 4.5), g = 2
+    expected = 1 - sum(a * (a + 1) / (4.5 * 5.5) for a in (2.5, 0.5, 1.5))
+    assert stats.projected_mixed([0.0, 0.0, 0.5], 2) == pytest.approx(expected)
+
+
 
 def test_groups_are_task_seed_corpus():
     rows = [row("qe_bugfix-d2", 1, 0, 1.0, "f"), row("qe_bugfix-d2", 1, 1, 1.0, "f"),
@@ -152,15 +188,47 @@ MIXED = {
 }
 
 
-def test_select_excludes_saturated_and_dead():
+def test_select_excludes_rarely_mixed_cells_on_both_sides():
     tasks, reasons = sel.select_cells(synthetic_stats(MIXED), template(), max_cells=6, seed=1)
     by_id = {r["task_id"]: r for r in reasons}
-    assert {t["task_id"] for t in tasks} == {"qe_mutant_kill-d1", "qe_bugfix-d2"}
-    assert by_id["qe_mutant_kill-d2"]["reason"].startswith("saturated")
-    assert by_id["qe_mutant_kill-d3"]["reason"].startswith("dead")
-    assert by_id["qe_bugfix-d3"]["reason"].startswith("saturated")  # 15/16 -> 0.912
-    loose, _ = sel.select_cells(synthetic_stats(MIXED), template(), 6, 1, saturated=0.95)
-    assert "qe_bugfix-d3" in {t["task_id"] for t in loose}
+    assert {t["task_id"] for t in tasks} == {"qe_mutant_kill-d1", "qe_bugfix-d2", "qe_bugfix-d3"}
+    assert "rarely mixed (mostly high reward)" in by_id["qe_mutant_kill-d2"]["reason"]  # 16/16: 0.10
+    assert "rarely mixed (mostly low reward)" in by_id["qe_mutant_kill-d3"]["reason"]
+    assert by_id["qe_bugfix-d3"]["p_mixed"] == pytest.approx(stats.projected_informative(15.5, 1.5, 4))
+    strict, _ = sel.select_cells(synthetic_stats(MIXED), template(), 6, 1, min_mixed=0.3)
+    assert "qe_bugfix-d3" not in {t["task_id"] for t in strict}  # 15/16 has p_mix@4 0.29
+
+
+def test_dead_threshold_is_posterior_mean_based():
+    # review r5 I: 0/8 stays eligible as exploration (p_mix@4 0.18); 0/16 is excluded (0.10)
+    eight = synthetic_stats({"qe_mutant_kill-d3": [(s, [0.0, 0.0]) for s in range(4)]})
+    sixteen = synthetic_stats({"qe_mutant_kill-d3": [(s, [0.0, 0.0]) for s in range(8)]})
+    assert sel.select_cells(eight, template(), 6, 1)[0]
+    assert not sel.select_cells(sixteen, template(), 6, 1)[0]
+
+
+def test_select_takes_partial_credit_cells():
+    # review r5 G: a mutant-kill cell that pays 0.5 for a distinguishing input is what we want
+    cells = synthetic_stats({"qe_mutant_kill-d3": [(s, [2 / 3, 0.0, 0.5, 0.0]) for s in range(8)]})
+    tasks, reasons = sel.select_cells(cells, template(), 6, 1)
+    assert [t["task_id"] for t in tasks] == ["qe_mutant_kill-d3"] and reasons[-1]["solve"]["k"] == 0
+
+
+def test_select_on_one_attempt_per_seed_data(tmp_path):
+    # review r4 F: DESIGN's own --attempts 1 calibration has no same-seed groups at all
+    ids = [e["task_id"] for e in template()]
+    runs = write_jsonl(tmp_path / "att1.jsonl", [row(t, 900000 + s, 0, float(s % 2)) for t in ids for s in range(16)])
+    tasks, _ = sel.select_cells(stats.compute_stats(stats.load_runs([runs])), template(), 6, 1)
+    assert len(tasks) == 5
+    _, reasons = sel.select_cells(stats.compute_stats(stats.load_runs([runs])), template(), 6, 1, objective="group")
+    assert all("same-seed groups" in r["reason"] for r in reasons)
+
+
+def test_select_cli_exits_nonzero_when_nothing_qualifies(tmp_path):
+    runs = write_jsonl(tmp_path / "r.jsonl", [row("qe_bugfix-d2", s, 0, 1.0) for s in range(20)])
+    code = cli.main(["select", str(runs), "--max-cells", "6", "--seed", "1", "--template", str(TEMPLATE),
+                     "--out", str(tmp_path / "t.json")])
+    assert code != 0 and json.loads((tmp_path / "t.json").read_text()) == []
 
 
 def test_select_is_deterministic_and_respects_max_cells():
@@ -183,7 +251,7 @@ def test_select_preserves_every_template_field():
 
 
 def test_select_records_cells_without_a_template_entry():
-    cell_stats = synthetic_stats({"qe_bugfix-d1": [(0, [1.0, 0.0])]})
+    cell_stats = synthetic_stats({"qe_bugfix-d1": [(s, [1.0, 0.0]) for s in range(3)]})
     tasks, reasons = sel.select_cells(cell_stats, template(), 6, 1)
     by_id = {r["task_id"]: r for r in reasons}
     assert not tasks
@@ -197,11 +265,12 @@ def test_select_cli_writes_identical_files_and_sidecar(tmp_path):
     for name in ("a", "b"):
         out = tmp_path / f"{name}.json"
         assert cli.main(["select", *runs, "--max-cells", "6", "--seed", "7", "--template", str(TEMPLATE),
-                        "--out", str(out)]) == 0
+                         "--out", str(out)]) == 0
         outs.append(out)
     assert outs[0].read_bytes() == outs[1].read_bytes()
     why = json.loads((tmp_path / "a.why.json").read_text())
     assert why["seed"] == 7 and len(why["runs"]) == 2 and all(c.get("reason") for c in why["cells"])
+    assert why["objective"] == "projected" and "p_mix@G" in why["measure"]
 
 
 SEED_SPLIT = {  # A: solved on half the seeds, never mixed within a seed; B: mostly solved, mixed twice
@@ -218,7 +287,7 @@ def winners(objective, n=200):
 
 def test_select_defaults_to_the_projected_trainer_group():
     _, reasons = sel.select_cells(synthetic_stats(MIXED), template(), 6, 1)
-    assert all("p_inf@4" in r["reason"] for r in reasons if r["decision"] == "selected")
+    assert all("p_mix@4" in r["reason"] for r in reasons if r["decision"] == "selected")
     _, reasons = sel.select_cells(synthetic_stats(MIXED), template(), 6, 1, objective="group")
     assert all("same-seed" in r["reason"] for r in reasons if r["decision"] == "selected")
     with pytest.raises(ValueError):
@@ -235,283 +304,9 @@ def test_projected_objective_credits_cells_that_mix_across_instances():
 def test_stats_reports_both_projected_group_sizes():
     s = stats.summarize([row("qe_bugfix-d2", 1, 0, 1.0), row("qe_bugfix-d2", 1, 1, 0.0)])
     a, b = s["solve"]["a"], s["solve"]["b"]
-    assert s["projected_informative"] == {g: pytest.approx(stats.projected_informative(a, b, int(g)))
-                                          for g in ("4", "5")}
+    assert s["projected_mixed"] == {g: pytest.approx(stats.projected_informative(a, b, int(g))) for g in ("4", "5")}
 
 
 def test_modules_stay_under_500_lines():
     for path in [ROOT / "scripts" / "flywheel.py", *(ROOT / "scripts" / "qe_flywheel").glob("*.py")]:
         assert len(path.read_text().splitlines()) < 500, path
-
-
-# ---------------------------------------------------------------- ledger
-
-BOARD = FIXTURES / "leaderboard-trim.json"  # trimmed real GET /api/leaderboard response
-
-
-def board():
-    return json.loads(BOARD.read_text())
-
-
-def run_record(run_id, submission_id, industrial, office, user="Profa-QE"):
-    """A real leaderboard runs[] record with its identity and two domain scores rewritten."""
-    run = json.loads(json.dumps(board()["runs"][0]))
-    for d in run["scores"].values():
-        d.update(solved=0, score=0.0)
-    run["scores"]["industrial-physical-systems"].update(solved=industrial, score=industrial / 5)
-    run["scores"]["office-white-collar"].update(solved=office, score=office / 5)
-    run.update(run_id=run_id, submission_id=submission_id, user=user, solved=industrial + office)
-    return run
-
-
-def write_receipt(directory, version, submission_id):
-    request = json.loads((ROOT / "submission" / "request-v1.json").read_text())
-    request["submission_id"] = submission_id
-    (directory / f"request-{version}.json").write_text(json.dumps(request))
-    receipt = {"submission_id": submission_id, "request_sha256": lg.canonical_sha(request)}
-    (directory / f"receipt-{version}.json").write_text(json.dumps(receipt))
-    return directory / f"receipt-{version}.json"
-
-
-def add(ledger, tmp_path, receipt, run):
-    path = tmp_path / f"{run['run_id']}.json"
-    path.write_text(json.dumps(run))
-    return lg.ledger_add(ledger, receipt, path)
-
-
-def test_parse_result_reads_real_leaderboard_records():
-    for run in board()["runs"]:
-        run_id, domains = lg.parse_result(run)
-        assert run_id == run["run_id"] and set(domains) == set(lg.DOMAIN_IDS)
-        assert sum(d["solved"] for d in domains.values()) == run["solved"]
-        assert all(d["total"] == 5 for d in domains.values())
-
-
-@pytest.mark.parametrize("mutate, message", [
-    (lambda r: r.update(solved=r["solved"] + 1), "disagrees"),
-    (lambda r: r.pop("submission_id"), "missing"),
-    (lambda r: r["scores"].update(sports={"solved": 0, "total": 5}), "unknown domain"),
-    (lambda r: r["scores"]["cybersecurity"].update(solved=6), "solved <= total"),
-])
-def test_parse_result_rejects_malformed_records(mutate, message):
-    run = board()["runs"][0]
-    mutate(run)
-    with pytest.raises(SystemExit, match=message):
-        lg.parse_result(run)
-
-
-def test_ledger_is_append_only(tmp_path):
-    ledger = tmp_path / "ledger.jsonl"
-    first = add(ledger, tmp_path, RECEIPT, run_record("run-1", "profa-qe-arena-v1", 2, 1))
-    assert first["cells"][0] == "qe_mutant_kill-d1" and first["request_sha256"].startswith("e6a38411")
-    before = ledger.read_bytes()
-    add(ledger, tmp_path, write_receipt(tmp_path, "v2", "profa-qe-arena-v2"),
-        run_record("run-2", "profa-qe-arena-v2", 0, 2))
-    after = ledger.read_bytes()
-    assert after.startswith(before) and after.count(b"\n") == 2
-    with pytest.raises(SystemExit, match="never replaced"):
-        add(ledger, tmp_path, RECEIPT, run_record("run-1", "profa-qe-arena-v1", 2, 2))
-    assert ledger.read_bytes() == after
-    assert [e["seq"] for e in lg.read_ledger(ledger)] == [1, 2]
-    ledger.write_bytes(after.replace(b'"solved":3', b'"solved":4', 1))
-    with pytest.raises(SystemExit, match="chain broken"):
-        lg.read_ledger(ledger)
-
-
-def test_ledger_refuses_a_run_for_another_submission(tmp_path):
-    with pytest.raises(SystemExit, match="run is for"):
-        add(tmp_path / "l.jsonl", tmp_path, RECEIPT, board()["runs"][0])
-
-
-def test_ledger_refuses_a_request_that_does_not_match_the_receipt(tmp_path):
-    request = json.loads((ROOT / "submission" / "request-v1.json").read_text())
-    request["tasks"] = request["tasks"][:1]
-    (tmp_path / "request-v1.json").write_text(json.dumps(request))
-    (tmp_path / "receipt-v1.json").write_text(RECEIPT.read_text())
-    with pytest.raises(SystemExit, match="hashes to"):
-        add(tmp_path / "l.jsonl", tmp_path, tmp_path / "receipt-v1.json",
-            run_record("x", "profa-qe-arena-v1", 1, 1))
-
-
-def test_fetch_appends_matching_runs_once_and_saves_the_baseline(tmp_path):
-    lb = board()
-    ruv = [r for r in lb["runs"] if r["user"] == "ruv"]
-    for i, run in enumerate(ruv):
-        write_receipt(tmp_path, f"v{i}", run["submission_id"])
-    ledger = tmp_path / "ledger.jsonl"
-    calls = []
-    get = lambda url: calls.append(url) or lb  # noqa: E731 - the network, replaced by the saved response
-    first = lg.ledger_fetch(ledger, "ruv", receipts=tmp_path, get=get)
-    assert calls == [lg.LEADERBOARD]
-    assert first["matched"] == 2 and sorted(first["appended"]) == sorted(r["run_id"] for r in ruv)
-    entries = lg.read_ledger(ledger)
-    assert all(e["user"] == "ruv" and e["total"] == 40 for e in entries)
-    before = ledger.read_bytes()
-    again = lg.ledger_fetch(ledger, "ruv", receipts=tmp_path, board=lb)
-    assert again["appended"] == [] and len(again["already"]) == 2 and ledger.read_bytes() == before
-    baseline, source = lg.resolve_baseline(ledger, None)
-    assert baseline == {"industrial-physical-systems": 2, "office-white-collar": 2}
-    assert "leaderboard" in source
-
-
-def test_fetch_filters_by_submission_and_skips_runs_without_a_receipt(tmp_path):
-    lb = board()
-    target = next(r for r in lb["runs"] if r["user"] == "ruv")
-    ledger = tmp_path / "new-dir" / "l.jsonl"  # a fresh directory: nothing appended, baseline still saved
-    report = lg.ledger_fetch(ledger, "ruv", target["submission_id"], tmp_path, board=lb)
-    assert report["matched"] == 1 and report["appended"] == []
-    assert report["no_receipt"] == [f"{target['submission_id']}/{target['run_id']}"]
-    assert not ledger.exists() and lg.baseline_path(ledger).exists()
-    assert lg.ledger_fetch(ledger, "Profa-QE", board=lb, receipts=tmp_path)["matched"] == 0
-
-
-def test_fetch_follows_and_validates_cursors():
-    pages = {lg.LEADERBOARD: dict(board(), next_cursor="12-34"),
-             lg.LEADERBOARD + "/12-34": {"runs": [{"run_id": "extra"}], "next_cursor": None}}
-    merged = lg.fetch_leaderboard(pages.__getitem__)
-    assert merged["runs"][-1] == {"run_id": "extra"} and len(merged["runs"]) == 4
-    calls = []
-    with pytest.raises(SystemExit, match="cursor"):
-        lg.fetch_leaderboard(lambda url: calls.append(url) or dict(board(), next_cursor="../admin"))
-    assert calls == [lg.LEADERBOARD]  # the bad cursor is never requested
-
-
-def test_offline_fallback_baseline_matches_the_leaderboard(tmp_path):
-    baseline, source = lg.resolve_baseline(tmp_path / "ledger.jsonl", None)
-    assert "OFFLINE FALLBACK" in source
-    assert baseline == lg.baseline_from(board()) == lg.parse_baseline(str(BOARD))
-
-
-def test_composite_null_hand_worked():
-    # Two domains of 2 tasks, baseline p = 1/2, k = 2 runs. Bin(2, .5) has F(0)=1/4, F(1)=3/4, so
-    # E[max] = (1 - (1/4)^2) + (1 - (3/4)^2) = 15/16 + 7/16 = 11/8 per domain; 11/4 for the composite.
-    dist = lg.null_composite(2, {"industrial": (2, 0.5), "office": (2, 0.5)})
-    assert float(np.dot(np.arange(len(dist)), dist)) == pytest.approx(2.75)
-    assert lg.tail(dist, 4) == pytest.approx((7 / 16) ** 2)  # both maxes hit 2: P(max=2) = 1 - (3/4)^2
-
-
-def test_null_from_the_real_leaderboard_baseline():
-    entries = [{"domains": lg.parse_result(r)[1]} for r in board()["runs"]]
-    nulls = lg.null_domains(entries, lg.baseline_from(board()))
-    assert nulls["industrial-physical-systems"] == (5, 0.4) and nulls["software-engineering"] == (5, 0.0)
-    one = lg.null_composite(1, nulls)  # one run of the baseline scores the baseline
-    assert float(np.dot(np.arange(len(one)), one)) == pytest.approx(4.0)
-    three = lg.null_composite(3, nulls)  # 2 * E[max of 3 Bin(5, .4)], computed independently
-    cdf = np.cumsum([math.comb(5, x) * 0.4 ** x * 0.6 ** (5 - x) for x in range(6)])
-    assert float(np.dot(np.arange(len(three)), three)) == pytest.approx(
-        2 * sum(1 - cdf[x - 1] ** 3 for x in range(1, 6)))
-
-
-def test_ledger_show_labels_composite_against_null(tmp_path, capsys):
-    ledger = tmp_path / "ledger.jsonl"
-    add(ledger, tmp_path, RECEIPT, run_record("run-1", "profa-qe-arena-v1", 2, 0))
-    add(ledger, tmp_path, write_receipt(tmp_path, "v2", "profa-qe-arena-v2"),
-        run_record("run-2", "profa-qe-arena-v2", 0, 2))
-    summary = lg.ledger_show(lg.read_ledger(ledger), lg.parse_baseline(lg.BASELINE), source="test")
-    printed = capsys.readouterr().out
-    assert summary["composite"] == 4 and summary["best"]["office-white-collar"] == 2
-    two = lg.null_composite(2, lg.null_domains(lg.read_ledger(ledger), lg.parse_baseline(lg.BASELINE)))
-    assert summary["null_expected"] == pytest.approx(float(np.dot(np.arange(len(two)), two)))
-    assert summary["null_p_value"] == pytest.approx(lg.tail(two, 4))
-    assert "PER-RUN SCORES" in printed and "selection-inflated" in printed and "baseline source: test" in printed
-
-
-# ---------------------------------------------------------------- onecell-search
-
-def config():
-    return search.init_config(template())
-
-
-def test_init_config_reads_environment_and_template():
-    c = config()
-    assert c["max_steps"] == 12 and c["max_test_runs"] == 3
-    assert c["difficulty_mix"] == {"d1": 0.2, "d2": 0.4, "d3": 0.4}
-    assert set(c["completion_tokens"]) == {e["task_id"] for e in template()}
-
-
-@pytest.mark.parametrize("seed", range(40))
-def test_propose_changes_exactly_one_knob(seed):
-    seen = set(range(830_000, 830_008))
-    plan = search.propose(config(), seed, seen, [], sorted(config()["completion_tokens"]))
-    assert search.changed_knobs(plan["baseline"], plan["candidate"]) == [plan["knob"]]
-    assert plan["from"] != plan["to"]
-    disc, conf = set(plan["discovery"]["seeds"]), set(plan["confirmation"]["seeds"])
-    assert not disc & conf and not conf & seen and not disc & seen
-    assert plan == search.propose(config(), seed, seen, [], sorted(config()["completion_tokens"]))
-
-
-def test_mix_change_counts_as_one_knob():
-    c = config()
-    moved = search.apply_move(c, "difficulty_mix", {"d1": 0.1, "d2": 0.5, "d3": 0.4})
-    assert search.changed_knobs(c, moved) == ["difficulty_mix"]
-
-
-def test_propose_skips_tried_moves():
-    c = config()
-    history = [{"knob": k, "to": v} for k, v in search.candidate_moves(c)[1:]]
-    plan = search.propose(c, 0, set(), history, ["qe_bugfix-d2"])
-    assert (plan["knob"], plan["to"]) == search.candidate_moves(c)[0]
-
-
-def split_rows(split, reward_of):
-    return [row(t, s, a, reward_of(t, s, a)) for t in split["task_ids"] for s in split["seeds"]
-            for a in range(split["attempts"])]
-
-
-def make_plan():
-    c = config()
-    c["difficulty_mix"] = {"d1": 0.0, "d2": 1.0, "d3": 0.0}
-    plan = search.propose(c, 5, set(), [], ["qe_bugfix-d2"], discovery_seeds=4, confirm_seeds=4, attempts=2)
-    if plan["knob"] == "difficulty_mix":  # keep the reweighting out of this test
-        plan = search.propose(c, 6, set(), [], ["qe_bugfix-d2"], discovery_seeds=4, confirm_seeds=4, attempts=2)
-    assert plan["knob"] != "difficulty_mix"
-    return plan
-
-
-def decide_with(plan, base_d, cand_d, base_c, cand_c):
-    return search.decide(plan, split_rows(plan["discovery"], base_d), split_rows(plan["discovery"], cand_d),
-                     split_rows(plan["confirmation"], base_c), split_rows(plan["confirmation"], cand_c))
-
-
-def test_decide_rejects_confirmation_loss_despite_discovery_gain():
-    plan = make_plan()
-    half = lambda t, s, a: float(a == 0)  # noqa: E731 - 0.5 mean
-    full = lambda t, s, a: 1.0  # noqa: E731
-    worse = lambda t, s, a: 0.0 if s == plan["confirmation"]["seeds"][0] else float(a == 0)  # noqa: E731
-    result = decide_with(plan, half, full, half, worse)
-    assert result["discovery"]["delta"] == pytest.approx(0.5)
-    assert result["confirmation"]["delta"] < 0
-    assert result["accept"] is False and any("confirmation" in r for r in result["reasons"])
-
-
-def test_decide_accepts_gain_with_no_confirmation_loss_and_respects_margin():
-    plan = make_plan()
-    half = lambda t, s, a: float(a == 0)  # noqa: E731
-    full = lambda t, s, a: 1.0  # noqa: E731
-    assert decide_with(plan, half, full, half, half)["accept"] is True
-    tiny = lambda t, s, a: 1.0 if (a == 1 and s == plan["discovery"]["seeds"][0]) else float(a == 0)  # noqa: E731
-    small = decide_with(plan, half, tiny, half, half)  # +1/8 = 0.125 > 0.05 margin
-    assert small["accept"] is True
-    plan["rule"]["margin"] = 0.2
-    assert decide_with(plan, half, tiny, half, half)["accept"] is False
-
-
-def test_decide_refuses_unpaired_or_foreign_rows():
-    plan = make_plan()
-    half = lambda t, s, a: float(a == 0)  # noqa: E731
-    base = split_rows(plan["discovery"], half)
-    with pytest.raises(SystemExit, match="unpaired"):
-        search.decide(plan, base, base[:-1], split_rows(plan["confirmation"], half),
-                  split_rows(plan["confirmation"], half))
-    with pytest.raises(SystemExit, match="outside the plan"):
-        search.decide(plan, base, base, base, base)  # discovery rows used as confirmation
-
-
-def test_decide_drops_error_pairs():
-    plan = make_plan()
-    half = lambda t, s, a: float(a == 0)  # noqa: E731
-    seed0 = plan["discovery"]["seeds"][0]
-    errs = lambda t, s, a: None if (s == seed0 and a == 1) else float(a == 0)  # noqa: E731
-    result = decide_with(plan, half, errs, half, half)
-    assert result["discovery"]["dropped_error_pairs"] == 1
-    assert result["discovery"]["delta"] == pytest.approx(4 / 7 - 4 / 7)

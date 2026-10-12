@@ -6,16 +6,21 @@ import copy
 
 import numpy as np
 
-from .stats import TRAIN_GROUP
+from .stats import TRAIN_GROUP, expected_all_equal
 
 OBJECTIVES = {
-    "projected": "p_inf@G: chance that G independent instances are mixed, p drawn from the solve posterior",
+    "projected": "p_mix@G: chance that G fresh instances do not all get the same reward (partial credit "
+                 "counts), drawn from a Dirichlet posterior over the observed reward values",
     "group": "same-seed informative-group posterior (measured; understates mixing for unseeded resets)",
 }
+# Gate: posterior-mean p_mix@G below this means the cell rarely gives a gradient. With Jeffreys pseudo-
+# counts at G=4 that excludes 0/16 or 16/16 (0.10) but keeps 0/8 (0.18, still worth exploring) and
+# 15/16 (0.29); Thompson sampling then ranks what remains.
+MIN_MIXED = 0.15
 
 
-def select_cells(stats: dict, template: list[dict], max_cells: int, seed: int, saturated: float = 0.9,
-                 dead: float = 0.05, min_groups: int = 1, objective: str = "projected",
+def select_cells(stats: dict, template: list[dict], max_cells: int, seed: int, min_mixed: float = MIN_MIXED,
+                 min_groups: int = 1, min_episodes: int = 4, objective: str = "projected",
                  group_size: int = TRAIN_GROUP) -> tuple[list[dict], list[dict]]:
     """Thompson-sample eligible cells by ``objective`` (see OBJECTIVES). Returns the task list
     (template entries copied verbatim, in template order) and one reason record per cell."""
@@ -36,18 +41,22 @@ def select_cells(stats: dict, template: list[dict], max_cells: int, seed: int, s
         s = cells.get(task_id)
         record = {"task_id": task_id}
         if s is not None:
-            record.update(solve=s["solve"], informative=s["informative"], errors=s["errors"],
-                          projected_informative=s["projected_informative"])
+            mixed = 1.0 - expected_all_equal(s["reward_dirichlet"]["alphas"], group_size)
+            record.update(solve=s["solve"], informative=s["informative"], errors=s["errors"], budget=s["budget"],
+                          valid=s["valid"], mean_reward=s["mean_reward"], p_mixed=float(mixed),
+                          reward_dirichlet=s["reward_dirichlet"])
         if s is None:
             record.update(decision="excluded", reason="no calibration data")
         elif task_id not in by_id:
             record.update(decision="excluded", reason="no template entry, so its limits are unknown")
-        elif s["groups"] < min_groups:
-            record.update(decision="excluded", reason=f"{s['groups']} usable groups < {min_groups}")
-        elif s["solve"]["mean"] >= saturated:
-            record.update(decision="excluded", reason=f"saturated: posterior mean solve {s['solve']['mean']:.3f} >= {saturated}")
-        elif s["solve"]["mean"] <= dead:
-            record.update(decision="excluded", reason=f"dead: posterior mean solve {s['solve']['mean']:.3f} <= {dead}")
+        elif objective == "group" and s["groups"] < min_groups:
+            record.update(decision="excluded", reason=f"{s['groups']} same-seed groups < {min_groups}")
+        elif s["valid"] < min_episodes:
+            record.update(decision="excluded", reason=f"{s['valid']} valid episodes < {min_episodes}")
+        elif record["p_mixed"] < min_mixed:
+            side = "mostly high reward" if (s["mean_reward"] or 0) >= 0.5 else "mostly low reward"
+            record.update(decision="excluded", reason=f"rarely mixed ({side}): posterior-mean p_mix@{group_size} "
+                                                      f"{record['p_mixed']:.3f} < {min_mixed}")
         else:
             eligible.append(record)
         reasons.append(record)
@@ -57,14 +66,14 @@ def select_cells(stats: dict, template: list[dict], max_cells: int, seed: int, s
             post = record["informative"]
             record["draw"] = float(rng.beta(post["a"], post["b"]))
         else:
-            p = float(rng.beta(record["solve"]["a"], record["solve"]["b"]))
-            record["draw"] = 1.0 - p ** group_size - (1.0 - p) ** group_size
+            q = rng.dirichlet(record["reward_dirichlet"]["alphas"])
+            record["draw"] = float(1.0 - np.sum(q ** group_size))
     ranked = sorted(eligible, key=lambda r: (-r["draw"], r["task_id"]))
+    measure = f"p_mix@{group_size}" if objective == "projected" else "same-seed informative"
     for rank, record in enumerate(ranked, 1):
         record["rank"] = rank
         chosen = rank <= max_cells
         record["decision"] = "selected" if chosen else "excluded"
-        measure = f"p_inf@{group_size}" if objective == "projected" else "same-seed informative"
         record["reason"] = (f"Thompson draw {record['draw']:.3f} ({measure}) ranked {rank} of {len(ranked)} eligible"
                             + ("" if chosen else f"; beyond --max-cells {max_cells}"))
     chosen_ids = {r["task_id"] for r in ranked[:max_cells]}
