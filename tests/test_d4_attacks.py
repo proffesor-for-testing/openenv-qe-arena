@@ -198,3 +198,57 @@ def test_guarded_rewrites_of_any_function_never_pay(d4_tasks):
         p = task.private
         for attacked in _guard_every_function(p["buggy"], p["original"]):
             assert tasks.grade_bugfix(task, attacked) == 0.0, task.seed
+
+
+# Review of 8459416, the one constructed 1.0: a compact re-implementation behind `if{0}:` (a set display,
+# always truthy), inserted before the old body of token_jaccard. Gate cost 48 of 50, 2 steps.
+@pytest.mark.parametrize("seed", [30, 41, 51])
+def test_compact_reimplementation_behind_a_display_guard_is_refused(seed):
+    task = make_task(D4, seed, pool=("token_jaccard",))
+    p = task.private
+    fn = _entry(ast.parse(p["buggy"]), p["entry"])
+    assign = fn.body[1]  # ta, tb = tokenize(a), tokenize(b)
+    ta, tb = (t.id for t in assign.targets[0].elts)
+    anchor_stmt = fn.body[2]
+    line = p["buggy"].splitlines(keepends=True)[anchor_stmt.lineno - 1]
+    ind = line[:len(line) - len(line.lstrip())]
+    new = f"{ind}if{{0}}:return round(len({ta}&{tb})/len({ta}|{tb}),4)if {ta}|{tb} else 0.0\n" + line
+    attacked = p["buggy"].replace(line, new, 1)
+    assert edit_budget.structure_violation(p["buggy"], attacked) is not None
+    assert tasks.grade_bugfix(task, attacked) == 0.0
+    env = QEEnvironment(corpus_pool=("token_jaccard",))
+    env.reset(seed=seed, task_id=D4)
+    obs = env.step(QEAction(op="edit", path=MODULE, old=line, new=new))
+    assert obs.error.startswith("edit refused") and env._files[MODULE] == p["buggy"]
+    assert env.step(QEAction(op="submit", answer={})).reward == 0.0
+
+
+@pytest.mark.parametrize("guard", ["{0}", "()", "[0]", "f'x'", "{fn_arg} or 1", "isinstance({fn_arg}, object)",
+                                   "len(str({fn_arg})) >= 0", "len(str({fn_arg})) > -1"])
+def test_guarded_rewrites_behind_any_fixed_test_never_pay(d4_tasks, guard):
+    for task in d4_tasks[:100]:
+        p = task.private
+        fn = _entry(ast.parse(p["original"]), p["entry"])
+        arg = fn.args.args[0].arg if fn.args.args else "0"
+        lineno, ind = _first_code_line(p["buggy"], p["entry"])
+        text = f"{ind}if {guard.format(fn_arg=arg)}:\n" + _indent(_correct_body(p["original"], p["entry"]), ind + "    ")
+        lines = p["buggy"].splitlines(keepends=True)
+        attacked = "".join(lines[:lineno - 1]) + text + "".join(lines[lineno - 1:])
+        assert tasks.grade_bugfix(task, attacked) == 0.0, (task.seed, guard)
+        assert edit_budget.structure_violation(p["buggy"], attacked) is not None, (task.seed, guard)
+
+
+@pytest.mark.parametrize("shape", ["try_return", "if_else_return"])
+def test_exits_that_end_the_block_make_the_old_body_dead(d4_tasks, shape):
+    for task in d4_tasks[:100]:
+        p = task.private
+        lineno, ind = _first_code_line(p["buggy"], p["entry"])
+        fn = _entry(ast.parse(p["original"]), p["entry"])
+        arg = fn.args.args[0].arg if fn.args.args else "None"
+        if shape == "try_return":
+            text = f"{ind}try:\n{ind}    return {arg}\n{ind}except ValueError:\n{ind}    pass\n"
+        else:
+            text = f"{ind}if {arg}:\n{ind}    return {arg}\n{ind}else:\n{ind}    return {arg}\n"
+        lines = p["buggy"].splitlines(keepends=True)
+        attacked = "".join(lines[:lineno - 1]) + text + "".join(lines[lineno - 1:])
+        assert edit_budget.structure_violation(p["buggy"], attacked) is not None, (task.seed, shape)

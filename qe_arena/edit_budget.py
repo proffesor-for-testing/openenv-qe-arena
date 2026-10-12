@@ -131,17 +131,72 @@ def _definitions(tree: ast.AST) -> list[tuple]:
             for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
 
 
-def _constant_test(test: ast.AST) -> bool:
-    """A test whose value does not depend on the input: a literal, or x OP x such as `p == p`."""
-    if isinstance(test, ast.Constant):
-        return True
-    if isinstance(test, ast.Compare) and len(test.ops) == 1 and ast.dump(test.left) == ast.dump(test.comparators[0]):
-        return True
-    if isinstance(test, ast.UnaryOp):
-        return _constant_test(test.operand)
+def _truth(test: ast.AST) -> bool | None:
+    """The truth value of ``test`` when it cannot depend on the input, else None.
+
+    Tautologies are open-ended. This catches the shapes a rewrite needs to hide behind:
+    literals and displays (`{0}`, `()`, f-strings), anything with no variable in it,
+    `x OP x`, `x or <truthy>` / `x and <falsy>`, `isinstance(_, object)` and `len(...) >= 0`.
+    """
+    if isinstance(test, (ast.Set, ast.List, ast.Tuple, ast.Dict)):
+        return bool(test.keys if isinstance(test, ast.Dict) else test.elts)
+    if isinstance(test, ast.JoinedStr):
+        if any(isinstance(v, ast.Constant) and v.value for v in test.values):
+            return True
+        return None if any(isinstance(v, ast.FormattedValue) for v in test.values) else False
+    if not any(isinstance(n, ast.Name) and n.id not in _CONSTANT_NAMES for n in ast.walk(test)):
+        try:
+            return bool(ast.literal_eval(test))
+        except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+            return True  # no variable in it, so its value is fixed even if we cannot compute it here
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        inner = _truth(test.operand)
+        return None if inner is None else not inner
     if isinstance(test, ast.BoolOp):
-        return all(_constant_test(v) for v in test.values)
-    return False
+        values = [_truth(v) for v in test.values]
+        decisive = True if isinstance(test.op, ast.Or) else False
+        if decisive in values:
+            return decisive
+        return None if None in values else not decisive
+    if isinstance(test, ast.Compare) and len(test.ops) == 1:
+        left, op, right = test.left, test.ops[0], test.comparators[0]
+        if ast.dump(left) == ast.dump(right):
+            if isinstance(op, (ast.In, ast.NotIn)):
+                return None  # x in x is not fixed for lists
+            return isinstance(op, (ast.Eq, ast.Is, ast.LtE, ast.GtE))
+        if _is_len(left) and _int_value(right) is not None:
+            bound = _int_value(right)
+            if (isinstance(op, ast.GtE) and bound <= 0) or (isinstance(op, ast.Gt) and bound < 0):
+                return True
+        if _is_len(right) and _int_value(left) is not None:
+            bound = _int_value(left)
+            if (isinstance(op, ast.LtE) and bound <= 0) or (isinstance(op, ast.Lt) and bound < 0):
+                return True
+    if (isinstance(test, ast.Call) and isinstance(test.func, ast.Name) and test.func.id == "isinstance"
+            and len(test.args) == 2 and isinstance(test.args[1], ast.Name) and test.args[1].id == "object"):
+        return True
+    return None
+
+
+_CONSTANT_NAMES = frozenset({"True", "False", "None", "object", "len", "int", "str", "bool", "float", "abs",
+                             "min", "max", "sum", "round", "isinstance", "ord", "chr"})
+
+
+def _is_len(node: ast.AST) -> bool:
+    return isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "len"
+
+
+def _int_value(node: ast.AST) -> int | None:
+    try:
+        value = ast.literal_eval(node)
+    except (ValueError, TypeError, SyntaxError):
+        return None
+    return value if type(value) is int else None
+
+
+def _constant_test(test: ast.AST) -> bool:
+    """A test whose value does not depend on the input (see _truth)."""
+    return _truth(test) is not None
 
 
 def _loop_body_jumps_out(body: list[ast.stmt]) -> bool:
@@ -189,10 +244,9 @@ def _stmt_ends(stmt: ast.stmt, jumps: bool) -> bool:
     if isinstance(stmt, (ast.With, ast.AsyncWith)):
         return _ends(stmt.body, jumps)
     if isinstance(stmt, ast.Try) or type(stmt).__name__ == "TryStar":
-        if _ends(stmt.finalbody, jumps):
-            return True
-        handlers_end = all(_ends(h.body, jumps) for h in stmt.handlers)
-        return handlers_end and (_ends(stmt.body, jumps) or (bool(stmt.orelse) and _ends(stmt.orelse, jumps)))
+        # Conservative: a try whose body or finally ends is treated as ending, even if a handler could
+        # fall through. The corpus never needs that shape, and a rewrite hides behind it.
+        return _ends(stmt.body, jumps) or _ends(stmt.finalbody, jumps)
     if isinstance(stmt, ast.While):
         return _constant_test(stmt.test) and not _loop_body_jumps_out(stmt.body)
     if isinstance(stmt, (ast.For, ast.AsyncFor)):

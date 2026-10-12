@@ -98,9 +98,12 @@ existing pin are byte-identical. Code: `qe_arena/edit_budget.py`.
   - every function definition, with the same arguments and decorators (no nested shadow function);
   - no lambda beyond those already in the file;
   - every statement stays reachable. A static check proves exits through return, raise, if/else,
-    try/finally, with, and loops that must run their body. No branch or loop may test a constant or a
-    tautology such as `p == p`, so no wrapper (`if True:`, `while 1:`, `for _ in [0]:`, try/finally)
-    can bypass the old body;
+    try (when its body or finally ends), with, and loops that must run their body. No branch or loop may
+    test something whose value cannot depend on the input: a literal or display (`{0}`, `()`, `[x]`, an
+    f-string with text), anything with no variable in it, `x OP x`, `x or <truthy>`,
+    `isinstance(_, object)`, or `len(...) >= 0`. So no wrapper (`if True:`, `while 1:`, `for _ in [0]:`,
+    try/finally) can bypass the old body. Tautologies are open-ended; the token allowance bounds what a
+    tautology the check misses can hide;
   - a total change of at most `min(50, 0.35 × code tokens)` preorder AST tokens. The code tokens are
     counted on the shown file without docstrings.
   A compact re-implementation, even behind an always-true guard, needs more tokens than that.
