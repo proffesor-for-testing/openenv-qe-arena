@@ -203,10 +203,48 @@ def test_select_cli_writes_identical_files_and_sidecar(tmp_path):
 # ---------------------------------------------------------------- ledger
 
 def result_file(tmp_path, name, run_id, industrial, office, total=2):
+    """The arena leaderboard runs[] shape, trimmed to two domains."""
     path = tmp_path / name
-    path.write_text(json.dumps({"run_id": run_id, "domains": {
-        "industrial": {"solved": industrial, "total": total}, "office": {"solved": office, "total": total}}}))
+    path.write_text(json.dumps({"run_id": run_id, "solved": industrial + office, "total": 2 * total, "scores": {
+        "industrial": {"solved": industrial, "total": total, "score": industrial / total},
+        "office": {"solved": office, "total": total, "score": office / total}}}))
     return path
+
+
+def test_parse_result_reads_a_real_arena_run_record():
+    record = json.loads((FIXTURES / "arena-run-example.json").read_text())  # public leaderboard runs[0]
+    run_id, domains = fw.parse_result(record)
+    assert run_id == record["run_id"] and len(domains) == 8
+    assert sum(d["solved"] for d in domains.values()) == record["solved"] == 4
+    assert all(d["total"] == 5 for d in domains.values())
+    record["solved"] = 5
+    with pytest.raises(SystemExit, match="disagrees"):
+        fw.parse_result(record)
+
+
+def test_ledger_refuses_a_result_for_another_submission(tmp_path):
+    record = json.loads((FIXTURES / "arena-run-example.json").read_text())
+    (tmp_path / "r.json").write_text(json.dumps(record))
+    with pytest.raises(SystemExit, match="result is for"):
+        fw.ledger_add(tmp_path / "l.jsonl", RECEIPT, tmp_path / "r.json")
+
+
+def test_null_from_the_real_leaderboard_baseline(tmp_path):
+    baseline = fw.parse_baseline(str(FIXTURES / "leaderboard-baseline.json"))
+    assert baseline == fw.parse_baseline(fw.BASELINE)
+    record = json.loads((FIXTURES / "arena-run-example.json").read_text())
+    entries = [{"domains": fw.parse_result(record)[1]}]
+    nulls = fw.null_domains(entries, baseline)
+    assert nulls["industrial-physical-systems"] == (5, 0.4) and nulls["software-engineering"] == (5, 0.0)
+    for k, expected in ((1, 4.0), (3, None)):
+        dist = fw.null_composite(k, nulls)
+        mean = float(np.dot(np.arange(len(dist)), dist))
+        if expected is not None:
+            assert mean == pytest.approx(expected)  # one run of the baseline scores the baseline
+        else:  # 2 * E[max of 3 Bin(5, .4)], computed independently
+            pmf = [math.comb(5, x) * 0.4 ** x * 0.6 ** (5 - x) for x in range(6)]
+            cdf = np.cumsum(pmf)
+            assert mean == pytest.approx(2 * sum(1 - cdf[x - 1] ** 3 for x in range(1, 6)))
 
 
 def second_receipt(tmp_path):

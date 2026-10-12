@@ -38,7 +38,10 @@ ROOT = Path(__file__).resolve().parents[1]
 LEVELS = ("d1", "d2", "d3")
 PRIOR = 0.5  # Jeffreys: Beta(0.5, 0.5)
 CI = 0.90
-ARENA_GROUP = 5  # DESIGN.md: each optimizer step plays 5 episodes of one task, unseeded
+# Arena AGENTS.md: each step plays 5 episodes of one task; the first 4 with a valid reward train the policy.
+# The trainer is not known to pass a seed, and our reset draws a fresh instance when it does not.
+ARENA_GROUP = 4
+BASELINE = "industrial-physical-systems=2,office-white-collar=2"  # leaderboard baseline, Qwen3.8-27B 1d4bf0f
 
 
 # ---------------------------------------------------------------- Beta posterior math
@@ -280,12 +283,12 @@ def read_ledger(path: Path) -> list[dict]:
 
 
 def parse_result(result: dict) -> tuple[str, dict]:
-    """Accept {run_id, domains: {name: {solved, total}}}. The arena's own field names are
-    mapped here once they are known; until then the caller writes this shape."""
-    run_id = result.get("run_id") or result.get("id")
-    domains = result.get("domains")
+    """Accept an arena leaderboard ``runs[]`` record ({run_id, scores: {domain: {solved, total, score}},
+    solved, total, ...}) or the short form {run_id, domains: {domain: {solved, total}}}."""
+    run_id = result.get("run_id")
+    domains = result.get("scores", result.get("domains"))
     if not run_id or not isinstance(domains, dict) or not domains:
-        raise SystemExit("result must carry run_id and a non-empty domains object")
+        raise SystemExit("result must carry run_id and a non-empty scores (or domains) object")
     clean = {}
     for name, value in domains.items():
         if not isinstance(value, dict) or not {"solved", "total"} <= set(value):
@@ -294,6 +297,9 @@ def parse_result(result: dict) -> tuple[str, dict]:
         if type(solved) is not int or type(total) is not int or not 0 <= solved <= total or total < 1:
             raise SystemExit(f"domain {name!r}: need integers 0 <= solved <= total, total >= 1")
         clean[name] = {"solved": solved, "total": total}
+    for key in ("solved", "total"):
+        if key in result and result[key] != sum(d[key] for d in clean.values()):
+            raise SystemExit(f"result {key} {result[key]} disagrees with the per-domain sum")
     return str(run_id), dict(sorted(clean.items()))
 
 
@@ -308,7 +314,10 @@ def ledger_add(ledger: Path, receipt_path: Path, result_path: Path, request_path
         raise SystemExit(f"{request_path} hashes to {sha}, not the receipt's {receipt.get('request_sha256')}")
     if request.get("submission_id") != receipt.get("submission_id"):
         raise SystemExit("request and receipt name different submission ids")
-    run_id, domains = parse_result(json.loads(result_path.read_text()))
+    result = json.loads(result_path.read_text())
+    run_id, domains = parse_result(result)
+    if result.get("submission_id", receipt["submission_id"]) != receipt["submission_id"]:
+        raise SystemExit(f"result is for {result['submission_id']}, receipt is for {receipt['submission_id']}")
     entries = read_ledger(ledger)
     for e in entries:
         if e["submission_id"] == receipt["submission_id"] or e["run_id"] == run_id:
@@ -319,7 +328,8 @@ def ledger_add(ledger: Path, receipt_path: Path, result_path: Path, request_path
              "submission_id": receipt["submission_id"], "request_sha256": sha, "run_id": run_id,
              "cells": [t["task_id"] for t in request.get("tasks", [])], "domains": domains,
              "solved": sum(d["solved"] for d in domains.values()),
-             "total": sum(d["total"] for d in domains.values())}
+             "total": sum(d["total"] for d in domains.values()),
+             **{k: result[k] for k in ("steps", "tasks", "delta", "evaluated_at", "benchmark") if k in result}}
     ledger.parent.mkdir(parents=True, exist_ok=True)
     with ledger.open("a") as handle:
         handle.write(json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n")
@@ -608,6 +618,10 @@ def init_config(template: list[dict]) -> dict:
 # ---------------------------------------------------------------- CLI
 
 def parse_baseline(text: str) -> dict[str, int]:
+    """``name=solved,...`` or a saved leaderboard JSON, whose ``baseline.scores`` is used."""
+    if Path(text).is_file():
+        scores = json.loads(Path(text).read_text())["baseline"]["scores"]
+        return {name: d["solved"] for name, d in scores.items() if d["solved"]}
     out = {}
     for part in filter(None, text.split(",")):
         name, _, value = part.partition("=")
@@ -648,7 +662,8 @@ def main(argv=None) -> int:
             q.add_argument("--result", type=Path, required=True)
             q.add_argument("--request", type=Path, help="default: the receipt's sibling request-vN.json")
         else:
-            q.add_argument("--baseline", default="industrial=2,office=2", help="per-domain solved count of the baseline")
+            q.add_argument("--baseline", default=BASELINE,
+                           help="per-domain solved counts of the baseline, or a saved leaderboard JSON")
             q.add_argument("--json", type=Path)
     p = sub.add_parser("onecell-search", help="Darwin-style one-knob proposal and paired decision")
     osub = p.add_subparsers(dest="action", required=True)

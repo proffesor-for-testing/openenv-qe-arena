@@ -172,16 +172,17 @@ One submission per day, and one arena run is noise, so the flywheel keeps three 
 - **`stats`** reports, per cell and per (cell, corpus function), Jeffreys Beta(0.5, 0.5) posteriors with
   equal-tailed 90% intervals for the full-solve rate and the informative-group rate. A group is
   `(task_id, seed[, corpus])` across attempts; it is informative when its rewards are not all equal.
-  Error rows (`reward: null`) are counted and excluded, never scored as 0. `p_inf@5` projects the chance
-  that 5 independent episodes are mixed, which matches the trainer's unseeded 5-episode groups better than
-  our same-seed groups do; it uses solved/unsolved only.
+  Error rows (`reward: null`) are counted and excluded, never scored as 0. `p_inf@4` projects the chance
+  that 4 independent episodes are mixed (the arena plays 5 per step and trains on the first 4 valid ones;
+  an unseeded reset here draws a fresh instance), which our same-seed groups understate. It uses
+  solved/unsolved only.
 - **`select`** Thompson-samples cells by the informative-group posterior (or the projection, with
   `--objective projected`) after dropping saturated (mean solve >= 0.9) and dead (<= 0.05) cells. Limits
   are copied verbatim from the template and every decision is written to a `.why.json` sidecar.
 - **`ledger`** is an append-only, hash-chained JSONL of submissions. `show` prints per-run scores and,
   separately, the best-per-domain composite next to its exact null: the composite expected if every run
-  were the baseline. The result shape (`run_id`, `domains: {name: {solved, total}}`) is ours until the
-  arena's own result format is mapped in `parse_result`.
+  were the baseline (leaderboard baseline: 4/40, industrial-physical-systems 2/5 + office-white-collar 2/5).
+  `--result` takes the arena leaderboard's `runs[]` record (`run_id`, `scores.<domain>.{solved,total}`).
 - **`onecell-search`** proposes exactly one knob change (Darwin's one-knob idea, reimplemented) with a
   pre-registered paired plan: identical seeds for baseline and candidate on a discovery split, and fresh
   seeds for a confirmation split. `decide` accepts only a strict discovery gain above the plan's margin

@@ -1,0 +1,47 @@
+{
+ "baseline": {
+  "attempts_per_task": 1,
+  "measured": "2026-10-07",
+  "model": "Qwen3.8-27B",
+  "note": "base model, before any training",
+  "revision": "1d4bf0f",
+  "scores": {
+   "cybersecurity": {
+    "solved": 0,
+    "total": 5
+   },
+   "finance-economics": {
+    "solved": 0,
+    "total": 5
+   },
+   "industrial-physical-systems": {
+    "solved": 2,
+    "total": 5
+   },
+   "mathematics-or-formal-reasoning": {
+    "solved": 0,
+    "total": 5
+   },
+   "media-content-production": {
+    "solved": 0,
+    "total": 5
+   },
+   "natural-science": {
+    "solved": 0,
+    "total": 5
+   },
+   "office-white-collar": {
+    "solved": 2,
+    "total": 5
+   },
+   "software-engineering": {
+    "solved": 0,
+    "total": 5
+   }
+  },
+  "solved": 4,
+  "tasks": 0,
+  "total": 40
+ },
+ "tasks_per_domain": 5
+}
