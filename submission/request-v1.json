@@ -14,7 +14,7 @@
     "answer": {},
     "op": "submit"
   },
-  "image": "ghcr.io/proffesor-for-testing/openenv-qe-arena@sha256:1ec77eabffee305fe85200c54f725ebfd569bd98fd30470e5fad95195e5e1d82",
+  "image": "ghcr.io/proffesor-for-testing/openenv-qe-arena@sha256:51aadc013d2387b1dd54e15533afa6086541639dad84bef474983409fc9fd1db",
   "name": "QE Arena: bug repair and mutation kill (Profa-QE)",
   "schema": {
     "action": {

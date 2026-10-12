@@ -22,6 +22,7 @@ RUN pip install --no-cache-dir --require-hashes -r /app/requirements-wasmtime.lo
 COPY --from=wasi-runtime /opt/qe-arena/wasi /opt/qe-arena/wasi
 COPY qe_arena /app/qe_arena
 COPY openenv.yaml /app/openenv.yaml
+COPY THIRD_PARTY_NOTICES /app/THIRD_PARTY_NOTICES
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 ENABLE_WEB_INTERFACE=false QE_ARENA_WASI_ROOT=/opt/qe-arena/wasi
 USER 10001
 EXPOSE 8000

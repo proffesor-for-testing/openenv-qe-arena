@@ -51,9 +51,9 @@ def _ints(seed: int, n: int) -> list[list]:
 
 # --------------------------------------------------------------------------- enumerate_sites
 
-def test_sample_covers_every_operator():
-    counts = Counter(s.operator for s in mutation.enumerate_sites(SAMPLE))
-    assert set(counts) == set(mutation.OPERATORS), counts
+def test_sample_covers_every_classic_operator():
+    counts = Counter(s.operator for s in mutation.enumerate_sites(SAMPLE, mutation.CLASSIC_OPERATORS))
+    assert set(counts) == set(mutation.CLASSIC_OPERATORS), counts
 
 
 def test_every_site_reparses_and_changes_only_its_span():
@@ -175,13 +175,13 @@ def test_mutants_change_behaviour_on_sample():
     calls = _ints(7, 120)
     reference = sandbox.run_calls(SAMPLE, "sample", calls)
     assert all(r.kind in ("ok", "exc") for r in reference)
-    sites = mutation.enumerate_sites(SAMPLE)
+    sites = mutation.enumerate_sites(SAMPLE, mutation.CLASSIC_OPERATORS)
     killed_by_operator: Counter = Counter()
     for site in sites:
         outputs = sandbox.run_calls(mutation.apply(SAMPLE, [site]), "sample", calls)
         killed_by_operator[site.operator] += any(not sandbox.compare(r, o) for r, o in zip(reference, outputs))
     # The `len(label) >= 9` branch is unreachable for these k, so its mutants are equivalent.
-    assert {op for op, n in killed_by_operator.items() if n} == set(mutation.OPERATORS)
+    assert {op for op, n in killed_by_operator.items() if n} == set(mutation.CLASSIC_OPERATORS)
     assert sum(killed_by_operator.values()) / len(sites) >= 0.6
 
 
@@ -392,3 +392,246 @@ def test_rename_locals_then_mutate_round_trip():
     for site in mutation.enumerate_sites(renamed):
         ast.parse(mutation.apply(renamed, [site]))
     assert len(mutation.enumerate_sites(renamed)) == len(mutation.enumerate_sites(SAMPLE))
+
+
+# --------------------------------------------------------------------------- realistic operators
+
+# One source per realistic operator, with calls on which every one of its mutants misbehaves.
+REALISTIC = {
+    "guard_delete": ('''\
+def f(xs, limit):
+    if limit < 0:
+        raise ValueError("negative")
+    total = 0
+    for x in xs:
+        if x is None:
+            continue
+        if total >= limit:
+            break
+        total += x
+    return total
+''', [[[1, None, 2], 10], [[5, 5, 5], 6], [[1], -1]]),
+    "arm_drop": ('''\
+def f(score):
+    if score >= 90:
+        return "A"
+    elif score >= 80:
+        return "B"
+    elif score >= 70:
+        return "C"
+    else:
+        return "F"
+''', [[95], [85], [75], [10]]),
+    "member_drop": ('''\
+def f(method):
+    return "read" if method in ("get", "head", "options") else "write"
+''', [["get"], ["head"], ["options"], ["post"]]),
+    "condition_drop": ('''\
+def f(a, b, c):
+    return a > 0 and b > 0 or c
+''', [[1, -1, False], [-1, 1, False], [-1, -1, True], [1, 1, False]]),
+    "extra_condition": ('''\
+def f(xs, lo):
+    n = 0
+    for x in xs:
+        if x > lo:
+            n += 1
+    return [n, len([x for x in xs if x != lo])]
+''', [[[0, 1, 2], -1], [[3, 4, 0], 0]]),
+    "call_swap": ('''\
+import math
+
+
+def f(s, items, x):
+    head = s.strip().lower()
+    ok = s.startswith("a")
+    parts = s.rsplit(",", 1)
+    return [head, ok, parts, any(items), math.floor(x), round(x)]
+''', [[" Ab,c,b ", [0, 1], 2.7], ["ab,c", [1, 1], -2.5], ["x", [], 0.5]]),
+    "var_swap": ('''\
+def f(xs, lo, hi):
+    total = 0
+    for i in range(lo, hi):
+        total += xs[i] * (i + 1)
+    return total
+''', [[[3, 5, 7, 11, 13, 17], 1, 4], [[2, 4, 8, 16, 32], 2, 3]]),
+    "const_sibling": ('''\
+def f(n):
+    if n > 10:
+        return "big"
+    if n > 3:
+        return "mid"
+    return "small"
+''', [[12], [5], [1]]),
+}
+
+
+def test_operator_lists_are_disjoint_and_complete():
+    assert len(mutation.CLASSIC_OPERATORS) == 12 and len(mutation.REALISTIC_OPERATORS) == 8
+    assert mutation.OPERATORS == mutation.CLASSIC_OPERATORS + mutation.REALISTIC_OPERATORS
+    assert set(REALISTIC) == set(mutation.REALISTIC_OPERATORS)
+    with pytest.raises(ValueError):
+        mutation.enumerate_sites(SAMPLE, ["no_such_operator"])
+
+
+@pytest.mark.parametrize("operator", mutation.REALISTIC_OPERATORS)
+def test_realistic_operator_mutants_compile_differ_and_are_deterministic(operator):
+    source, calls = REALISTIC[operator]
+    sites = mutation.enumerate_sites(source, [operator])
+    assert sites, operator
+    assert sites == mutation.enumerate_sites(source, [operator])  # deterministic
+    assert all(s.operator == operator for s in sites)
+    reference = sandbox.run_calls(source, "f", calls)
+    assert all(r.kind in ("ok", "exc") for r in reference)
+    for site in sites:
+        mutant = mutation.apply(source, [site])
+        ast.parse(mutant)
+        assert sandbox.static_gate(mutant) == [], site.description
+        outputs = sandbox.run_calls(mutant, "f", calls)
+        assert any(not sandbox.compare(r, o) for r, o in zip(reference, outputs)), site.description
+
+
+@pytest.mark.parametrize("operator, expected", [
+    ("guard_delete", 3),    # the raise, continue and break guards
+    ("arm_drop", 3),        # the leading arm and both elif arms; never the else
+    ("member_drop", 3),
+    ("condition_drop", 4),  # each side of the "and", and each side of the "or"
+    ("call_swap", 8),       # strip->lstrip/rstrip, lower, startswith, rsplit, any, floor, round
+    ("const_sibling", 8),   # 10<->3, and each of three strings to the other two
+])
+def test_realistic_operator_site_counts(operator, expected):
+    source, _ = REALISTIC[operator]
+    sites = mutation.enumerate_sites(source, [operator])
+    assert len(sites) == expected, [s.description for s in sites]
+
+
+def test_arm_drop_keeps_the_dispatch_well_formed():
+    source, _ = REALISTIC["arm_drop"]
+    mutants = [mutation.apply(source, [s]) for s in mutation.enumerate_sites(source, ["arm_drop"])]
+    assert any(m.splitlines()[1] == "    if score >= 80:" for m in mutants)  # leading arm dropped
+    assert all("else:" in m and m.count("return") == 3 for m in mutants)
+
+
+def test_member_drop_keeps_a_one_element_tuple_a_tuple():
+    sites = mutation.enumerate_sites("def f(m):\n    return m in ('a', 'b')\n", ["member_drop"])
+    assert sorted(s.replacement for s in sites) == ["('a',)", "('b',)"]
+
+
+def test_extra_condition_never_tests_a_called_name_or_builtin():
+    source = "def f(xs, k):\n    if len(xs) > k:\n        return 1\n    return 0\n"
+    replacements = [s.replacement for s in mutation.enumerate_sites(source, ["extra_condition"])]
+    assert sorted(replacements) == ["k and len(xs) > k", "xs and len(xs) > k"]
+
+
+def test_var_swap_only_uses_names_bound_on_every_path():
+    source = (
+        "def f(n):\n"
+        "    total = 0\n"
+        "    for i in range(n):\n"
+        "        total += i\n"
+        "    if n > 3:\n"
+        "        extra = n * 2\n"
+        "        total += extra\n"
+        "    return total\n"
+    )
+    swaps = {(s.lineno, s.original, s.replacement) for s in mutation.enumerate_sites(source, ["var_swap"])}
+    assert (8, "total", "i") not in swaps and (8, "total", "extra") not in swaps  # may be unbound there
+    assert (7, "extra", "total") in swaps and (8, "total", "n") in swaps
+    assert (4, "i", "total") in swaps and (4, "i", "n") in swaps
+
+
+def test_const_sibling_never_touches_docstrings_or_range_steps():
+    source = 'def f(n):\n    """Doc 7."""\n    return [x for x in range(0, n, 2)] + [9]\n'
+    sites = mutation.enumerate_sites(source, ["const_sibling"])
+    assert sites and all(s.lineno == 3 for s in sites)
+    assert not [s for s in sites if s.original == "2"]
+
+
+def test_realistic_sites_on_the_corpus_are_gated_and_never_unbound():
+    """Every realistic mutant of every corpus function passes the gate; no var_swap or extra_condition
+    reads a name that is unbound there (a comprehension or lambda variable outside its scope)."""
+    from qe_arena import corpus  # noqa: PLC0415
+
+    counts: Counter = Counter()
+    for name, item in corpus.ENTRIES.items():
+        sites = mutation.enumerate_sites(item.function_source, mutation.REALISTIC_OPERATORS)
+        counts.update(s.operator for s in sites)
+        for site in sites:
+            assert sandbox.static_gate(mutation.apply(item.function_source, [site])) == [], (name, site)
+        swaps = [s for s in sites if s.operator in ("var_swap", "extra_condition")]
+        if swaps:
+            inputs = corpus.gen_inputs(name, 0, 16)
+            for site in swaps:
+                outputs = sandbox.run_calls(mutation.apply(item.function_source, [site]), item.entry, inputs)
+                unbound = [o for o in outputs if o.kind == "exc" and o.value in ("NameError", "UnboundLocalError")]
+                assert not unbound, (name, site.description)
+    assert set(counts) == set(mutation.REALISTIC_OPERATORS), counts
+
+
+def test_bugfix_candidates_are_deterministic_and_lead_with_realistic_operators():
+    import random  # noqa: PLC0415
+
+    from qe_arena import corpus, tasks  # noqa: PLC0415
+
+    item = corpus.ENTRIES["glob_match"]
+    a = tasks._bugfix_sites(item.function_source, random.Random(4))
+    b = tasks._bugfix_sites(item.function_source, random.Random(4))
+    assert a == b and len(a) == tasks.BUGFIX_CANDIDATES
+    realistic = {s.operator for s in mutation.enumerate_sites(item.function_source)} & set(
+        mutation.REALISTIC_OPERATORS)
+    assert {s.operator for s in a[:len(realistic)]} == realistic
+    assert len({s.operator for s in a}) >= 8  # no operator crowds out the others
+
+
+def test_mutant_kill_candidates_stay_classic():
+    import random  # noqa: PLC0415
+
+    from qe_arena import tasks  # noqa: PLC0415
+
+    sites = tasks._candidate_sites(SAMPLE, random.Random(0))
+    assert {s.operator for s in sites} <= set(mutation.CLASSIC_OPERATORS)
+    assert len(sites) == len(mutation.enumerate_sites(SAMPLE, mutation.CLASSIC_OPERATORS))
+
+
+# --------------------------------------------------------------------------- rename_with / block_site
+
+def test_rename_locals_is_local_renaming_then_rename_with():
+    mapping = mutation.local_renaming(SAMPLE, random.Random(9))
+    assert mapping and mutation.rename_locals(SAMPLE, random.Random(9)) == mutation.rename_with(SAMPLE, mapping)
+    assert mutation.rename_with(SAMPLE, {}) == SAMPLE
+
+
+def test_rename_with_refuses_a_collision():
+    source = "def f(a):\n    b = a + 1\n    c = 2\n    return b + c\n"
+    with pytest.raises(ValueError, match="collides"):
+        mutation.rename_with(source, {"b": "c"})
+
+
+def test_block_site_spans_the_changed_lines_only():
+    a = "def f(x):\n    y = 1\n    z = 2\n    w = 3\n    return x\n"
+    b = "def f(x):\n    y = 9\n    z = 2\n    w = 8\n    return x\n"
+    site = mutation.block_site(a, b, "real", "demo")
+    assert (site.lineno, site.col, site.end_lineno, site.end_col) == (2, 0, 5, 0)
+    assert mutation.apply(a, [site]) == b
+    assert mutation.block_site(a, a, "real", "demo") is None
+    deletion = mutation.block_site(a, a.replace("    z = 2\n", ""), "real", "demo")
+    assert deletion.replacement == "" and mutation.apply(a, [deletion]) == a.replace("    z = 2\n", "")
+
+
+def test_call_swap_needs_a_known_receiver_and_changes_values():
+    source = (
+        "import re\n\n\n"
+        "def f(s, d, xs):\n"
+        "    parts = re.split(',', s, 1)\n"
+        "    keys = list(d.values())\n"
+        "    xs.append(len(parts))\n"
+        "    xs.append(parts)\n"
+        "    names = set(keys)\n"
+        "    names.discard(s)\n"
+        "    return [parts, keys, xs, s.upper()]\n"
+    )
+    swaps = {(s.original, s.replacement) for s in mutation.enumerate_sites(source, ["call_swap"])}
+    assert ("split", "rsplit") not in swaps  # re is a module: re.rsplit does not exist
+    assert not {("values", "keys"), ("discard", "remove")} & swaps  # these mostly kill by raising
+    assert ("append", "extend") in swaps and ("upper", "lower") in swaps
+    assert len([s for s in mutation.enumerate_sites(source, ["call_swap"]) if s.original == "append"]) == 1

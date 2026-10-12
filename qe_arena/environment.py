@@ -47,10 +47,11 @@ class QEObservation(Observation):
 class QEEnvironment(Environment[QEAction, QEObservation, State]):
     SUPPORTS_CONCURRENT_SESSIONS = True
 
-    def __init__(self, corpus_pool: tuple[str, ...] | None = None):
-        """``corpus_pool`` is for per-function calibration only; the server passes nothing."""
+    def __init__(self, corpus_pool: tuple[str, ...] | None = None, fault_kind: str | None = None):
+        """``corpus_pool`` and ``fault_kind`` are for calibration only; the server passes nothing."""
         super().__init__()
         self._pool = corpus_pool
+        self._fault_kind = fault_kind
         self._state = State(episode_id=str(uuid4()), step_count=0)
         self._task: Task | None = None
         self._files: dict[str, str] = {}
@@ -67,7 +68,8 @@ class QEEnvironment(Environment[QEAction, QEObservation, State]):
         task_id = kwargs.get("task_id", TASK_IDS[0])
         if seed is None:
             seed = secrets.randbelow(2**63)
-        self._task = make_task(task_id, seed, pool=self._pool)
+        kind = self._fault_kind if task_id.startswith("qe_bugfix") else None
+        self._task = make_task(task_id, seed, pool=self._pool, fault_kind=kind)
         self._files = dict(self._task.files)
         self._state = State(episode_id=episode_id or str(uuid4()), step_count=0)
         self._done, self._reward, self._test_runs = False, 0.0, 0

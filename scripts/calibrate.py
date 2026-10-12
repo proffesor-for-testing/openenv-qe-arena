@@ -54,11 +54,17 @@ class Budget:
             return self.used <= self.limit
 
 
+def is_hf_router(base_url: str) -> bool:
+    return "router.huggingface.co" in base_url
+
+
 def chat(args, token: str, messages: list[dict]) -> dict:
     payload = {
         "model": args.model, "messages": messages, "temperature": args.temperature,
         "max_tokens": args.max_tokens, "chat_template_kwargs": {"enable_thinking": args.thinking == "on"},
     }
+    if args.thinking == "off" and not is_hf_router(args.base_url):
+        payload["reasoning_effort"] = "none"  # Ollama ignores chat_template_kwargs; this turns thinking off
     request = urllib.request.Request(
         args.base_url.rstrip("/") + "/chat/completions", data=json.dumps(payload).encode(),
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
@@ -103,13 +109,15 @@ def observation_text(obs) -> str:
 
 def run_episode(args, token: str, budget: Budget, task_id: str, seed: int, attempt: int,
                 corpus_name: str | None = None) -> dict:
-    env = QEEnvironment(corpus_pool=(corpus_name,) if corpus_name else None)
+    env = QEEnvironment(corpus_pool=(corpus_name,) if corpus_name else None, fault_kind=args.fault_kind)
     started = time.time()
     obs = env.reset(seed=seed, task_id=task_id)
     schema = json.dumps(QEAction.model_json_schema(), separators=(",", ":"))
     messages = [{"role": "system", "content": SYSTEM + schema},
                 {"role": "user", "content": observation_text(obs)}]
     record = {"task_id": task_id, "seed": seed, "attempt": attempt, "corpus": env._task.private["corpus"],
+              "fault_kind": env._task.private.get("fault_kind"),
+              "faults": [f.get("operator") or f.get("id") for f in env._task.private.get("faults", [])],
               "steps": 0, "invalid": 0,
               "completion_tokens": 0, "prompt_tokens_last": 0, "end": "", "reward": 0.0}
     while True:
@@ -175,6 +183,8 @@ def main(argv=None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--each-corpus", action="store_true",
                         help="pin every episode group to one corpus function, for all functions (difficulty table)")
+    parser.add_argument("--fault-kind", choices=["injected", "real"], default=None,
+                        help="force the qe_bugfix fault source (default: the environment's own mix)")
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args(argv)
     tasks = args.task_id or TASK_IDS
@@ -189,7 +199,7 @@ def main(argv=None) -> int:
     if not args.execute:
         print("dry run; add --execute to call the model")
         return 0
-    token = hf_token()
+    token = hf_token() if is_hf_router(args.base_url) else os.environ.get("OPENAI_API_KEY", "local")
     budget = Budget(args.max_total_tokens)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     results, lock = [], Lock()
