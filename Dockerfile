@@ -8,6 +8,7 @@ COPY requirements.lock /app/requirements.lock
 RUN pip install --no-cache-dir -r /app/requirements.lock && useradd --uid 10001 --create-home arena
 COPY qe_arena /app/qe_arena
 COPY openenv.yaml /app/openenv.yaml
+COPY THIRD_PARTY_NOTICES /app/THIRD_PARTY_NOTICES
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 ENABLE_WEB_INTERFACE=false
 USER 10001
 EXPOSE 8000

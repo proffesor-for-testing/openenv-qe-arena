@@ -36,7 +36,8 @@ def play(task_id, seed, actions):
 def _fault_sites(task):
     """Resolve the exact injected sites by reproducing the buggy file."""
     p = task.private
-    candidates = [s for s in mutation.enumerate_sites(p["original"]) if s.description in p["sites"]]
+    pool = dict.fromkeys([*mutation.enumerate_sites(p["original"]), *p["fault_sites"]])  # real faults too
+    candidates = [s for s in pool if s.description in p["sites"]]
     for combo in itertools.combinations(candidates, len(p["sites"])):
         try:
             if mutation.apply(p["original"], list(combo)) == p["buggy"]:
@@ -67,12 +68,15 @@ def test_d1_special_casing_the_reported_input_earns_zero(seed):
     p = task.private
     reported = p["report_args"]
     [ref] = sandbox.run_calls(p["original"], p["entry"], [reported])
-    if ref.kind != "ok":
-        pytest.skip("reported call raises; a value table cannot express it")
+    assert ref.kind in ("ok", "exc")
+    # Exceptions compare by type name, so a raising reference is special-cased by raising the same type.
+    answer = f"return {ref.value!r}" if ref.kind == "ok" else f"raise {ref.value}('special-cased')"
     renamed = p["buggy"].replace(f"def {p['entry']}(", "def impl_buggy(", 1)
-    wrapper = (f"{renamed}\n\nREPORTED = {reported!r}\nANSWER = {ref.value!r}\n\n"
-               f"def {p['entry']}(*args):\n    if list(args) == REPORTED:\n        return ANSWER\n"
+    wrapper = (f"{renamed}\n\nREPORTED = {reported!r}\n\n"
+               f"def {p['entry']}(*args):\n    if list(args) == REPORTED:\n        {answer}\n"
                f"    return impl_buggy(*args)\n")
+    [special] = sandbox.run_calls(wrapper, p["entry"], [reported])
+    assert sandbox.compare(ref, special)  # the wrapper really answers the reported call correctly
     assert tasks.grade_bugfix(task, wrapper) == 0.0
 
 
@@ -119,7 +123,8 @@ def test_huge_integer_expected_scores_without_crashing():
 def test_surrogate_in_an_edit_is_rejected_not_raised():
     env = QEEnvironment()
     env.reset(seed=0, task_id="qe_bugfix-d1")
-    obs = env.step(QEAction(op="edit", path=MODULE, old="def ", new="#\ud800\ndef "))
+    entry = make_task("qe_bugfix-d1", 0).private["entry"]  # a module may also define helpers
+    obs = env.step(QEAction(op="edit", path=MODULE, old=f"def {entry}(", new=f"#\ud800\ndef {entry}("))
     assert "UTF-8" in obs.error and not obs.done
 
 

@@ -93,7 +93,9 @@ def test_bugfix_leaving_any_single_fault_unfixed_earns_zero(task_id):
     task = make_task(task_id, 21)
     original = task.private["original"]
     # Descriptions omit the column and can repeat on one line, so recover the exact sites by reproducing the file.
-    candidates = [s for s in mutation.enumerate_sites(original) if s.description in task.private["sites"]]
+    # Real faults are recorded sites, not operator sites: include the recorded ones.
+    pool = dict.fromkeys([*mutation.enumerate_sites(original), *task.private["fault_sites"]])
+    candidates = [s for s in pool if s.description in task.private["sites"]]
     sites = None
     for combo in itertools.combinations(candidates, len(task.private["sites"])):
         try:
