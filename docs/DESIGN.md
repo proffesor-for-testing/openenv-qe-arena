@@ -118,7 +118,15 @@ The oracle never runs in the same process as model-influenced code, and no code 
      modules that carry an audited list of names. Expected values never enter the worker or the guest.
      Python-level `sys.stdout`/`sys.stderr` discard everything (only the harness writes fd 1, with
      `os.write`), so `re.DEBUG`'s parse-tree printout or a warning cannot break the protocol. The gate also
-     refuses a literal `re.DEBUG` flag.
+     refuses a literal `re.DEBUG` flag, and the `re` proxy clears that bit from any flags value.
+   - **Why the nonce is not the barrier.** Harness and candidate share one interpreter, and stock
+     `python.wasm` has no host import that Python code can call. So anything the harness can say to the
+     host, a candidate holding a writer could say too, nonce included: a red-team run with the gate
+     deliberately bypassed forged a protocol-valid stream. The barrier is that no writer exists: `os`/`sys`
+     are unreachable, there is no string-driven attribute lookup, stdout is discarded, and `re` cannot print.
+     What a forged stream could add is also nothing beyond `return`: a value the candidate chose, or the name
+     of an exception it could raise. The nonce and the strict marker order only make accidental output fail
+     closed.
    - **Candidate code only ever runs on its call's fuel.** The result row is built before the end marker:
      the exception's `str()` (an instance can override what it calls), normalizing and serializing the
      value, and dropping the call's objects (a generator's `finally:` runs there). The red team finished a
@@ -236,7 +244,7 @@ The oracle never runs in the same process as model-influenced code, and no code 
      checks at startup. The Docker builder stage runs it. Both base images are pinned by digest, and wasmtime
      installs with `--require-hashes` (`requirements-wasmtime.lock`).
    - `scripts/fingerprint.py` hashes kind, value and fuel for every corpus function on 64 inputs (2,560
-     calls). `tests/test_sandbox.py` pins the result, currently `301caf2f1ee2a77f` with 194,606,462 total fuel,
+     calls). `tests/test_sandbox.py` pins the result, currently `02b78a39267076c5` with 197,806,563 total fuel,
      identical on arm64 macOS, an amd64 Linux host and the amd64 image run with the arena flags. The commit that
      changes the pin says why.
    - Regenerate the pin only when the runtime, the guest harness, the budgets, `SAFE_EXPORTS` or the corpus

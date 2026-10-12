@@ -229,3 +229,38 @@ def test_each_environment_grades_under_its_own_session(monkeypatch):
         env.step(QEAction(op="run_tests"))
     keys = {env._sandbox_session for env in envs}
     assert len(keys) == 2 and set(seen) == keys and sandbox._SESSION.get() is None
+
+
+# Red-team addendum: a leaked nonce plus any writer could forge a protocol-valid stream. In this guest the
+# harness and the candidate share one interpreter, so the barrier is that no writer exists: the gate keeps
+# os/sys unreachable, Python-level stdout is discarded, and re cannot be asked for debug output.
+FORGE_VIA_RE_DEBUG = ("import re\n"
+                      "def f(x):\n"
+                      "    box = []\n"
+                      "    def g():\n"
+                      "        yield '{0.gi_frame.f_back.f_back.f_locals[nonce]}'.format(box[0])\n"
+                      "    box.append(g())\n"
+                      "    n = next(box[0])[2:-1]\n"
+                      "    forged = '\\n\\x01E ' + n + '\\n\\x01R ' + n + ' {\"k\": \"ok\", \"v\": 4242}\\n\\x01B ' + n + '\\n'\n"
+                      "    re.compile(forged + 'zz', 128)\n"
+                      "    return x\n")
+
+
+def test_a_leaked_nonce_cannot_forge_through_re_debug():
+    assert sandbox.static_gate(FORGE_VIA_RE_DEBUG)
+    rows = sandbox.run_calls(FORGE_VIA_RE_DEBUG, "f", [[0], [1]], _skip_gate=True)
+    assert not any(r.value == 4242 for r in rows)
+
+
+def test_the_re_proxy_clears_the_debug_flag_whatever_its_spelling():
+    src = ("import re\ndef f(x):\n"
+           "    p = re.compile('a+b', re.I | (64 * 2))\n"
+           "    return [p.flags & 128, re.findall('a', 'AaA', flags=re.I | (64 * 2)), re.sub('a', 'b', 'aA', 0, 2 | 64 * 2)]\n")
+    [r] = sandbox.run_calls(src, "f", [[0]])
+    assert r.value == [0, ["A", "a", "A"], "bb"]
+
+
+def test_the_escape_used_to_forge_streams_is_refused_by_the_gate():
+    forge = ("import typing\nSYS = typing.List.__class__.__init__.__globals__['sys']\n"
+             "def f(*a):\n    SYS.modules['os'].write(1, b'x')\n")
+    assert sandbox.static_gate(forge)

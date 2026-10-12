@@ -48,6 +48,21 @@ def _setup():
             if hasattr(real[name], attr):
                 setattr(proxy, attr, getattr(real[name], attr))
         proxies[name] = proxy
+    if "re" in proxies:
+        # re.DEBUG (128) prints the parse tree. Stdout is discarded and the gate refuses a literal flag;
+        # the proxy also clears the bit, so no flags value reaching re can ask for debug output.
+        positions = {"compile": 1, "search": 2, "match": 2, "fullmatch": 2, "findall": 2, "finditer": 2,
+                     "split": 3, "sub": 4, "subn": 4}
+        wrap_ns = {"__builtins__": {"len": len}, "_re": real["re"], "_KEEP": ~128}
+        exec("def _strip(a, k, at):\n"
+             "    if 'flags' in k:\n        k['flags'] = k['flags'] & _KEEP\n"
+             "    if len(a) > at:\n        a = a[:at] + (a[at] & _KEEP,) + a[at + 1:]\n"
+             "    return a, k\n"
+             + "".join(f"def {name}(*a, **k):\n    a, k = _strip(a, k, {at})\n    return _re.{name}(*a, **k)\n"
+                       for name, at in positions.items()), wrap_ns)
+        for name in positions:
+            if hasattr(proxies["re"], name):
+                setattr(proxies["re"], name, wrap_ns[name])
     helper_ns = {"__builtins__": {"ImportError": ImportError, "repr": repr, "type": type, "str": str},
                  "_M": proxies}
     exec("def __import__(name, globals=None, locals=None, fromlist=(), level=0):\n"
