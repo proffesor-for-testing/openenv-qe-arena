@@ -32,7 +32,7 @@ CORPUS = ROOT / "qe_arena" / "corpus"
 
 # Cross-host golden: identical on arm64 macOS, amd64 Linux and the amd64 arena image. Regenerate only
 # when the runtime, guest harness, budgets, SAFE_EXPORTS or corpus change, and say why in the commit.
-CORPUS_FINGERPRINT = ("eb43ccdc9b4a0149", 77_667_303, 2560)
+CORPUS_FINGERPRINT = ("4f7c468dbcc5d9ce", 64_394_962, 2560)
 
 
 def ok(value):
@@ -330,7 +330,8 @@ def test_string_annotations_are_never_evaluated():
     src = ("import typing\n"
            "def g(x: 'f.__globals__'):\n    return x\n"
            "def f(n):\n    return [g(n), typing.List['os.system'] is not None]\n")
-    [r] = run_calls(src, "f", [[5]])
+    assert static_gate(src) == ["string literal mentions '__'"]
+    [r] = run_calls(src, "f", [[5]], _skip_gate=True)  # and the runtime never evaluates them either
     assert (r.kind, r.value) == ("ok", [5, True])
 
 
@@ -558,6 +559,79 @@ def test_corpus_files_pass_the_gate(path):
     assert static_gate(path.read_text()) == []
 
 
+# --------------------------------------------------------------------------- traversal (Codex review P1)
+
+NONCE_LEAK = ("def f():\n    try:\n        1 / 0\n    except Exception as e:\n"
+              "        return '{0.__traceback__.tb_frame.f_back.f_locals[nonce]}'.format(e)\n")
+CALLS_LEAK = ("def f():\n    try:\n        1 / 0\n    except Exception as e:\n"
+              "        return '{0.__traceback__.tb_frame.f_back.f_locals[req][calls]}'.format(e)\n")
+TYPING_LEAK = "import typing\ndef f():\n    return '{0.__class__.__init__.__globals__[sys].version}'.format(typing.List)\n"
+
+
+@pytest.mark.parametrize("src", [NONCE_LEAK, CALLS_LEAK, TYPING_LEAK])
+def test_format_traversal_reproductions_are_rejected(src):
+    assert static_gate(src)
+    assert kinds(run_calls(src, "f", [[]])) == ["rejected"]
+
+
+@pytest.mark.parametrize("src", [
+    "def f(g):\n    s = '{0.' + 'gi_' + 'frame}'\n    return s.format(g)\n",   # built at runtime
+    "def f(g):\n    return str.format('{0}', g)\n",                           # unbound method
+    "def f(x):\n    return '{0.real}'.format(x)\n",                           # attribute field
+    "def f(x):\n    return '{0[0]}'.format(x)\n",                             # index field
+    "def f(x, w):\n    return '{0:{1.real}}'.format(x, w)\n",                 # nested spec field
+    "def f(x):\n    return '{'.format(x)\n",                                  # malformed
+    "def f(x):\n    h = format\n    return h(x, '>3')\n",                    # format passed around
+    "def f(x, s):\n    return format(x, s)\n",                                # non-literal spec
+    "def f():\n    return 'tb_frame'\n",                                      # traversal names in literals
+    "def f():\n    return '{0.f_code}'\n",
+    "def f():\n    return {'f_locals': 1}\n",
+    "def f(d):\n    return d['__builtins__']\n",
+])
+def test_static_gate_rejects_runtime_traversal_routes(src):
+    assert static_gate(src), src
+
+
+def test_ordinary_formatting_still_works():
+    src = ("def f(x, w):\n"
+           "    return ['{:.2f}'.format(x), '{0}-{1}'.format(w, w), '{name}!'.format(name=w), f'{x:>{w}}',\n"
+           "            format(x, '>8.3f'), format(w), '%s/%d' % (x, w), '{0:{1}}'.format(x, w), f'{w!r}']\n")
+    assert static_gate(src) == []
+    [r] = run_calls(src, "f", [[3.14159, 6]])
+    assert r.value == ["3.14", "6-6", "6!", "3.14159", "   3.142", "6", "3.14159/6", "3.14159", "6"]
+
+
+def test_frames_above_candidate_code_hold_no_nonce_or_pending_inputs(monkeypatch):
+    # Even with the gate switched off, the frames above a call and the sys module must not hold the
+    # nonce, the request or inputs that have not been passed yet.
+    nonce = "feedface" * 4
+    real = sandbox.secrets.token_hex
+    monkeypatch.setattr(sandbox.secrets, "token_hex", lambda n: nonce if n == 16 else real(n))
+    src = ("import typing\n"
+           "def f(x):\n"
+           "    try:\n        1 / 0\n"
+           "    except Exception as e:\n        frame = e.__traceback__.tb_frame\n"
+           "    seen = []\n"
+           "    while frame is not None:\n"
+           "        seen.append(repr(frame.f_locals))\n        seen.append(repr(frame.f_globals))\n"
+           "        frame = frame.f_back\n"
+           "    sys = typing.List.__class__.__init__.__globals__['sys']\n"
+           "    return [len(seen), ' '.join(seen), sys.argv, sys.orig_argv]\n")
+    results = run_calls(src, "f", [[1], ["SENTINEL-PENDING-INPUT"]], _skip_gate=True)
+    assert results[0].kind == "ok", results[0]
+    entries, dump, argv, orig_argv = results[0].value
+    assert entries == 2 * 4  # four frames inspected: candidate, run closure, launcher lambda, root
+    assert nonce not in dump and "SENTINEL-PENDING-INPUT" not in dump and "max_total_bytes" not in dump
+    assert argv == ["python"] and orig_argv == []
+
+
+def test_root_frame_globals_are_cleared(monkeypatch):
+    src = ("def f():\n    try:\n        1 / 0\n    except Exception as e:\n        frame = e.__traceback__.tb_frame\n"
+           "    while frame.f_back is not None:\n        frame = frame.f_back\n"
+           "    return sorted(frame.f_globals)\n")
+    assert run_calls(src, "f", [[]], _skip_gate=True)[0].value == []
+
+
 # --------------------------------------------------------------------------- runtime layer alone
 
 def test_restricted_builtins_block_open_and_import_without_the_gate():
@@ -601,18 +675,19 @@ def test_update_wrapper_globals_merge_escape_is_closed():
            "def f(x):\n"
            "    functools.update_wrapper(w, statistics.mean, assigned=(), updated=('_' + '_globals__',))\n"
            "    return sys.modules['os'].getcwd()\n")
-    [r] = run_calls(src, "f", [[0]])
+    assert static_gate(src)  # the '_' + '_globals__' literal is refused now
+    [r] = run_calls(src, "f", [[0]], _skip_gate=True)  # and the proxy lacks update_wrapper anyway
     assert (r.kind, r.value) == ("exc", "AttributeError")
 
 
-def test_str_format_traversal_yields_only_strings():
-    # str.format can walk attributes at runtime; it can only ever produce text.
+def test_str_format_traversal_is_rejected():
+    # Formerly an accepted residual risk ("only yields strings"); the Codex review showed it reads the
+    # nonce, the batch inputs and module globals, so the gate now refuses it.
     src = ("def f(x):\n"
            "    def g():\n        yield 1\n"
            "    gen = g()\n"
            "    return '{0.gi_frame}'.format(gen)[:6]\n")
-    [r] = run_calls(src, "f", [[0]])
-    assert r.kind == "ok" and isinstance(r.value, str)
+    assert kinds(run_calls(src, "f", [[0]])) == ["rejected"]
 
 
 # --------------------------------------------------------------------------- result channel

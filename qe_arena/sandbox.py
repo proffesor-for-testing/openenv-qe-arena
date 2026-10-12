@@ -30,6 +30,8 @@ from __future__ import annotations
 import ast
 import atexit
 import json
+import re
+import string
 import math
 import os
 import secrets
@@ -117,6 +119,14 @@ DENIED_ATTRS = frozenset({"mro", "format_map", "get_field", "vformat", "convert_
                           "get_value", "with_traceback", "attrgetter", "methodcaller", "get_type_hints",
                           "get_args", "get_origin", "evaluate", "evaluate_forward_ref", "evaluate_bound",
                           "evaluate_constraints", "evaluate_default"})
+# str.format resolves "{0.attr}" and "{0[key]}" at runtime, outside the AST checks, and reaches frames
+# and module globals through dunders ("{0.__traceback__.tb_frame.f_back.f_locals}"). So a string
+# literal may not mention a traversal name, .format needs a literal receiver whose fields are plain
+# positions or names, and format() needs a literal spec.
+TRAVERSAL_TOKENS = ("__", "tb_frame", "tb_next", "f_back", "f_locals", "f_globals", "f_builtins", "f_code",
+                    "gi_frame", "gi_code", "cr_frame", "cr_code", "ag_frame", "ag_code")
+# "__" anywhere; the frame attribute names as whole words, so "lines_of_code" in a docstring is fine
+_TRAVERSAL_RE = re.compile(r"__|(?<![A-Za-z0-9])(?:" + "|".join(TRAVERSAL_TOKENS[1:]) + r")(?![A-Za-z0-9_])")
 REJECTED_NODES = {
     ast.ClassDef: "class definitions are not allowed",
     ast.Global: "global statements are not allowed",
@@ -171,6 +181,48 @@ def _ast_depth(tree: ast.AST) -> int:
     return deepest
 
 
+def _format_fields(template: str) -> list[str]:
+    """Field names in a format template, nested specs included; raises ValueError if malformed."""
+    names = []
+    for _, field, spec, _ in string.Formatter().parse(template):
+        if field is not None:
+            names.append(field)
+        if spec:
+            names.extend(_format_fields(spec))
+    return names
+
+
+def _check_formatting(tree: ast.AST) -> list[str]:
+    problems = []
+    allowed_format_names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            found = _TRAVERSAL_RE.search(node.value)
+            if found:
+                problems.append(f"string literal mentions {found.group(0)!r}")
+        elif isinstance(node, ast.Attribute) and node.attr == "format":
+            receiver = node.value
+            if not (isinstance(receiver, ast.Constant) and isinstance(receiver.value, str)):
+                problems.append(".format needs a string literal receiver")
+                continue
+            try:
+                fields = _format_fields(receiver.value)
+            except ValueError:
+                problems.append("malformed format string")
+                continue
+            if any("." in f or "[" in f for f in fields):
+                problems.append("format fields may not use attribute or index lookups")
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "format":
+            spec_ok = len(node.args) == 1 or (
+                len(node.args) == 2 and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str))
+            if spec_ok and not node.keywords:
+                allowed_format_names.add(node.func)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id == "format" and node not in allowed_format_names:
+            problems.append("format() needs a string literal spec and may not be passed around")
+    return problems
+
+
 def _check_node(node: ast.AST) -> list[str]:
     problems = []
     for node_type, message in REJECTED_NODES.items():
@@ -221,10 +273,9 @@ def static_gate(source: str) -> list[str]:
     if _ast_depth(tree) > MAX_AST_DEPTH:
         return [f"syntax tree deeper than {MAX_AST_DEPTH}"]
     problems: list[str] = []
-    for node in ast.walk(tree):
-        for problem in _check_node(node):
-            if problem not in problems:
-                problems.append(problem)
+    for problem in [p for node in ast.walk(tree) for p in _check_node(node)] + _check_formatting(tree):
+        if problem not in problems:
+            problems.append(problem)
     return problems
 
 

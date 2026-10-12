@@ -7,27 +7,38 @@
 #   \x01B <nonce>\n          a call starts      -> host sets fuel to this call's budget
 #   \x01E <nonce>\n          that call ended    -> host records fuel used, refuels the harness
 #   \x01R <nonce> <json>\n   that call's result row
-import builtins, copy, json, os, sys, types
+#
+# Frame hygiene: candidate code runs below exactly two frames, the closure returned by _setup()
+# and the root module frame, whose globals are cleared before the closure runs. The closure's
+# variables are the candidate's own namespace plus opaque objects: the nonce exists only inside
+# itertools.cycle objects (no attribute or repr exposes their contents) and the pending inputs only
+# inside a list iterator. The request, sys.argv and sys.orig_argv are gone by then.
+import builtins, copy, itertools, json, os, sys, types
 
 
-def _main():
+def _setup():
     req = json.loads(sys.argv[1])
     sys.argv[:] = ["python"]
-    nonce = req["nonce"].encode("ascii")
-    begin, end, row_head = b"\x01B " + nonce + b"\n", b"\x01E " + nonce + b"\n", b"\x01R " + nonce + b" "
+    sys.orig_argv[:] = []
+    nonce = req.pop("nonce").encode("ascii")
+    begin = itertools.cycle((b"\x01B " + nonce + b"\n",))
+    end = itertools.cycle((b"\x01E " + nonce + b"\n",))
+    head = itertools.cycle((b"\x01R " + nonce + b" ",))
+    del nonce
+    write, dumps, deepcopy = os.write, json.dumps, copy.deepcopy
 
-    def w(data):
-        view = memoryview(data)
+    def emit(marker, payload=b""):
+        view = memoryview(next(marker) + payload)
         while view:
-            view = view[os.write(1, view):]
+            view = view[write(1, view):]
 
     def row(obj):
-        w(row_head + json.dumps(obj, allow_nan=True).encode("utf-8", "surrogatepass") + b"\n")
+        emit(head, dumps(obj, allow_nan=True).encode("utf-8", "surrogatepass") + b"\n")
 
     real = {name: __import__(name) for name in req["modules"]}
     if req.get("probe"):
         row(_probe(req["probe"], real, req["modules"]))
-        return
+        return None
     proxies = {}
     for name, exports in req["modules"].items():
         proxy = types.ModuleType("_arena_safe_" + name)
@@ -46,6 +57,7 @@ def _main():
     safe = {name: getattr(builtins, name) for name in req["builtins"]}
     safe["__import__"] = helper_ns["__import__"]
     safe["print"] = helper_ns["print"]
+    del real, proxies, helper_ns
 
     def describe(exc):
         try:
@@ -78,52 +90,60 @@ def _main():
             return {"k": "resource", "e": "memory: " + describe(exc)}
         return {"k": "exc", "v": type(exc).__name__, "e": describe(exc)}
 
-    ns = {"__builtins__": safe, "__name__": "candidate"}
-    w(begin)  # the module body is metered with the module budget
-    try:
-        exec(compile(req["source"], "<candidate>", "exec"), ns)
-        module_err = None
-    except BaseException as exc:
-        module_err = exc
-    w(end)
-    if module_err is not None:
-        if isinstance(module_err, MemoryError):
-            row({"k": "resource", "e": "module: " + describe(module_err)})
-        else:
-            row({"k": "crash", "e": "module: " + describe(module_err)})
-        return
-    fn = ns.get(req["entry"])
-    if not callable(fn):
-        row({"k": "crash", "e": "entry " + repr(req["entry"]) + " is not a function"})
-        return
-    row({"k": "ok"})
-    total = 0
-    for call in req["calls"][req["start"]:]:
-        args = copy.deepcopy(call)
-        w(begin)
+    source, entry = req["source"], req["entry"]
+    calls = iter(req["calls"][req["start"]:])
+    max_value, max_total = req["max_value_bytes"], req["max_total_bytes"]
+    del req
+
+    def run():
+        ns = {"__builtins__": safe, "__name__": "candidate"}
+        emit(begin)  # the module body is metered with the module budget
         try:
-            value = fn(*args)
-            err = None
+            exec(compile(source, "<candidate>", "exec"), ns)
+            module_err = None
         except BaseException as exc:
-            err = exc
-        w(end)
-        if err is not None:
-            row(classify(err))
-            continue
-        try:
-            value = normalize(value, 0, [0])
-            size = len(json.dumps(value, allow_nan=True))
-        except MemoryError:
-            row({"k": "resource", "e": "memory: result"})
-            continue
-        except (ValueError, RecursionError, TypeError):
-            row({"k": "crash", "e": "unserializable"})
-            continue
-        if size > req["max_value_bytes"] or total + size > req["max_total_bytes"]:
-            row({"k": "crash", "e": "output too large"})
-            continue
-        total += size
-        row({"k": "ok", "v": value})
+            module_err = exc
+        emit(end)
+        if module_err is not None:
+            kind = "resource" if isinstance(module_err, MemoryError) else "crash"
+            row({"k": kind, "e": "module: " + describe(module_err)})
+            return
+        fn = ns.get(entry)
+        if not callable(fn):
+            row({"k": "crash", "e": "entry " + repr(entry) + " is not a function"})
+            return
+        row({"k": "ok"})
+        total = 0
+        for call in calls:
+            args = deepcopy(call)
+            del call
+            write(1, next(begin))  # one write: the host's fd_write always takes the whole marker
+            try:
+                value = fn(*args)
+                err = None
+            except BaseException as exc:
+                err = exc
+            write(1, next(end))
+            if err is not None:
+                row(classify(err))
+                err = None
+                continue
+            try:
+                value = normalize(value, 0, [0])
+                size = len(dumps(value, allow_nan=True))
+            except MemoryError:
+                row({"k": "resource", "e": "memory: result"})
+                continue
+            except (ValueError, RecursionError, TypeError):
+                row({"k": "crash", "e": "unserializable"})
+                continue
+            if size > max_value or total + size > max_total:
+                row({"k": "crash", "e": "output too large"})
+                continue
+            total += size
+            row({"k": "ok", "v": value})
+
+    return run
 
 
 def _probe(kind, real, modules):
@@ -199,4 +219,6 @@ def _reach(real, modules):
 
 
 if __name__ == "__main__":
-    _main()
+    # The root frame is the candidate's outermost ancestor: clear its globals, then run. The closure
+    # travels as an argument, so nothing in the module namespace survives.
+    (lambda run: (globals().clear(), run is not None and run()))(_setup())
