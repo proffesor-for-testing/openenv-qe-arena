@@ -376,6 +376,50 @@ def test_concurrent_batches_from_threads_do_not_interfere():
     assert out == {i: [3 * i, 3 * i + 3] for i in range(8)}
 
 
+def _cgroup(tmp_path, **files):
+    for name, text in files.items():
+        path = tmp_path / name.replace("__", "/")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    return tmp_path
+
+
+@pytest.mark.parametrize("files, expected", [
+    ({"cpu.max": "200000 100000\n"}, 2),          # docker run --cpus=2 on cgroup v2
+    ({"cpu.max": "150000 100000\n"}, 2),          # fractional quota rounds up
+    ({"cpu.max": "50000 100000\n"}, 1),           # never below one worker
+    ({"cpu.max": "1600000 100000\n"}, 4),         # never above MAX_WORKERS
+    ({"cpu.max": "300000\n"}, 3),                 # period omitted: the kernel default 100000
+    ({"cpu__cpu.cfs_quota_us": "100000\n", "cpu__cpu.cfs_period_us": "100000\n"}, 1),  # cgroup v1
+])
+def test_worker_count_follows_the_cgroup_quota(tmp_path, files, expected):
+    assert sandbox.detect_workers(_cgroup(tmp_path, **files)) == expected
+
+
+@pytest.mark.parametrize("files", [{"cpu.max": "max 100000\n"}, {}, {"cpu.max": "garbage\n"},
+                                   {"cpu__cpu.cfs_quota_us": "-1\n", "cpu__cpu.cfs_period_us": "100000\n"}])
+def test_unlimited_or_unreadable_cgroup_falls_back_to_visible_cpus(tmp_path, files, monkeypatch):
+    monkeypatch.setattr(sandbox.os, "sched_getaffinity", lambda pid: {0, 1, 2}, raising=False)
+    assert sandbox.detect_workers(_cgroup(tmp_path, **files)) == 3
+    monkeypatch.delattr(sandbox.os, "sched_getaffinity", raising=False)
+    monkeypatch.setattr(sandbox.os, "cpu_count", lambda: 16)
+    assert sandbox.detect_workers(_cgroup(tmp_path, **files)) == sandbox.MAX_WORKERS
+    monkeypatch.setattr(sandbox.os, "cpu_count", lambda: None)
+    assert sandbox.detect_workers(_cgroup(tmp_path, **files)) == 1
+
+
+def test_worker_count_override(monkeypatch):
+    monkeypatch.setenv("QE_ARENA_WASI_WORKERS", "7")
+    assert sandbox._pool_size() == 7  # an explicit override is not capped
+    monkeypatch.setenv("QE_ARENA_WASI_WORKERS", "0")
+    assert sandbox._pool_size() == 1
+    monkeypatch.setenv("QE_ARENA_WASI_WORKERS", "lots")
+    monkeypatch.setattr(sandbox, "_DETECTED", [3])
+    assert sandbox._pool_size() == 3
+    monkeypatch.delenv("QE_ARENA_WASI_WORKERS")
+    assert sandbox._pool_size() == 3
+
+
 def test_a_dead_worker_is_replaced_and_the_batch_retried():
     worker = sandbox._acquire()
     worker.proc.kill()

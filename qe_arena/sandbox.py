@@ -302,11 +302,55 @@ class _Worker:
                 pass
 
 
-def _pool_size() -> int:
+MAX_WORKERS = 4
+CGROUP_ROOT = Path("/sys/fs/cgroup")
+
+
+def detect_workers(cgroup_root: Path = CGROUP_ROOT) -> int:
+    """One worker per CPU the container may actually use, between 1 and MAX_WORKERS.
+
+    ``docker run --cpus=2`` sets a CFS quota but leaves every host CPU visible, so os.cpu_count()
+    and the affinity mask say 16 on ruos. Read the quota first: cgroup v2 ``cpu.max`` ("max 100000"
+    or "200000 100000"), then cgroup v1 ``cpu.cfs_quota_us``/``cpu.cfs_period_us``, then the
+    affinity mask, then os.cpu_count(). A fractional quota rounds up.
+    """
+    cpus = None
     try:
-        return max(1, int(os.environ.get("QE_ARENA_WASI_WORKERS", "2")))
-    except ValueError:
-        return 2
+        fields = (cgroup_root / "cpu.max").read_text().split()
+        if fields and fields[0] != "max":
+            cpus = int(fields[0]) / int(fields[1] if len(fields) > 1 else 100_000)
+    except (OSError, ValueError, ZeroDivisionError):
+        pass
+    if cpus is None:
+        try:
+            quota = int((cgroup_root / "cpu" / "cpu.cfs_quota_us").read_text())
+            period = int((cgroup_root / "cpu" / "cpu.cfs_period_us").read_text())
+            if quota > 0 and period > 0:
+                cpus = quota / period
+        except (OSError, ValueError):
+            pass
+    if cpus is None:
+        try:
+            cpus = len(os.sched_getaffinity(0))
+        except (AttributeError, OSError):
+            cpus = os.cpu_count() or 1
+    return min(MAX_WORKERS, max(1, math.ceil(cpus)))
+
+
+_DETECTED: list[int] = []
+
+
+def _pool_size() -> int:
+    """QE_ARENA_WASI_WORKERS overrides (at least 1); otherwise ``detect_workers()``, read once."""
+    override = os.environ.get("QE_ARENA_WASI_WORKERS")
+    if override:
+        try:
+            return max(1, int(override))
+        except ValueError:
+            pass
+    if not _DETECTED:
+        _DETECTED.append(detect_workers())
+    return _DETECTED[0]
 
 
 _POOL = threading.Condition()
