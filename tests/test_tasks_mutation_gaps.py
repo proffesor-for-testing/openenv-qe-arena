@@ -17,7 +17,8 @@ CR = sandbox.CallResult
 def test_generation_constants_are_pinned_literals():
     # Kills FAULTS / MIN_SUBTLE / MIN_REVEALING_D1 / MAX_SHOWN / HIDDEN_INPUTS off-by-ones that the generator
     # contract tests read back symbolically (tests compare with tasks.MIN_REVEALING_D1 itself).
-    assert tasks.FAULTS == {1: 1, 2: 2, 3: 3} and tasks.MIN_SUBTLE == {1: 0, 2: 1, 3: 2}
+    assert tasks.FAULTS == {1: 1, 2: 2, 3: 3, 4: 3} and tasks.MIN_SUBTLE == {1: 0, 2: 1, 3: 2, 4: 2}
+    assert tasks.LEVELS == {"qe_bugfix": (1, 2, 3, 4), "qe_mutant_kill": (1, 2, 3), "qe_flaky": (1, 2, 3)}
     assert tasks.MIN_REVEALING_D1 == 3 and tasks.MAX_SHOWN == 200 and tasks.HIDDEN_INPUTS == 48
     assert tasks.RESOURCE_EXCEPTIONS == ("MemoryError", "RecursionError")
 
