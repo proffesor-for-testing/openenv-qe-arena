@@ -284,51 +284,47 @@ def _row(kind: str, value: Any = None, error: str = "", fuel: int = 0) -> dict:
 
 
 def run_batch(runtime: Runtime, req: dict) -> list[dict]:
-    """Run every call; a trap inside call k ends that call and the batch resumes at k + 1 in a fresh
-    instance, so one looping input never voids the others."""
+    """Run every call in one instance, in order.
+
+    A trap (fuel, wasm stack, any other trap) ends the instance. The call it interrupted gets that
+    outcome and every later call is ``skipped``: there is no reconstructed state to run them on, so
+    their results would depend on which earlier calls trapped. Callers that need independent
+    results put calls in separate batches (grade_mutant_kill does).
+    """
     calls = req["calls"]
     n = len(calls)
-    budgets = [int(req["fuel"])] * n
-    results: list[dict | None] = [None] * n
-    start = 0
-    while start < n:
-        guest_req = {key: req[key] for key in ("source", "entry", "calls", "nonce", "modules", "builtins",
-                                                "max_value_bytes", "max_total_bytes")}
-        guest_req["start"] = start
-        inst = runtime.instance(guest_req, [int(req["module_fuel"])] + budgets[start:], int(req["mem_mb"]))
-        proto = inst.protocol
-        if inst.status == "protocol":
-            return [_row("crash", None, f"sandbox protocol: {inst.detail}")] * n
-        if not proto.rows:  # died in startup or inside the module body
-            if inst.status == "fuel" and proto.slot == 0 and proto.in_call:
-                return [_row("fuel", None, "module body: fuel budget exhausted", proto.budget_now)] * n
-            kind = inst.status if inst.status in ("infra", "resource") else "crash"
-            return [_row(kind, None, f"module: {inst.status} {inst.detail}".strip())] * n
-        head, rows = proto.rows[0], proto.rows[1:]
-        if head.get("k") != "ok":
-            kind = "resource" if head.get("k") == "resource" else "crash"
-            return [_row(kind, None, str(head.get("e", ""))[:200])] * n
-        for j, r in enumerate(rows):
-            used = proto.used[j + 1] if j + 1 < len(proto.used) else 0
-            kind = r.get("k")
-            results[start + j] = _row(kind, r.get("v") if kind in ("ok", "exc") else None,
-                                      str(r.get("e", ""))[:200], used)
-        done = start + len(rows)
-        if done >= n:
-            break
+    guest_req = {key: req[key] for key in ("source", "entry", "calls", "nonce", "modules", "builtins",
+                                            "max_value_bytes", "max_total_bytes")}
+    inst = runtime.instance(guest_req, [int(req["module_fuel"])] + [int(req["fuel"])] * n, int(req["mem_mb"]))
+    proto = inst.protocol
+    if inst.status == "protocol":
+        return [_row("crash", None, f"sandbox protocol: {inst.detail}")] * n
+    if not proto.rows:  # died in startup or inside the module body
+        if inst.status == "fuel" and proto.slot == 0 and proto.in_call:
+            return [_row("fuel", None, "module body: fuel budget exhausted", proto.budget_now)] * n
+        kind = inst.status if inst.status in ("infra", "resource") else "crash"
+        return [_row(kind, None, f"module: {inst.status} {inst.detail}".strip())] * n
+    head, rows = proto.rows[0], proto.rows[1:]
+    if head.get("k") != "ok":
+        kind = "resource" if head.get("k") == "resource" else "crash"
+        return [_row(kind, None, str(head.get("e", ""))[:200])] * n
+    results = []
+    for j, r in enumerate(rows):
+        used = proto.used[j + 1] if j + 1 < len(proto.used) else 0
+        kind = r.get("k")
+        results.append(_row(kind, r.get("v") if kind in ("ok", "exc") else None, str(r.get("e", ""))[:200], used))
+    if len(results) < n:
         if inst.status == "exit":
-            for i in range(done, n):
-                results[i] = _row("crash", None, "guest exited early")
-            break
-        # the instance died inside call `done` (or in the harness right after it)
-        if inst.status == "fuel" and proto.in_call:
-            results[done] = _row("fuel", None, "fuel budget exhausted", proto.budget_now)
+            results.append(_row("crash", None, "guest exited early"))
+        elif inst.status == "fuel" and proto.in_call:
+            results.append(_row("fuel", None, "fuel budget exhausted", proto.budget_now))
         elif inst.status in ("resource", "infra"):
-            results[done] = _row(inst.status, None, inst.detail, inst.call_fuel)
+            results.append(_row(inst.status, None, inst.detail, inst.call_fuel))
         else:
-            results[done] = _row("crash", None, f"{inst.status}: {inst.detail}"[:200])
-        start = done + 1
-    return results  # type: ignore[return-value]
+            results.append(_row("crash", None, f"{inst.status}: {inst.detail}"[:200]))
+        stopped = len(results) - 1
+        results += [_row("skipped", None, f"call {stopped} stopped the instance")] * (n - len(results))
+    return results
 
 
 def probe(runtime: Runtime, req: dict) -> dict:

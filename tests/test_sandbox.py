@@ -32,7 +32,7 @@ CORPUS = ROOT / "qe_arena" / "corpus"
 
 # Cross-host golden: identical on arm64 macOS, amd64 Linux and the amd64 arena image. Regenerate only
 # when the runtime, guest harness, budgets, SAFE_EXPORTS or corpus change, and say why in the commit.
-CORPUS_FINGERPRINT = ("dc7eacd68230508b", 65_576_800, 2560)
+CORPUS_FINGERPRINT = ("7cc2a917d4e9dcdd", 65_614_239, 2560)
 
 
 def ok(value):
@@ -154,11 +154,23 @@ def test_calls_must_be_argument_lists():
 LOOP = "def f(x):\n    while x == 1:\n        pass\n    return x\n"
 
 
-def test_a_looping_call_ends_at_exactly_its_budget_and_spares_the_others():
-    results = run_calls(LOOP, "f", [[0], [1], [2], [1], [3]])
-    assert [(r.kind, r.value) for r in results] == [("ok", 0), ("fuel", None), ("ok", 2), ("fuel", None), ("ok", 3)]
-    assert [r.fuel for r in results if r.kind == "fuel"] == [FUEL_PER_CALL, FUEL_PER_CALL]
+def test_a_looping_call_ends_at_exactly_its_budget_and_skips_the_rest():
+    results = run_calls(LOOP, "f", [[0], [2], [1], [3], [4]])
+    assert [(r.kind, r.value) for r in results] == [("ok", 0), ("ok", 2), ("fuel", None), ("skipped", None),
+                                                     ("skipped", None)]
+    assert results[2].fuel == FUEL_PER_CALL
     assert all(0 < r.fuel < 100_000 for r in results if r.kind == "ok")
+
+
+def test_a_trap_never_lets_later_calls_run_on_reconstructed_state():
+    # Codex P3: calls after a trap used to run in a fresh instance, so [[0], [1], [2]] gave ok 1 for
+    # the last call where [[0], [2]] gives ok 2. Later calls are skipped instead.
+    src = "seen = []\ndef f(x):\n    seen.append(x)\n    if x == 1:\n        while True:\n            pass\n    return len(seen)\n"
+    trapped = run_calls(src, "f", [[0], [1], [2]], fuel=1_000_000)
+    clean = run_calls(src, "f", [[0], [2]], fuel=1_000_000)
+    assert [(r.kind, r.value) for r in trapped] == [("ok", 1), ("fuel", None), ("skipped", None)]
+    assert [(r.kind, r.value) for r in clean] == [("ok", 1), ("ok", 2)]
+    assert not compare(trapped[2], trapped[2])  # skipped is never settled
 
 
 def test_fuel_exhaustion_cannot_be_swallowed():
@@ -166,13 +178,13 @@ def test_fuel_exhaustion_cannot_be_swallowed():
            "    while True:\n"
            "        try:\n            while True:\n                pass\n"
            "        except:\n            pass\n")
-    assert outcome(run_calls(src, "f", [[0], [1]])) == [("fuel", None, FUEL_PER_CALL)] * 2
+    assert outcome(run_calls(src, "f", [[0], [1]])) == [("fuel", None, FUEL_PER_CALL), ("skipped", None, 0)]
 
 
 def test_c_level_work_is_metered_too():
     t = time.monotonic()
     results = run_calls("def f(x):\n    return sum(range(10 ** 13))\n", "f", [[0], [1]])
-    assert outcome(results) == [("fuel", None, FUEL_PER_CALL)] * 2
+    assert outcome(results) == [("fuel", None, FUEL_PER_CALL), ("skipped", None, 0)]
     assert time.monotonic() - t < 5.0
 
 
@@ -194,9 +206,10 @@ def test_outcomes_and_fuel_are_identical_across_runs_and_under_load():
            "    if k == 3:\n        while True:\n            pass\n"
            "    if k == 4:\n        raise KeyError(k)\n"
            "    return sorted(collections.Counter(x % k for x in xs).items())\n")
-    calls = [[list(range(i, i + 30)), 1 + i % 5] for i in range(24)]
+    calls = [[list(range(i, i + 30)), 1 + i % 5] for i in range(24) if i % 5 != 2] + [[[1, 2], 3], [[3], 1]]
     baseline = outcome(run_calls(src, "f", calls))
-    assert {k for k, _, _ in baseline} == {"ok", "exc", "fuel"}
+    assert [k for k, _, _ in baseline][-2:] == ["fuel", "skipped"] and {k for k, _, _ in baseline} == {
+        "ok", "exc", "fuel", "skipped"}
     stop = threading.Event()
 
     def burn():
@@ -241,12 +254,12 @@ def test_memory_cap_follows_mem_mb():
     assert run_calls(src, "f", [[20_000_000]], mem_mb=64, fuel=fuel)[0].kind == "resource"
 
 
-def test_c_stack_exhaustion_is_resource_and_the_next_call_still_runs():
+def test_c_stack_exhaustion_is_resource_and_ends_the_batch():
     src = ("def f(n):\n"
            "    v = []\n    for _ in range(n):\n        v = [v]\n"
            "    return len(str(v))\n")
     results = run_calls(src, "f", [[3], [100_000], [4]], fuel=500_000_000)
-    assert [(r.kind, r.value) for r in results] == [("ok", 8), ("resource", None), ("ok", 10)]
+    assert [(r.kind, r.value) for r in results] == [("ok", 8), ("resource", None), ("skipped", None)]
     assert results[1].error == "wasm stack exhausted" and results[1].fuel > 0
 
 

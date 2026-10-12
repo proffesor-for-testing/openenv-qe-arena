@@ -110,7 +110,7 @@ def _setup():
     del monitoring
 
     source, entry = req["source"], req["entry"]
-    calls = iter(req["calls"][req["start"]:])
+    calls = iter(req["calls"])
     max_value, max_total = req["max_value_bytes"], req["max_total_bytes"]
     del req
 

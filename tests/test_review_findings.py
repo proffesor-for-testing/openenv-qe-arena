@@ -231,3 +231,17 @@ def test_glob_match_reference_follows_its_spec():
     assert corpus.call_reference("glob_match", ["**", "a\nb"]) is True
     assert corpus.call_reference("glob_match", ["*", "a\nb"]) is True
     assert corpus.call_reference("glob_match", ["*", "a/b"]) is False
+
+
+# Codex review of the WASI sandbox, P3: a trap ends its batch and skips the calls after it, so mutant
+# kill tests must not share a batch, or a test that loops the mutant would cancel a later killing test.
+def test_mutant_kill_credit_does_not_depend_on_test_order():
+    original = "def f(x):\n    return x + 1\n"
+    mutant = "def f(x):\n    while x == 0:\n        pass\n    return x + 2\n"
+    task = tasks.Task(task_id="qe_mutant_kill-d3", family="qe_mutant_kill", difficulty=3, seed=0, prompt="",
+                      files={}, private={"original": original, "entry": "f",
+                                         "mutants": [{"source": mutant, "site": "", "random_kill_rate": 0.5}]})
+    looping, killing = {"args": [0], "expected": 1}, {"args": [5], "expected": 6}
+    assert tasks.grade_mutant_kill(task, {"tests": [killing, looping]}) == 1.0
+    assert tasks.grade_mutant_kill(task, {"tests": [looping, killing]}) == 1.0
+    assert tasks.grade_mutant_kill(task, {"tests": [looping]}) == 0.0  # a loop is never a kill

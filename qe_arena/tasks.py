@@ -376,10 +376,12 @@ def grade_mutant_kill(task: Task, answer: Any) -> float:
             return 0.0
         calls.append(test["args"])
         expecteds.append(test["expected"])
-    reference = _outputs(p["original"], p["entry"], calls)
+    # One batch per test: a trap ends a batch and skips the calls after it, so tests sharing a batch
+    # would score differently depending on their order.
+    reference = [r for call in calls for r in _outputs(p["original"], p["entry"], [call])]
     scores = []
     for m in p["mutants"]:
-        outputs = _outputs(m["source"], p["entry"], calls)
+        outputs = [r for call in calls for r in _outputs(m["source"], p["entry"], [call])]
         best = 0.0
         for i in _killing(reference, outputs):  # only settled, differing results count as a kill
             best = max(best, 1.0 if _expected_matches(expecteds[i], reference[i]) else 0.5)

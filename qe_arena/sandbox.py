@@ -153,14 +153,14 @@ FUEL_PER_SECOND = 200_000_000     # only to translate a legacy per_call_timeout_
 WORKER_STARTUP_S = 180.0          # compiling python.wasm takes ~5 s at --cpus=2; generous for loaded hosts
 BATCH_BACKSTOP_S = 300.0          # parent-side wait for one batch before the worker is replaced
 
-KINDS = ("ok", "exc", "fuel", "resource", "crash", "rejected", "infra", "timeout")
-WORKER_KINDS = frozenset({"ok", "exc", "fuel", "resource", "crash", "infra"})
+KINDS = ("ok", "exc", "fuel", "resource", "crash", "skipped", "rejected", "infra", "timeout")
+WORKER_KINDS = frozenset({"ok", "exc", "fuel", "resource", "crash", "skipped", "infra"})
 
 
 @dataclass
 class CallResult:
     """One call's outcome. ``fuel`` is what the call consumed (0 when it never ran)."""
-    kind: Literal["ok", "exc", "fuel", "resource", "crash", "rejected", "infra", "timeout"]
+    kind: Literal["ok", "exc", "fuel", "resource", "crash", "skipped", "rejected", "infra", "timeout"]
     value: Any = None
     error: str = ""
     fuel: int = 0
