@@ -68,12 +68,15 @@ def test_d1_special_casing_the_reported_input_earns_zero(seed):
     p = task.private
     reported = p["report_args"]
     [ref] = sandbox.run_calls(p["original"], p["entry"], [reported])
-    if ref.kind != "ok":
-        pytest.skip("reported call raises; a value table cannot express it")
+    assert ref.kind in ("ok", "exc")
+    # Exceptions compare by type name, so a raising reference is special-cased by raising the same type.
+    answer = f"return {ref.value!r}" if ref.kind == "ok" else f"raise {ref.value}('special-cased')"
     renamed = p["buggy"].replace(f"def {p['entry']}(", "def impl_buggy(", 1)
-    wrapper = (f"{renamed}\n\nREPORTED = {reported!r}\nANSWER = {ref.value!r}\n\n"
-               f"def {p['entry']}(*args):\n    if list(args) == REPORTED:\n        return ANSWER\n"
+    wrapper = (f"{renamed}\n\nREPORTED = {reported!r}\n\n"
+               f"def {p['entry']}(*args):\n    if list(args) == REPORTED:\n        {answer}\n"
                f"    return impl_buggy(*args)\n")
+    [special] = sandbox.run_calls(wrapper, p["entry"], [reported])
+    assert sandbox.compare(ref, special)  # the wrapper really answers the reported call correctly
     assert tasks.grade_bugfix(task, wrapper) == 0.0
 
 
