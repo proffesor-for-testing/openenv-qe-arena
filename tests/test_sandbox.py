@@ -232,8 +232,27 @@ def test_corpus_fingerprint_is_pinned_across_hosts():
 
 
 def test_runtime_is_the_pinned_reproducible_build():
-    assert fingerprint.runtime_digests() == {"python.wasm": build_wasi_runtime.WASM_SHA256,
-                                             "lib/python314.zip": build_wasi_runtime.ZIP_SHA256}
+    assert fingerprint.runtime_digests() == wasi_worker.PINS
+    assert json.loads(build_wasi_runtime.DEFAULT_PINS.read_text()) == wasi_worker.PINS
+
+
+# Codex P6: the worker used whatever runtime its path pointed at; only the tests checked identity.
+def test_a_worker_refuses_a_runtime_that_is_not_the_pinned_build(tmp_path, monkeypatch):
+    root = tmp_path / "runtime"
+    (root / "lib").mkdir(parents=True)
+    (root / "python.wasm").symlink_to(sandbox.runtime_root() / "python.wasm")
+    good = (sandbox.runtime_root() / "lib" / "python314.zip").read_bytes()
+    (root / "lib" / "python314.zip").write_bytes(good[:-1] + bytes([good[-1] ^ 1]))  # one bit flipped
+    monkeypatch.setenv("QE_ARENA_WASI_ROOT", str(root))
+    with pytest.raises(RuntimeError, match="python314.zip sha256 .* is not the pinned"):
+        sandbox._Worker()
+
+
+def test_runtime_load_checks_the_bytes_it_serves(tmp_path):
+    runtime = wasi_worker.Runtime(sandbox.runtime_root())
+    with pytest.raises(wasi_worker.RuntimeIdentityError, match="python.wasm"):
+        runtime.load(dict(wasi_worker.PINS, **{"python.wasm": "0" * 64}))
+    assert runtime.module is None
 
 
 # --------------------------------------------------------------------------- memory and stack

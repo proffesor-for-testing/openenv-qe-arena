@@ -53,6 +53,13 @@ I32 = wt.ValType.i32()
 I64 = wt.ValType.i64()
 
 
+PINS: dict[str, str] = json.loads((Path(__file__).resolve().parent / "runtime_pins.json").read_text())
+
+
+class RuntimeIdentityError(Exception):
+    """python.wasm or the stdlib zip is not the pinned, reproducible build."""
+
+
 class ProtocolError(Exception):
     """The guest's fd 1 carried something other than this run's markers, in order."""
 
@@ -171,9 +178,18 @@ class Runtime:
     module: Any = None
     files: dict = field(default_factory=dict)
 
-    def load(self) -> None:
-        self.files = {"/lib/python314.zip": (self.root / "lib" / "python314.zip").read_bytes()}
-        self.module = wt.Module.from_file(self.engine, str(self.root / "python.wasm"))
+    def load(self, pins: dict[str, str] | None = None) -> None:
+        """Read the runtime, check it against the pins, then compile and serve those same bytes (no
+        window to swap a file between the check and its use). Raises RuntimeIdentityError."""
+        pins = PINS if pins is None else pins
+        wasm = (self.root / "python.wasm").read_bytes()
+        stdlib = (self.root / "lib" / "python314.zip").read_bytes()
+        for name, data in (("python.wasm", wasm), ("lib/python314.zip", stdlib)):
+            digest = hashlib.sha256(data).hexdigest()
+            if digest != pins.get(name):
+                raise RuntimeIdentityError(f"{name} sha256 {digest} is not the pinned {pins.get(name)}")
+        self.files = {"/lib/python314.zip": stdlib}
+        self.module = wt.Module(self.engine, wasm)
         threading.Thread(target=self._ticker, daemon=True).start()
 
     def _ticker(self) -> None:
@@ -339,11 +355,20 @@ def main() -> int:
     out = os.fdopen(os.dup(1), "wb", buffering=0)
     os.dup2(2, 1)  # nothing but responses may reach the parent's pipe
     root = Path(os.environ["QE_ARENA_WASI_ROOT"])
-    runtime = Runtime(root)
-    runtime.load()
 
     def send(obj: dict) -> None:
         out.write(json.dumps(obj, allow_nan=True).encode("utf-8", "surrogatepass") + b"\n")
+
+    runtime = Runtime(root)
+    try:
+        runtime.load()
+    except (RuntimeIdentityError, OSError) as exc:
+        print(f"qe_arena sandbox worker refused to start: {exc}", file=sys.stderr)
+        try:
+            send({"ready": False, "error": str(exc)[:300]})
+        except BrokenPipeError:
+            pass
+        return 1
 
     try:
         send({"ready": True})

@@ -31,9 +31,10 @@ RELEASE = "v3.14.7"
 ASSET = "python-3.14.7-wasi_sdk-24.zip"
 ASSET_URL = f"https://github.com/brettcannon/cpython-wasi-build/releases/download/{RELEASE}/{ASSET}"
 ASSET_SHA256 = "2e064d3fb8172471d39d741348efa722349c40b96301f69968dff714999c584b"
-WASM_SHA256 = "d24bd98d3071af6b17d51d53a08700b9acef59172a0afcb6adb733645c2a1715"
 ZIP_NAME = "python314.zip"
-ZIP_SHA256 = "959c807f29a90f9de74ad3e5eafc1ccb667202d031e9ac8050c2683ed785f2c2"  # same on arm64 macOS and amd64 Linux
+# The output pins (python.wasm, the stdlib zip) live in qe_arena/runtime_pins.json, which the sandbox
+# worker also checks before it starts. Same bytes on arm64 macOS and amd64 Linux.
+DEFAULT_PINS = Path(__file__).resolve().parents[1] / "qe_arena" / "runtime_pins.json"
 FIXED_DATE = (2020, 1, 1, 0, 0, 0)
 
 
@@ -116,7 +117,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--asset", type=Path, help="a local copy of the release zip (sha256 is still checked)")
+    parser.add_argument("--pins", type=Path, default=DEFAULT_PINS, help="expected output digests")
     args = parser.parse_args()
+    pins = json.loads(args.pins.read_text())
     args.out.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="wasi-build-") as tmp:
         work = Path(tmp)
@@ -134,8 +137,8 @@ def main() -> int:
     }
     (args.out / "MANIFEST.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     print(json.dumps(manifest, sort_keys=True))
-    if (manifest["python.wasm"], manifest[f"lib/{ZIP_NAME}"]) != (WASM_SHA256, ZIP_SHA256):
-        print(f"runtime is not the pinned build: want python.wasm {WASM_SHA256}, zip {ZIP_SHA256}", file=sys.stderr)
+    if any(manifest[name] != digest for name, digest in pins.items()):
+        print(f"runtime is not the pinned build: want {pins}", file=sys.stderr)
         return 1
     return 0
 
