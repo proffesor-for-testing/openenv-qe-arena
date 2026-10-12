@@ -218,6 +218,34 @@ def save_baseline(ledger: Path, board: dict, now: str | None = None) -> dict:
     return history[-1]
 
 
+def population_path(ledger: Path) -> Path:
+    return ledger.with_name(ledger.stem + "-population.jsonl")
+
+
+def save_population(ledger: Path, board: dict, now: str | None = None) -> dict:
+    """Keep every leaderboard run (the empirical null's population), versioned like the baseline."""
+    keep = ("run_id", "submission_id", "user", "benchmark", "scores", "solved", "total", "evaluated_at")
+    runs = sorted(({k: r.get(k) for k in keep} for r in board["runs"] if isinstance(r, dict)),
+                  key=lambda r: str(r["run_id"]))
+    path = population_path(ledger)
+    history = path.read_text().splitlines() if path.exists() else []
+    record = {"fetched_at": now or datetime.now(timezone.utc).isoformat(timespec="seconds"), "source": LEADERBOARD,
+              "benchmark": board.get("benchmark"), "runs": runs}
+    if history:
+        last = json.loads(history[-1])
+        if (last.get("benchmark"), last["runs"]) == (record["benchmark"], runs):
+            return last
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as handle:
+        handle.write(json.dumps(record, sort_keys=True) + "\n")
+    return record
+
+
+def load_population(ledger: Path) -> dict | None:
+    path = population_path(ledger)
+    return json.loads(path.read_text().splitlines()[-1]) if path.exists() else None
+
+
 def ledger_fetch(ledger: Path, user: str, submission_id: str | None = None, receipts: Path | None = None,
                  board: dict | None = None, get=http_get_json, cursor_url: str | None = None) -> dict:
     """Append this user's leaderboard runs that are not in the ledger yet (idempotent by run_id). A run
@@ -253,6 +281,7 @@ def ledger_fetch(ledger: Path, user: str, submission_id: str | None = None, rece
             report["appended"].append(append_run(ledger, run, receipt, request, "fetched")["run_id"])
             have.add(run["run_id"])
     report["baseline"] = save_baseline(ledger, board)["fetched_at"]
+    report["population"] = len(save_population(ledger, board)["runs"])
     report["matched"] = len(runs)
     return report
 
@@ -290,47 +319,3 @@ def null_domains(entries: list[dict], baseline: dict) -> dict[str, tuple[int, in
                 raise SystemExit(f"domain {name!r}: run {e['run_id']} has {d['total']} tasks, "
                                  f"the baseline {baseline[name]['total']}")
     return {name: (baseline[name]["total"], baseline[name]["solved"]) for name in DOMAIN_IDS}
-
-
-def ledger_show(entries: list[dict], baseline: dict, out=None, source: str = "", include_manual: bool = False,
-                head: dict | None = None) -> dict:
-    out = out or sys.stdout
-    if head:
-        print(f"ledger head: seq {head['seq']} sha256 {head['sha256']}", file=out)
-    manual = [e for e in entries if e.get("source") != "fetched"]
-    if manual and not include_manual:
-        print(f"{len(manual)} manual entr{'y' if len(manual) == 1 else 'ies'} left out (--include-manual)", file=out)
-        entries = [e for e in entries if e.get("source") == "fetched"]
-    if not entries:
-        print("no runs to show", file=out)
-        return {}
-    benchmarks = sorted({e["benchmark"] for e in entries})
-    if len(benchmarks) > 1:
-        raise SystemExit(f"runs span benchmarks {benchmarks}; a composite across them means nothing")
-    domains = null_domains(entries, baseline)
-    single = null.composite_pmf(1, domains)
-    print(f"PER-RUN SCORES ({benchmarks[0]}): each row is one noisy single attempt on the held-out set", file=out)
-    print(f"{'seq':>3}  {'submission':<28}{'run':<26}{'total':>7}  P(model null run >= this)", file=out)
-    for e in entries:
-        print(f"{e['seq']:>3}  {e['submission_id']:<28}{e['run_id']:<26}{e['solved']:>3}/{e['total']:<3}  "
-              f"{null.tail(single, e['solved']):.3f}", file=out)
-    best = {n: max(e["domains"][n]["solved"] for e in entries) for n in DOMAIN_IDS}
-    composite, k = sum(best.values()), len(entries)
-    model, plugin = null.composite_pmf(k, domains), null.composite_pmf(k, domains, "plugin")
-    print(f"\nBEST-PER-DOMAIN COMPOSITE (not a run score; selection-inflated): {composite}  "
-          + " + ".join(f"{n} {v}" for n, v in best.items() if v), file=out)
-    print(f"model-based null, {k} runs no better than the baseline ({sum(d[1] for d in domains.values())}/"
-          f"{sum(d[0] for d in domains.values())}, Jeffreys beta-binomial per domain): E = {null.mean(model):.2f}, "
-          f"P(null >= {composite}) = {null.tail(model, composite):.3f}", file=out)
-    sens = {z: null.composite_pmf(k, domains, p_zero=z) for z in (0.0, 0.02, 0.05)}
-    print("sensitivity, rate of the baseline's 0/5 domains fixed at p_zero: "
-          + "; ".join(f"p_zero={z}: E {null.mean(d):.2f}, P(>= {composite}) {null.tail(d, composite):.3f}"
-                      for z, d in sens.items()), file=out)
-    print(f"lower reference, plug-in binomial at s/n: E = {null.mean(plugin):.2f}, "
-          f"P(>= {composite}) = {null.tail(plugin, composite):.3f}", file=out)
-    if source:
-        print(f"baseline source: {source}", file=out)
-    return {"composite": composite, "best": best, "runs": k, "null_expected": null.mean(model),
-            "null_p_value": null.tail(model, composite), "plugin_expected": null.mean(plugin),
-            "sensitivity": {str(z): null.tail(d, composite) for z, d in sens.items()},
-            "per_run_p": {e["run_id"]: null.tail(single, e["solved"]) for e in entries}}

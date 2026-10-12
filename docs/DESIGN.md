@@ -197,10 +197,18 @@ package lives under `scripts/`, not `qe_arena/`, so none of it ships in the imag
   one), unless `--cursor-url` names it. The leaderboard baseline is kept, versioned by fetch time, in
   `ledger-baselines.jsonl`. `add` enters a record by hand as `source: manual`; `show` leaves manual
   entries out unless `--include-manual`, refuses to mix benchmarks, and prints per-run scores apart from
-  the best-per-domain composite. The composite's null is model-based: each domain's rate is drawn from
-  Beta(s + .5, n - s + .5) given the baseline's single attempt (4/40 today), shared by the k runs. A
-  sensitivity line fixes the rate of the baseline's 0/5 domains at 0, .02 and .05, and the plug-in
-  binomial is printed as a lower reference.
+  the best-per-domain composite. The primary null is EMPIRICAL: every other entrant's run on the same
+  benchmark, kept by `fetch` in `ledger-population.jsonl` (versioned like the baseline) and excluding the
+  ledger's own users. Per run, `show` prints its mid-rank percentile among those runs, P(a random other
+  run >= it) and per-domain deltas against the other runs' task rates; the composite of k runs is compared
+  with the best-per-domain of k other runs drawn with replacement (exact enumeration when the population
+  to the k is at most 200,000, else a seeded bootstrap). On 2026-10-12, 38 other heldout-v2 runs averaged
+  2.95/40 (sd 1.14, range 1-5), below the untrained baseline's 4/40: training usually costs industrial and
+  office solves. The model-based null of an untrained baseline stays as a labelled sensitivity: each
+  domain's rate drawn from Beta(s + .5, n - s + .5) given the baseline's single attempt and shared by the
+  k runs, with its 0/5 domains alternatively fixed at 0, .02 and .05 and the plug-in binomial as a lower
+  reference. It is generous (E = 6.67 for one run), because the Jeffreys prior puts about 8% on the
+  domains the baseline scored 0 in.
 - **`onecell-search`** proposes exactly one knob change (Darwin's one-knob idea, reimplemented). The plan
   is hashed at proposal and refused if edited. Its default metric is `mixed_rate`, the unbiased chance
   that G = 4 fresh instances of a cell are not all equal, averaged per difficulty level and weighted by

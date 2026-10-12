@@ -28,7 +28,7 @@ import json
 import sys
 from pathlib import Path
 
-from qe_flywheel import ledger, search, select, stats
+from qe_flywheel import ledger, report, search, select, stats
 
 ROOT = Path(__file__).resolve().parents[1]
 SUBMISSION = ROOT / "submission"
@@ -139,15 +139,16 @@ def run_ledger(args) -> int:
     if args.action == "fetch":
         board = json.loads(args.from_file.read_text()) if args.from_file else ledger.fetch_leaderboard(
             lambda url: ledger.http_get_json(url, args.timeout), cursor_url=args.cursor_url)
-        report = ledger.ledger_fetch(args.ledger, args.user, args.submission_id, args.receipts, board=board)
-        print(json.dumps(report, indent=2))
+        fetched = ledger.ledger_fetch(args.ledger, args.user, args.submission_id, args.receipts, board=board)
+        print(json.dumps(fetched, indent=2))
     elif args.action == "add":
         print(json.dumps(ledger.ledger_add(args.ledger, args.receipt, args.result, args.request), indent=2))
     else:
         baseline, source = ledger.resolve_baseline(args.ledger, args.baseline)
         entries = ledger.read_ledger(args.ledger)
         head = json.loads(ledger.head_path(args.ledger).read_text()) if entries else None
-        summary = ledger.ledger_show(entries, baseline, source=source, include_manual=args.include_manual, head=head)
+        summary = report.ledger_show(entries, baseline, ledger.load_population(args.ledger), source=source,
+                                     include_manual=args.include_manual, head=head)
         if args.json:
             write_json(args.json, summary)
     return 0

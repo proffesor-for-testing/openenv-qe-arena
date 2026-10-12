@@ -14,10 +14,12 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import flywheel as cli  # noqa: E402
 from qe_flywheel import ledger as lg  # noqa: E402
-from qe_flywheel import null  # noqa: E402
+from qe_flywheel import empirical, null, report  # noqa: E402
 
 BOARD = Path(__file__).parent / "fixtures" / "flywheel" / "leaderboard-trim.json"  # trimmed real response
+FULL = Path(__file__).parent / "fixtures" / "flywheel" / "leaderboard-2026-10-12.json"  # all 39 runs, after v1 scored
 RECEIPT = ROOT / "submission" / "receipt-v1.json"
 RECORDED = {"state": "recorded", "post_attempted": True}
 
@@ -337,20 +339,21 @@ def test_show_labels_the_composite_against_the_model_null(tmp_path, capsys):
     ledger = two_entries(tmp_path)
     entries = lg.read_ledger(ledger)
     baseline = lg.parse_baseline(lg.BASELINE)
-    empty = lg.ledger_show(entries, baseline)
+    empty = report.ledger_show(entries, baseline)
     assert empty == {} and "2 manual entries left out" in capsys.readouterr().out
-    summary = lg.ledger_show(entries, baseline, source="test", include_manual=True,
+    summary = report.ledger_show(entries, baseline, source="test", include_manual=True,
                              head=json.loads(lg.head_path(ledger).read_text()))
     printed = capsys.readouterr().out
     domains = lg.null_domains(entries, baseline)
     model = null.composite_pmf(2, domains)
-    assert summary["composite"] == 5 and summary["null_expected"] == pytest.approx(null.mean(model))
-    assert summary["null_p_value"] == pytest.approx(null.tail(model, 5))
+    assert summary["composite"] == 5 and summary["model_expected"] == pytest.approx(null.mean(model))
+    assert summary["model_p_value"] == pytest.approx(null.tail(model, 5)) and summary["empirical"] is None
     single = null.composite_pmf(1, domains)
-    assert summary["per_run_p"] == {"run-1": pytest.approx(null.tail(single, 3)),
-                                    "run-2": pytest.approx(null.tail(single, 2))}
+    assert {r: v["model_p"] for r, v in summary["per_run"].items()} == {
+        "run-1": pytest.approx(null.tail(single, 3)), "run-2": pytest.approx(null.tail(single, 2))}
     assert f"{null.tail(single, 3):.3f}" in printed and "model-based null" in printed
-    assert "exact" not in printed and "p_zero=0.05" in printed and "lower reference" in printed
+    assert "EMPIRICAL NULL unavailable" in printed and "sensitivity, model-based" in printed
+    assert "p_zero=0.05" in printed and "lower reference" in printed
     assert "ledger head: seq 2" in printed and "selection-inflated" in printed
 
 
@@ -361,4 +364,80 @@ def test_show_refuses_to_mix_benchmarks(tmp_path):
     add(ledger, tmp_path, write_receipt(tmp_path, "v2", "profa-qe-arena-v2"),
         run_record("run-2", "profa-qe-arena-v2", {"office-white-collar": 4}, benchmark="heldout-v3"))
     with pytest.raises(SystemExit, match="span benchmarks"):
-        lg.ledger_show(lg.read_ledger(ledger), lg.parse_baseline(lg.BASELINE), include_manual=True)
+        report.ledger_show(lg.read_ledger(ledger), lg.parse_baseline(lg.BASELINE), include_manual=True)
+
+
+# ---------------------------------------------------------------- the empirical null
+
+def tiny_population():
+    """Two other runs: A solves 1 industrial task, B 1 office task, nothing else."""
+    def other(run_id, scores):
+        return dict(run_record(run_id, f"sub-{run_id}", scores, user=f"user-{run_id}"))
+    runs = [other("A", {"industrial-physical-systems": 1}), other("B", {"office-white-collar": 1})]
+    return empirical.population(runs, "heldout-v2", {"Profa-QE"}, lg.parse_result)
+
+
+def test_empirical_null_hand_worked():
+    pop = tiny_population()
+    s = empirical.summary(pop)
+    assert (s["runs"], s["mean"], s["min"], s["max"]) == (2, 1.0, 1, 1)
+    assert s["rates"]["industrial-physical-systems"] == pytest.approx(1 / 10)  # 1 solve over 2 runs x 5 tasks
+    # one draw: the composite is 1 either way; two draws: AB or BA give 2, AA or BB give 1
+    one, two = empirical.composite_null(pop, 1, 1), empirical.composite_null(pop, 2, 2)
+    assert (one["expected"], one["p_ge"]) == (1.0, 1.0) and "exact" in one["method"]
+    assert (two["expected"], two["p_ge"]) == (1.5, 0.5)
+    assert empirical.run_position(pop, 1) == {"percentile": 50.0, "p_other_ge": 1.0}
+    assert empirical.run_position(pop, 2) == {"percentile": 100.0, "p_other_ge": 0.0}
+    deltas = empirical.domain_deltas(pop, lg.parse_result(run_record("x", "s", {"industrial-physical-systems": 2}))[1])
+    assert deltas["industrial-physical-systems"] == pytest.approx(1.5) and deltas["office-white-collar"] == -0.5
+
+
+def test_empirical_bootstrap_agrees_with_the_closed_form():
+    # k = 18 is past the exact limit (2^18 > 200k): the composite is 2 unless all draws are one run
+    result = empirical.composite_null(tiny_population(), 18, 2)
+    assert "bootstrap" in result["method"]
+    assert result["expected"] == pytest.approx(2 - 2 * 0.5 ** 18, abs=1e-3)
+
+
+def test_empirical_null_on_the_saved_leaderboard():
+    board = json.loads(FULL.read_text())
+    pop = empirical.population(board["runs"], "heldout-v2", {"Profa-QE"}, lg.parse_result)
+    s = empirical.summary(pop)
+    others = [r for r in board["runs"] if r["user"] != "Profa-QE"]
+    totals = [r["solved"] for r in others]
+    assert s["runs"] == len(others) == 38 and s["mean"] == pytest.approx(sum(totals) / 38)
+    assert s["rates"]["office-white-collar"] == pytest.approx(
+        sum(r["scores"]["office-white-collar"]["solved"] for r in others) / (5 * 38))
+    assert round(s["mean"], 2) == 2.95 and s["rates"]["mathematics-or-formal-reasoning"] == 0.0
+    position = empirical.run_position(pop, 4)
+    assert position["p_other_ge"] == pytest.approx(sum(t >= 4 for t in totals) / 38)
+    assert position["percentile"] == pytest.approx(100 * (sum(t < 4 for t in totals) + sum(t == 4 for t in totals) / 2) / 38)
+
+
+def test_show_reports_v1_against_other_entrants(tmp_path, capsys):
+    ledger = tmp_path / "ledger.jsonl"
+    (tmp_path / "receipt-v1.json").write_text(RECEIPT.read_text())
+    (tmp_path / "request-v1.json").write_text((ROOT / "submission" / "request-v1.json").read_text())
+    fetched = lg.ledger_fetch(ledger, "Profa-QE", receipts=tmp_path, board=json.loads(FULL.read_text()))
+    assert fetched["appended"] == ["c583c91a8555ec252893d574"] and fetched["population"] == 39
+    entries = lg.read_ledger(ledger)
+    summary = report.ledger_show(entries, lg.resolve_baseline(ledger, None)[0], lg.load_population(ledger))
+    printed = capsys.readouterr().out
+    row = summary["per_run"]["c583c91a8555ec252893d574"]
+    pop = empirical.population(json.loads(FULL.read_text())["runs"], "heldout-v2", {"Profa-QE"}, lg.parse_result)
+    assert row["p_other_ge"] == empirical.run_position(pop, 4)["p_other_ge"]
+    assert row["deltas"]["finance-economics"] == pytest.approx(1 - 5 * empirical.summary(pop)["rates"]["finance-economics"])
+    assert summary["empirical"]["expected"] == pytest.approx(empirical.summary(pop)["mean"])  # k = 1
+    assert "EMPIRICAL NULL: 38 other runs" in printed and "excluding ['Profa-QE']" in printed
+    assert printed.index("empirical null, best-per-domain") < printed.index("sensitivity, model-based")
+
+
+def test_cli_fetch_and_show_from_a_saved_board(tmp_path, capsys):
+    (tmp_path / "receipt-v1.json").write_text(RECEIPT.read_text())
+    (tmp_path / "request-v1.json").write_text((ROOT / "submission" / "request-v1.json").read_text())
+    ledger = str(tmp_path / "ledger.jsonl")
+    assert cli.main(["ledger", "fetch", "--user", "Profa-QE", "--ledger", ledger, "--receipts", str(tmp_path),
+                     "--from-file", str(FULL)]) == 0
+    assert cli.main(["ledger", "show", "--ledger", ledger]) == 0
+    printed = capsys.readouterr().out
+    assert "EMPIRICAL NULL: 38 other runs" in printed and "c583c91a8555ec252893d574" in printed
