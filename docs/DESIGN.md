@@ -218,3 +218,78 @@ reproduces the pre-fix behaviour rather than copying pre-fix code.
 - The submission request is rendered and checked with the same discipline as rUv's MetaHarness entry:
   exact image digest, anonymous pull, `openenv validate`, `/schema` equality, and native replay of
   every task ID.
+
+## Daily flywheel (`scripts/flywheel.py`, logic in `scripts/qe_flywheel/`)
+
+One submission per day, and one arena run is noise, so the flywheel keeps three disciplines. The
+package lives under `scripts/`, not `qe_arena/`, so none of it ships in the image.
+
+- **Which episodes count** is one rule, `stats.episode_status`, shared by `stats`, `select` and
+  `onecell-search`. A `reward: null` row (harness error) and a `global_budget` row (the whole calibration
+  run ran out of tokens) are excluded, never scored as 0. A `context_budget` or `completion_budget` row is
+  a real failure when the episode ran at or above the submitted template's limit (the arena would fail
+  it too) and is excluded, with a warning, when it ran under it. A row may record the limits it ran under
+  as `episode_completion_tokens` / `episode_context_tokens`; without them, calibrate.py's documented
+  defaults (4096 / 8192) are assumed, which are tighter than the template's (6144 / 12288), so pass
+  `--episode-completion-tokens 6144 --episode-context-tokens 12288` and record them to measure under the
+  submitted limits. `step_cap` is always a failure because the arena caps steps too.
+- **`stats`** reports Jeffreys posteriors per cell and per (cell, corpus function): the measured
+  same-seed informative rate, and `p_mix@4` / `p_mix@5`, the posterior-mean chance that 4 or 5 fresh
+  instances do not all get the same reward (a Dirichlet over the observed reward values, so partial
+  credit counts). The arena plays 5 episodes of one task per step and trains on the first 4 with a valid
+  reward; its contract has no seed and an unseeded reset here draws a fresh instance, so same-seed groups
+  understate mixing. A repeated `(task, seed, corpus, attempt)` key across files is a hard error.
+- **`select`** keeps a cell when its posterior-mean `p_mix@4` is at least `--min-mixed` (0.15), then
+  Thompson-samples by the default objective `projected` (`p_mix@G`, G = 4; `--objective group` uses the
+  same-seed posterior). The gate is a posterior mean, so evidence matters: 0/8 scores 0.18 and stays
+  eligible as exploration, 0/16 and 16/16 score 0.10 and are excluded, 15/16 scores 0.29. Limits are
+  copied verbatim from the template and the measure is recorded in `.why.json`. When no cell qualifies the
+  command exits 4 and writes no task list.
+- **`ledger`** is an append-only, hash-chained JSONL of arena runs. Each entry keeps the leaderboard
+  record it came from and is re-validated on every read; the head is anchored in `ledger.jsonl.head`
+  (written atomically), so editing or deleting any line, the last included, fails. The chain and the head
+  catch accidents only: anyone who can write the ledger can rewrite it and recompute both, so publish the
+  head hash `show` prints if the ledger is evidence. After a crash between an append and the head write,
+  `ledger repair-head --i-checked-the-ledger` recomputes the head once a human has inspected the lines.
+  `fetch --user Profa-QE [--submission-id ID]` reads the public leaderboard (8 MiB cap, every runs entry
+  must be an object) and appends that user's new runs (idempotent by `run_id`, exact user match) only with
+  a local receipt that is `recorded` with `post_attempted` true. It refuses a paged response: the cursor
+  format could not be verified (the Space's page never sends one), unless `--cursor-url` names it. The
+  leaderboard's baseline and all its runs are kept, versioned by fetch time, in `ledger-baselines.jsonl`
+  and `ledger-population.jsonl`. `add` enters a record by hand as `source: manual`; `show` leaves manual
+  entries out unless `--include-manual` and refuses to mix benchmarks.
+- **`ledger show`** prints, in this order:
+  1. each run against the UNTRAINED baseline (4/40 today), total and per domain: did training help?
+  2. its rank among other entrants' runs on the same benchmark (every user's run except the ledger's
+     fetched users and its own runs): the mid-rank percentile, P(a random other run >= it) and per-domain
+     deltas against their task rates. This is a rank, not a test of whether training helped, since every
+     entrant trained. On 2026-10-12, 38 other heldout-v2 runs averaged 2.95/40 (sd 1.14, range 1-5),
+     below the baseline: training usually costs industrial and office solves. The leaderboard has one
+     evaluation per submission, so evaluation noise cannot be separated from real differences between
+     runs; the spread of other runs' totals is only an upper bound on it.
+  3. the best-per-domain composite (selection-inflated, not a run score) against the best-per-domain of
+     k DISTINCT other runs (exact over every k-subset up to 200,000 of them, else a seeded Monte Carlo);
+  4. as a sensitivity, the model-based null of an untrained baseline: each domain's rate drawn from
+     Beta(s + .5, n - s + .5) given the baseline's single attempt and shared by the k runs. It is generous
+     (E = 6.67 for one run) because the Jeffreys prior puts about 8% on the domains the baseline scored 0
+     in, so it is also shown with those domains fixed at 0, .02 and .05, with an empirical-Bayes prior
+     from the other runs' pooled solves, and as a plug-in binomial lower reference.
+- **`onecell-search`** proposes exactly one knob change (Darwin's one-knob idea, reimplemented). Its
+  default metric is `mixed_rate`, the unbiased chance that G = 4 valid fresh instances of a cell are not
+  all equal, averaged per difficulty level and weighted by the mix. A leniency knob or a mix shift toward
+  easy cells raises solve rates, but on this metric it only wins where it moves a cell toward mixed
+  outcomes, so `difficulty_mix` may only be scored this way. Plans are 64 seeds x 1 attempt per split for
+  every task; both arms must be independent runs covering every planned `(task, seed, attempt)`, and runs
+  identical apart from timings are refused. For `mixed_rate` an excluded row is dropped, as the trainer
+  keeps the first 4 valid episodes of 5 (for the reward metrics it counts as 0 for that arm), and arms
+  whose excluded rates differ by more than 0.02 are refused, so an arm cannot win by erroring. `decide`
+  accepts only when the paired, task-stratified bootstrap lower bound exceeds the margin (0) on discovery
+  and -0.05 on confirmation. Each move spends alpha = 5% across its tests: 2.5% the first time, then 1.25%,
+  ... A rejected move is retired only when its discovery bootstrap upper bound is below the margin;
+  otherwise it may be retested at the next, smaller alpha. With iid arms tests hold false acceptance at
+  or below 5%; a three-cell gain to p = .5 is accepted at least 80% of the time. The plan's sha256 catches
+  an accidental edit between propose and decide, not a deliberate one. Nothing here calls a model.
+
+**Calibrating for the trainer's regime.** Run `scripts/calibrate.py --attempts 1 --seeds N` (N >= 16 per
+cell): one attempt on each of many fresh instances is what the projection and `mixed_rate` assume. Use
+`--attempts >= 2` only to study seed difficulty itself.

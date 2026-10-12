@@ -1,0 +1,2586 @@
+{
+ "_note": "Public GET https://openenvarena-arena.hf.space/api/leaderboard on 2026-10-12 after profa-qe-arena-v1 scored; entries[] dropped, all 39 runs kept verbatim.",
+ "baseline": {
+  "attempts_per_task": 1,
+  "measured": "2026-10-07",
+  "model": "Qwen3.8-27B",
+  "note": "base model, before any training",
+  "revision": "1d4bf0f",
+  "scores": {
+   "cybersecurity": {
+    "solved": 0,
+    "total": 5
+   },
+   "finance-economics": {
+    "solved": 0,
+    "total": 5
+   },
+   "industrial-physical-systems": {
+    "solved": 2,
+    "total": 5
+   },
+   "mathematics-or-formal-reasoning": {
+    "solved": 0,
+    "total": 5
+   },
+   "media-content-production": {
+    "solved": 0,
+    "total": 5
+   },
+   "natural-science": {
+    "solved": 0,
+    "total": 5
+   },
+   "office-white-collar": {
+    "solved": 2,
+    "total": 5
+   },
+   "software-engineering": {
+    "solved": 0,
+    "total": 5
+   }
+  },
+  "solved": 4,
+  "tasks": 0,
+  "total": 40
+ },
+ "benchmark": "heldout-v2",
+ "domains": [
+  {
+   "id": "software-engineering",
+   "name": "Software engineering",
+   "short": "Software"
+  },
+  {
+   "id": "industrial-physical-systems",
+   "name": "Industrial & physical systems",
+   "short": "Industrial"
+  },
+  {
+   "id": "natural-science",
+   "name": "Natural science",
+   "short": "Science"
+  },
+  {
+   "id": "office-white-collar",
+   "name": "Office & white-collar",
+   "short": "Office"
+  },
+  {
+   "id": "finance-economics",
+   "name": "Finance & economics",
+   "short": "Finance"
+  },
+  {
+   "id": "mathematics-or-formal-reasoning",
+   "name": "Math & formal reasoning",
+   "short": "Math"
+  },
+  {
+   "id": "cybersecurity",
+   "name": "Cybersecurity",
+   "short": "Security"
+  },
+  {
+   "id": "media-content-production",
+   "name": "Media & content production",
+   "short": "Media"
+  }
+ ],
+ "max_tasks": 50,
+ "next_cursor": null,
+ "runs": [
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "burtenshaw/openenv-sql-investigation",
+    "revision": "2ce79be32f693c42d90b8febf1bef5f485024096",
+    "url": "https://huggingface.co/datasets/burtenshaw/openenv-sql-investigation/tree/2ce79be32f693c42d90b8febf1bef5f485024096"
+   },
+   "delta": 0,
+   "evaluated_at": 1791464238.1075242,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "SQL Investigation Lab",
+   "owner": "space:burtenshaw",
+   "run_id": "16b837f08ba5e6d59b7c4779",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 4,
+   "source": "arena",
+   "steps": 10,
+   "submission_id": "sql-investigation-v5",
+   "tasks": 10,
+   "total": 40,
+   "user": "burtenshaw"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "NoeFlandre/log-triage",
+    "revision": "80a70d50e7f424ee4c255305456d9b5b3c6f2104",
+    "url": "https://huggingface.co/datasets/NoeFlandre/log-triage/tree/80a70d50e7f424ee4c255305456d9b5b3c6f2104"
+   },
+   "delta": 1,
+   "evaluated_at": 1791487113.6368716,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "Log Triage",
+   "owner": "space:NoeFlandre",
+   "run_id": "0d0656dfbb4ff4e36b7e6f4f",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    }
+   },
+   "solved": 5,
+   "source": "arena",
+   "steps": 337,
+   "submission_id": "log-triage-v1",
+   "tasks": 12,
+   "total": 40,
+   "user": "NoeFlandre"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "akseljoonas/mimo-openenv-software",
+    "revision": "4ce4fe143d71ca6365bd187e96efa15bd7ab2787",
+    "url": "https://huggingface.co/datasets/akseljoonas/mimo-openenv-software/tree/4ce4fe143d71ca6365bd187e96efa15bd7ab2787"
+   },
+   "delta": 0,
+   "evaluated_at": 1791487810.3278735,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "MiMo v2.6 software engineering (8 tasks)",
+   "owner": "space:akseljoonas",
+   "run_id": "03bfc81de59cf3e53b9e05d0",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    }
+   },
+   "solved": 4,
+   "source": "arena",
+   "steps": 77,
+   "submission_id": "mimo-software-v2-20261008",
+   "tasks": 8,
+   "total": 40,
+   "user": "akseljoonas"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "theykk/ledger-check",
+    "revision": "d9c0691d4cd6363cd8ae4f301e0820d85eab1002",
+    "url": "https://huggingface.co/datasets/theykk/ledger-check/tree/d9c0691d4cd6363cd8ae4f301e0820d85eab1002"
+   },
+   "delta": -2,
+   "evaluated_at": 1791488714.1162622,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "Ledger Check",
+   "owner": "space:theykk",
+   "run_id": "8b516a5ee48fdecb227eb907",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 2,
+   "source": "arena",
+   "steps": 319,
+   "submission_id": "ledger-check-v1",
+   "tasks": 50,
+   "total": 40,
+   "user": "theykk"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "Louistiti/openenv-python-repair",
+    "revision": "7c7a19e027df4497aa35c13b350164a52723eeee",
+    "url": "https://huggingface.co/datasets/Louistiti/openenv-python-repair/tree/7c7a19e027df4497aa35c13b350164a52723eeee"
+   },
+   "delta": -2,
+   "evaluated_at": 1791494087.2200978,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "Python Repair Lab v2",
+   "owner": "space:Louistiti",
+   "run_id": "74662cd3429db06ca50c84c0",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 2,
+   "source": "arena",
+   "steps": 297,
+   "submission_id": "python-repair-lab-v2",
+   "tasks": 50,
+   "total": 40,
+   "user": "Louistiti"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "ajinkyamulay/analyst-workbench",
+    "revision": "76eacb1e74d47e929f62f9db7add136537c40b25",
+    "url": "https://huggingface.co/datasets/ajinkyamulay/analyst-workbench/tree/76eacb1e74d47e929f62f9db7add136537c40b25"
+   },
+   "delta": -2,
+   "evaluated_at": 1791502495.9313545,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "Analyst Workbench",
+   "owner": "space:ajinkyamulay",
+   "run_id": "777d0321e7c47fac5fdad3ff",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 2,
+   "source": "arena",
+   "steps": 178,
+   "submission_id": "analyst-workbench-v4",
+   "tasks": 24,
+   "total": 40,
+   "user": "ajinkyamulay"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "kshitijthakkar/trace-path-lab",
+    "revision": "c51b5262d0134f800e40957016d4b19cb6f0351b",
+    "url": "https://huggingface.co/datasets/kshitijthakkar/trace-path-lab/tree/c51b5262d0134f800e40957016d4b19cb6f0351b"
+   },
+   "delta": 0,
+   "evaluated_at": 1791504072.7364845,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "GenAI OTel Trace Lab",
+   "owner": "space:kshitijthakkar",
+   "run_id": "b85bc43ba95aac33a1f57c5e",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    }
+   },
+   "solved": 4,
+   "source": "arena",
+   "steps": 207,
+   "submission_id": "genai-otel-trace-lab-v1",
+   "tasks": 8,
+   "total": 40,
+   "user": "kshitijthakkar"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "ruv/metaharness-arena-tasks",
+    "revision": "c359366240115bfb24d2edae807c8e52ed5b39f0",
+    "url": "https://huggingface.co/datasets/ruv/metaharness-arena-tasks/tree/c359366240115bfb24d2edae807c8e52ed5b39f0"
+   },
+   "delta": 0,
+   "evaluated_at": 1791519590.728545,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "MetaHarness Procedural Reasoning (mixed-signal cells)",
+   "owner": "space:ruv",
+   "run_id": "accd075dcaf721b0d7ee15e1",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.6,
+     "solved": 3,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    }
+   },
+   "solved": 4,
+   "source": "arena",
+   "steps": 274,
+   "submission_id": "metaharness-mix8-20261009",
+   "tasks": 8,
+   "total": 40,
+   "user": "ruv"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "Attoloop/club-mix",
+    "revision": "7b47cace4e833d7c3deca6046ff6fb3b24b19d6b",
+    "url": "https://huggingface.co/datasets/Attoloop/club-mix/tree/7b47cace4e833d7c3deca6046ff6fb3b24b19d6b"
+   },
+   "delta": -2,
+   "evaluated_at": 1791555638.377795,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "Club Mix: 50 tasks from five Attoloop environments",
+   "owner": "space:Bhuminjay",
+   "run_id": "1aec64b23fa41461888f4586",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 2,
+   "source": "arena",
+   "steps": 27,
+   "submission_id": "club-mix-v1",
+   "tasks": 50,
+   "total": 40,
+   "user": "Bhuminjay"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "NoeFlandre/audit-trail",
+    "revision": "f821596324c2d3f29130ebc7054a22c6bd5559d4",
+    "url": "https://huggingface.co/datasets/NoeFlandre/audit-trail/tree/f821596324c2d3f29130ebc7054a22c6bd5559d4"
+   },
+   "delta": 0,
+   "evaluated_at": 1791573244.3389256,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "Audit Trail",
+   "owner": "space:NoeFlandre",
+   "run_id": "243ebc2ee1140177ac397ab3",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    }
+   },
+   "solved": 4,
+   "source": "arena",
+   "steps": 312,
+   "submission_id": "audit-trail-v1",
+   "tasks": 24,
+   "total": 40,
+   "user": "NoeFlandre"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "akseljoonas/mimo-openenv-software",
+    "revision": "2a3480c3e7159d992d5dd8a1b6322a9cb42a3b8e",
+    "url": "https://huggingface.co/datasets/akseljoonas/mimo-openenv-software/tree/2a3480c3e7159d992d5dd8a1b6322a9cb42a3b8e"
+   },
+   "delta": 1,
+   "evaluated_at": 1791574125.4301724,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "MiMo v2.6 practical code and artifacts (12 tasks)",
+   "owner": "space:akseljoonas",
+   "run_id": "1d61c4f2629479b7d6fcb20e",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 5,
+   "source": "arena",
+   "steps": 84,
+   "submission_id": "mimo-curriculum-v3-20261009",
+   "tasks": 12,
+   "total": 40,
+   "user": "akseljoonas"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "rca-umb/five-desks",
+    "revision": "1138ff662305c8765223d3ddfdeeeaa87302db43",
+    "url": "https://huggingface.co/datasets/rca-umb/five-desks/tree/1138ff662305c8765223d3ddfdeeeaa87302db43"
+   },
+   "delta": -2,
+   "evaluated_at": 1791582092.131835,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "Five Desks: finance, science, math, security and media desk work",
+   "owner": "space:rca-umb",
+   "run_id": "64489aec4f2c07bdc30a2a3f",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 2,
+   "source": "arena",
+   "steps": 265,
+   "submission_id": "five-desks-v1",
+   "tasks": 18,
+   "total": 40,
+   "user": "rca-umb"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "qingyuanwu/reconcile-lab",
+    "revision": "16cd9d61e0354457c8fd191162e5b45ef24c4057",
+    "url": "https://huggingface.co/datasets/qingyuanwu/reconcile-lab/tree/16cd9d61e0354457c8fd191162e5b45ef24c4057"
+   },
+   "delta": -1,
+   "evaluated_at": 1791582722.7483778,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "Reconcile Lab",
+   "owner": "space:qingyuanwu",
+   "run_id": "eb2bf81abb27b075fe38da84",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 3,
+   "source": "arena",
+   "steps": 178,
+   "submission_id": "reconcile-lab-v1",
+   "tasks": 9,
+   "total": 40,
+   "user": "qingyuanwu"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "theykk/kvbatch-repair",
+    "revision": "ebba968a953c645d607106ec0c7cfd569dcb1ffd",
+    "url": "https://huggingface.co/datasets/theykk/kvbatch-repair/tree/ebba968a953c645d607106ec0c7cfd569dcb1ffd"
+   },
+   "delta": -2,
+   "evaluated_at": 1791585831.997378,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "KV-Batch Repair Lab",
+   "owner": "space:theykk",
+   "run_id": "c5759276f6abba5fff7bef89",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 2,
+   "source": "arena",
+   "steps": 291,
+   "submission_id": "kvbatch-repair-v1",
+   "tasks": 2,
+   "total": 40,
+   "user": "theykk"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "ruv/metaharness-arena-tasks",
+    "revision": "c359366240115bfb24d2edae807c8e52ed5b39f0",
+    "url": "https://huggingface.co/datasets/ruv/metaharness-arena-tasks/tree/c359366240115bfb24d2edae807c8e52ed5b39f0"
+   },
+   "delta": 0,
+   "evaluated_at": 1791605987.9725685,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "MetaHarness Procedural Reasoning (office focus)",
+   "owner": "space:ruv",
+   "run_id": "fd70ac7bb85a1e8469f38039",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    }
+   },
+   "solved": 4,
+   "source": "arena",
+   "steps": 265,
+   "submission_id": "metaharness-office-20261010",
+   "tasks": 1,
+   "total": 40,
+   "user": "ruv"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "Louistiti/openenv-python-repair",
+    "revision": "f82d0dabb0da9b1b913ef95f89f54c7a8f39d0ad",
+    "url": "https://huggingface.co/datasets/Louistiti/openenv-python-repair/tree/f82d0dabb0da9b1b913ef95f89f54c7a8f39d0ad"
+   },
+   "delta": 1,
+   "evaluated_at": 1791606807.3687592,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "Python Repair Lab v3",
+   "owner": "space:Louistiti",
+   "run_id": "ff8e9c755c65167158d9c06f",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 5,
+   "source": "arena",
+   "steps": 154,
+   "submission_id": "python-repair-lab-v3",
+   "tasks": 12,
+   "total": 40,
+   "user": "Louistiti"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "kshitijthakkar/arena-eight-domain-rl-tasks",
+    "revision": "65b27194187b19ac0ca96b9183ef2f11d23e45fc",
+    "url": "https://huggingface.co/datasets/kshitijthakkar/arena-eight-domain-rl-tasks/tree/65b27194187b19ac0ca96b9183ef2f11d23e45fc"
+   },
+   "delta": -2,
+   "evaluated_at": 1791617798.212556,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "Arena Domain Lab",
+   "owner": "space:kshitijthakkar",
+   "run_id": "503c0330f64c53040a36b519",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    }
+   },
+   "solved": 2,
+   "source": "arena",
+   "steps": 277,
+   "submission_id": "arena-domain-lab-v2",
+   "tasks": 50,
+   "total": 40,
+   "user": "kshitijthakkar"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "ajinkyamulay/analyst-workbench",
+    "revision": "df6fa5a528f68eef08a012420f6388a4a5f6656f",
+    "url": "https://huggingface.co/datasets/ajinkyamulay/analyst-workbench/tree/df6fa5a528f68eef08a012420f6388a4a5f6656f"
+   },
+   "delta": -1,
+   "evaluated_at": 1791620227.024119,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "Analyst Workbench",
+   "owner": "space:ajinkyamulay",
+   "run_id": "97f806610b0d0fdfcece1d20",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 3,
+   "source": "arena",
+   "steps": 118,
+   "submission_id": "analyst-workbench-v6",
+   "tasks": 25,
+   "total": 40,
+   "user": "ajinkyamulay"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "arshy/stepwise-math",
+    "revision": "1ecda3f5b36c93c318a8b0e32ca47ac662b4bb97",
+    "url": "https://huggingface.co/datasets/arshy/stepwise-math/tree/1ecda3f5b36c93c318a8b0e32ca47ac662b4bb97"
+   },
+   "delta": -2,
+   "evaluated_at": 1791621070.9279351,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "Stepwise Math: multi-step math through an exact calculator",
+   "owner": "space:arshy",
+   "run_id": "5ac25542966872f3c530648e",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 2,
+   "source": "arena",
+   "steps": 257,
+   "submission_id": "stepwise-math-v1",
+   "tasks": 8,
+   "total": 40,
+   "user": "arshy"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "Attoloop/club-software",
+    "revision": "282aa0c069ff9be541e63e6a4486c9c5aa0ad8cf",
+    "url": "https://huggingface.co/datasets/Attoloop/club-software/tree/282aa0c069ff9be541e63e6a4486c9c5aa0ad8cf"
+   },
+   "delta": -1,
+   "evaluated_at": 1791648659.387319,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "Club Software",
+   "owner": "space:Bhuminjay",
+   "run_id": "e28263fbfa9e3fe2a26acae4",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 3,
+   "source": "arena",
+   "steps": 58,
+   "submission_id": "club-software-v1",
+   "tasks": 15,
+   "total": 40,
+   "user": "Bhuminjay"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "rycerzes/openenv-arena-compute-lab",
+    "revision": "299b461761f88712b2523b86c4727711418f3fad",
+    "url": "https://huggingface.co/datasets/rycerzes/openenv-arena-compute-lab/tree/299b461761f88712b2523b86c4727711418f3fad"
+   },
+   "delta": 0,
+   "evaluated_at": 1791657046.88433,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "Verified Compute Lab",
+   "owner": "space:rycerzes",
+   "run_id": "9a41aa8e1e4694e3a8809f8d",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 4,
+   "source": "arena",
+   "steps": 140,
+   "submission_id": "verified-compute-lab-v1",
+   "tasks": 17,
+   "total": 40,
+   "user": "rycerzes"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "cedricable/cognitive-ran-openenv",
+    "revision": "cc39435e7231e0b9904235f10410e4d88d9a9c58",
+    "url": "https://huggingface.co/datasets/cedricable/cognitive-ran-openenv/tree/cc39435e7231e0b9904235f10410e4d88d9a9c58"
+   },
+   "delta": -1,
+   "evaluated_at": 1791665557.6899338,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "Cognitive RAN deterministic skills",
+   "owner": "space:cedricable",
+   "run_id": "436eea46b06a4f12545572b1",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 3,
+   "source": "arena",
+   "steps": 343,
+   "submission_id": "cognitive-ran-openenv-v1-20261010",
+   "tasks": 18,
+   "total": 40,
+   "user": "cedricable"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "rca-umb/five-desks",
+    "revision": "ae9e249ed5956462cf1dcb96eada451bdbefbb37",
+    "url": "https://huggingface.co/datasets/rca-umb/five-desks/tree/ae9e249ed5956462cf1dcb96eada451bdbefbb37"
+   },
+   "delta": -2,
+   "evaluated_at": 1791669395.095905,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "Five Desks v2: find the caveat, think in metadata (eight domains)",
+   "owner": "space:rca-umb",
+   "run_id": "6b3030829fa1125c96bad42a",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 2,
+   "source": "arena",
+   "steps": 207,
+   "submission_id": "five-desks-v2",
+   "tasks": 9,
+   "total": 40,
+   "user": "rca-umb"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "NoeFlandre/workbench-gym",
+    "revision": "5579693d8391fcc273bb1d5e39e0854c1abcf78a",
+    "url": "https://huggingface.co/datasets/NoeFlandre/workbench-gym/tree/5579693d8391fcc273bb1d5e39e0854c1abcf78a"
+   },
+   "delta": -2,
+   "evaluated_at": 1791670824.2318985,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "Workbench Gym",
+   "owner": "space:NoeFlandre",
+   "run_id": "ba6dc0f3fc8a999f3c6e9feb",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 2,
+   "source": "arena",
+   "steps": 169,
+   "submission_id": "workbench-gym-v1",
+   "tasks": 36,
+   "total": 40,
+   "user": "NoeFlandre"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "qingyuanwu/reconcile-workflow-lab",
+    "revision": "fc5c15da0b7317b8304537c56ff40a0b9878c882",
+    "url": "https://huggingface.co/datasets/qingyuanwu/reconcile-workflow-lab/tree/fc5c15da0b7317b8304537c56ff40a0b9878c882"
+   },
+   "delta": -2,
+   "evaluated_at": 1791672134.3381321,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "Reconcile Workflow Lab: eight domains",
+   "owner": "space:qingyuanwu",
+   "run_id": "56e3a8a522004ce5259b4aff",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 2,
+   "source": "arena",
+   "steps": 162,
+   "submission_id": "reconcile-workflow-lab-eight-standalone-v1",
+   "tasks": 48,
+   "total": 40,
+   "user": "qingyuanwu"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "ruv/metaharness-arena-tasks",
+    "revision": "c359366240115bfb24d2edae807c8e52ed5b39f0",
+    "url": "https://huggingface.co/datasets/ruv/metaharness-arena-tasks/tree/c359366240115bfb24d2edae807c8e52ed5b39f0"
+   },
+   "delta": -2,
+   "evaluated_at": 1791692764.833564,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "MetaHarness Procedural Reasoning (office focus)",
+   "owner": "space:ruv",
+   "run_id": "2b1bed069459db5b029cbf52",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 2,
+   "source": "arena",
+   "steps": 245,
+   "submission_id": "metaharness-office-20261011",
+   "tasks": 1,
+   "total": 40,
+   "user": "ruv"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "Louistiti/openenv-office-workflow",
+    "revision": "2abd03c419209302e8e8de0ed974f447817065d6",
+    "url": "https://huggingface.co/datasets/Louistiti/openenv-office-workflow/tree/2abd03c419209302e8e8de0ed974f447817065d6"
+   },
+   "delta": -3,
+   "evaluated_at": 1791693159.2261431,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "Office Workflow Lab v1",
+   "owner": "space:Louistiti",
+   "run_id": "389221f48f271138fc352b25",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 1,
+   "source": "arena",
+   "steps": 147,
+   "submission_id": "office-workflow-lab-v1",
+   "tasks": 12,
+   "total": 40,
+   "user": "Louistiti"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "piyushgupta53/formulagym-arena",
+    "revision": "12d95dd8df4e83c0c7918ccabeb621d537113a46",
+    "url": "https://huggingface.co/datasets/piyushgupta53/formulagym-arena/tree/12d95dd8df4e83c0c7918ccabeb621d537113a46"
+   },
+   "delta": 0,
+   "evaluated_at": 1791727073.1133409,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "FormulaGym: repair formulas in real Enron spreadsheets",
+   "owner": "space:piyushgupta53",
+   "run_id": "3e08dabd61e62f573cca0799",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 4,
+   "source": "arena",
+   "steps": 178,
+   "submission_id": "formulagym-v1",
+   "tasks": 50,
+   "total": 40,
+   "user": "piyushgupta53"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "nice-bill/shiftdesk",
+    "revision": "a2ba6a64dc40ba24d2c1b1c759cccabcd82d77d9",
+    "url": "https://huggingface.co/datasets/nice-bill/shiftdesk/tree/a2ba6a64dc40ba24d2c1b1c759cccabcd82d77d9"
+   },
+   "delta": 0,
+   "evaluated_at": 1791731425.5215387,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "ShiftDesk: eight-domain tool desk with shifting tool names",
+   "owner": "space:nice-bill",
+   "run_id": "f731ddcf73d9056fc41f7a1f",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    }
+   },
+   "solved": 4,
+   "source": "arena",
+   "steps": 180,
+   "submission_id": "shiftdesk-v1",
+   "tasks": 24,
+   "total": 40,
+   "user": "nice-bill"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "arshy/workbench",
+    "revision": "0212bba42545feeb78bce5b9d6618c0536cd70d5",
+    "url": "https://huggingface.co/datasets/arshy/workbench/tree/0212bba42545feeb78bce5b9d6618c0536cd70d5"
+   },
+   "delta": -1,
+   "evaluated_at": 1791736300.7620206,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "Workbench: workspace habits (explore, grep, catch caveats, compute, write exact outputs)",
+   "owner": "space:arshy",
+   "run_id": "a600462943db31233cdc0214",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 3,
+   "source": "arena",
+   "steps": 104,
+   "submission_id": "workbench-v1",
+   "tasks": 9,
+   "total": 40,
+   "user": "arshy"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "akseljoonas/mimo-openenv-signal-v4",
+    "revision": "a3093cf7d74ca474daf3abb82e301dfe514b947e",
+    "url": "https://huggingface.co/datasets/akseljoonas/mimo-openenv-signal-v4/tree/a3093cf7d74ca474daf3abb82e301dfe514b947e"
+   },
+   "delta": -1,
+   "evaluated_at": 1791739882.7920218,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "MiMo v2.6 repair curriculum with observed reward variation (5 tasks)",
+   "owner": "space:akseljoonas",
+   "run_id": "bbb7a0a9dda9141d10f00d0b",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 3,
+   "source": "arena",
+   "steps": 55,
+   "submission_id": "mimo-signal-v4-20261011",
+   "tasks": 5,
+   "total": 40,
+   "user": "akseljoonas"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "naklitechie/openenv-null-control",
+    "revision": "9de6be7f01ab17c2efe901665bba630d0ceedf86",
+    "url": "https://huggingface.co/datasets/naklitechie/openenv-null-control/tree/9de6be7f01ab17c2efe901665bba630d0ceedf86"
+   },
+   "delta": -3,
+   "evaluated_at": 1791741326.0696213,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "Null control (constant reward 0.5)",
+   "owner": "space:naklitechie",
+   "run_id": "ad587f39ab6d4c69902c9efb",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 1,
+   "source": "arena",
+   "steps": 312,
+   "submission_id": "null-control-v1",
+   "tasks": 1,
+   "total": 40,
+   "user": "naklitechie"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "rycerzes/openenv-arena-compute-lab",
+    "revision": "ba83b510391be1157c38ac4553e159a4806b13c2",
+    "url": "https://huggingface.co/datasets/rycerzes/openenv-arena-compute-lab/tree/ba83b510391be1157c38ac4553e159a4806b13c2"
+   },
+   "delta": -1,
+   "evaluated_at": 1791747512.195666,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "Verified Compute Lab (Workbench v2)",
+   "owner": "space:rycerzes",
+   "run_id": "b7b099ac6e17f44a4c665a01",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    }
+   },
+   "solved": 3,
+   "source": "arena",
+   "steps": 110,
+   "submission_id": "verified-compute-lab-v2",
+   "tasks": 29,
+   "total": 40,
+   "user": "rycerzes"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "rca-umb/five-desks",
+    "revision": "453b36d72ce3fbf2426c3cb116af5221b95a5adb",
+    "url": "https://huggingface.co/datasets/rca-umb/five-desks/tree/453b36d72ce3fbf2426c3cb116af5221b95a5adb"
+   },
+   "delta": -3,
+   "evaluated_at": 1791757066.887959,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "Five Desks v3: find the caveat (eight domains)",
+   "owner": "space:rca-umb",
+   "run_id": "ecbdaf68dc5cee84b21c34de",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 1,
+   "source": "arena",
+   "steps": 172,
+   "submission_id": "five-desks-v3",
+   "tasks": 8,
+   "total": 40,
+   "user": "rca-umb"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "NoeFlandre/workbench-gym",
+    "revision": "5579693d8391fcc273bb1d5e39e0854c1abcf78a",
+    "url": "https://huggingface.co/datasets/NoeFlandre/workbench-gym/tree/5579693d8391fcc273bb1d5e39e0854c1abcf78a"
+   },
+   "delta": 0,
+   "evaluated_at": 1791757933.2665849,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "Workbench Gym",
+   "owner": "space:NoeFlandre",
+   "run_id": "fddce64c37df08faee9081f2",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    }
+   },
+   "solved": 4,
+   "source": "arena",
+   "steps": 144,
+   "submission_id": "workbench-gym-v2",
+   "tasks": 36,
+   "total": 40,
+   "user": "NoeFlandre"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "ruv/metaharness-arena-tasks",
+    "revision": "c359366240115bfb24d2edae807c8e52ed5b39f0",
+    "url": "https://huggingface.co/datasets/ruv/metaharness-arena-tasks/tree/c359366240115bfb24d2edae807c8e52ed5b39f0"
+   },
+   "delta": 0,
+   "evaluated_at": 1791779021.0662167,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "MetaHarness Procedural Reasoning (mixed-signal cells)",
+   "owner": "space:ruv",
+   "run_id": "9b4d8ace31173c7ce5155869",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 4,
+   "source": "arena",
+   "steps": 276,
+   "submission_id": "metaharness-mix8-20261012",
+   "tasks": 8,
+   "total": 40,
+   "user": "ruv"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "delta": -2,
+   "evaluated_at": 1791782842.4501278,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "Quantitative Reasoning Lab v4",
+   "owner": "space:Louistiti",
+   "run_id": "9134d27884edb3532682106b",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 2,
+   "source": "arena",
+   "steps": 118,
+   "submission_id": "quantitative-reasoning-lab-v4",
+   "tasks": 2,
+   "total": 40,
+   "user": "Louistiti"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "Syndicate604/evidence-desk",
+    "revision": "f7dd2077c4b8fe6db8f4799c2d20844f6bc3ae10",
+    "url": "https://huggingface.co/datasets/Syndicate604/evidence-desk/tree/f7dd2077c4b8fe6db8f4799c2d20844f6bc3ae10"
+   },
+   "delta": -1,
+   "evaluated_at": 1791800306.517447,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "Evidence Desk: ledger baseline",
+   "owner": "space:Syndicate604",
+   "run_id": "b8760b0b0db16e1842956802",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    }
+   },
+   "solved": 3,
+   "source": "arena",
+   "steps": 253,
+   "submission_id": "evidence-desk-v1",
+   "tasks": 2,
+   "total": 40,
+   "user": "Syndicate604"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "Profa-QE/openenv-qe-arena-tasks",
+    "revision": "2a76fb4d2308a96982c929df1d41901ab8273835",
+    "url": "https://huggingface.co/datasets/Profa-QE/openenv-qe-arena-tasks/tree/2a76fb4d2308a96982c929df1d41901ab8273835"
+   },
+   "delta": 0,
+   "evaluated_at": 1791803097.152175,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "QE Arena: bug repair and mutation kill (Profa-QE)",
+   "owner": "space:Profa-QE",
+   "run_id": "c583c91a8555ec252893d574",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 4,
+   "source": "arena",
+   "steps": 267,
+   "submission_id": "profa-qe-arena-v1",
+   "tasks": 5,
+   "total": 40,
+   "user": "Profa-QE"
+  }
+ ],
+ "tasks_per_domain": 5
+}

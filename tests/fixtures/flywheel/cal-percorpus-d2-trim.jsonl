@@ -1,0 +1,16 @@
+{"attempt": 0, "completion_tokens": 158, "corpus": "aggregate_risk_factors", "end": "submit", "invalid": 0, "prompt_tokens_last": 1275, "reward": 1.0, "seconds": 10.3, "seed": 940000, "steps": 5, "task_id": "qe_bugfix-d2"}
+{"attempt": 1, "completion_tokens": 211, "corpus": "aggregate_risk_factors", "end": "submit", "invalid": 0, "prompt_tokens_last": 1328, "reward": 1.0, "seconds": 11.2, "seed": 940000, "steps": 5, "task_id": "qe_bugfix-d2"}
+{"attempt": 0, "completion_tokens": 222, "corpus": "aggregate_risk_factors", "end": "submit", "invalid": 0, "prompt_tokens_last": 1734, "reward": 1.0, "seconds": 12.7, "seed": 940001, "steps": 7, "task_id": "qe_bugfix-d2"}
+{"attempt": 1, "completion_tokens": 57, "corpus": "aggregate_risk_factors", "end": "submit", "invalid": 0, "prompt_tokens_last": 1120, "reward": 0.0, "seconds": 5.7, "seed": 940001, "steps": 4, "task_id": "qe_bugfix-d2"}
+{"attempt": 0, "corpus": "alternate_chat_roles", "end": "error", "error": "no usable bugfix task for qe_bugfix-d2 seed 940000", "reward": null, "seed": 940000, "task_id": "qe_bugfix-d2"}
+{"attempt": 1, "corpus": "alternate_chat_roles", "end": "error", "error": "no usable bugfix task for qe_bugfix-d2 seed 940000", "reward": null, "seed": 940000, "task_id": "qe_bugfix-d2"}
+{"attempt": 0, "corpus": "alternate_chat_roles", "end": "error", "error": "no usable bugfix task for qe_bugfix-d2 seed 940001", "reward": null, "seed": 940001, "task_id": "qe_bugfix-d2"}
+{"attempt": 1, "corpus": "alternate_chat_roles", "end": "error", "error": "no usable bugfix task for qe_bugfix-d2 seed 940001", "reward": null, "seed": 940001, "task_id": "qe_bugfix-d2"}
+{"attempt": 0, "completion_tokens": 148, "corpus": "flaky_run_summary", "end": "submit", "invalid": 0, "prompt_tokens_last": 1402, "reward": 1.0, "seconds": 8.2, "seed": 940000, "steps": 4, "task_id": "qe_bugfix-d2"}
+{"attempt": 1, "completion_tokens": 163, "corpus": "flaky_run_summary", "end": "submit", "invalid": 0, "prompt_tokens_last": 1417, "reward": 1.0, "seconds": 8.1, "seed": 940000, "steps": 4, "task_id": "qe_bugfix-d2"}
+{"attempt": 0, "completion_tokens": 79, "corpus": "flaky_run_summary", "end": "submit", "invalid": 0, "prompt_tokens_last": 1332, "reward": 0.0, "seconds": 5.0, "seed": 940001, "steps": 4, "task_id": "qe_bugfix-d2"}
+{"attempt": 1, "completion_tokens": 79, "corpus": "flaky_run_summary", "end": "submit", "invalid": 0, "prompt_tokens_last": 1332, "reward": 0.0, "seconds": 5.5, "seed": 940001, "steps": 4, "task_id": "qe_bugfix-d2"}
+{"attempt": 0, "corpus": "spec_readiness_score", "end": "error", "error": "no usable bugfix task for qe_bugfix-d2 seed 940000", "reward": null, "seed": 940000, "task_id": "qe_bugfix-d2"}
+{"attempt": 1, "corpus": "spec_readiness_score", "end": "error", "error": "no usable bugfix task for qe_bugfix-d2 seed 940000", "reward": null, "seed": 940000, "task_id": "qe_bugfix-d2"}
+{"attempt": 0, "completion_tokens": 93, "corpus": "spec_readiness_score", "end": "submit", "invalid": 0, "prompt_tokens_last": 1790, "reward": 1.0, "seconds": 8.3, "seed": 940001, "steps": 5, "task_id": "qe_bugfix-d2"}
+{"attempt": 1, "completion_tokens": 609, "corpus": "spec_readiness_score", "end": "submit", "invalid": 1, "prompt_tokens_last": 2845, "reward": 1.0, "seconds": 20.6, "seed": 940001, "steps": 7, "task_id": "qe_bugfix-d2"}

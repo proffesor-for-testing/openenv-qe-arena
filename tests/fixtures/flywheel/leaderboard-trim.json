@@ -1,0 +1,287 @@
+{
+ "_note": "Trimmed copy of the public GET https://openenvarena-arena.hf.space/api/leaderboard on 2026-10-12: entries[] dropped, 3 of 37 runs kept verbatim.",
+ "baseline": {
+  "attempts_per_task": 1,
+  "measured": "2026-10-07",
+  "model": "Qwen3.8-27B",
+  "note": "base model, before any training",
+  "revision": "1d4bf0f",
+  "scores": {
+   "cybersecurity": {
+    "solved": 0,
+    "total": 5
+   },
+   "finance-economics": {
+    "solved": 0,
+    "total": 5
+   },
+   "industrial-physical-systems": {
+    "solved": 2,
+    "total": 5
+   },
+   "mathematics-or-formal-reasoning": {
+    "solved": 0,
+    "total": 5
+   },
+   "media-content-production": {
+    "solved": 0,
+    "total": 5
+   },
+   "natural-science": {
+    "solved": 0,
+    "total": 5
+   },
+   "office-white-collar": {
+    "solved": 2,
+    "total": 5
+   },
+   "software-engineering": {
+    "solved": 0,
+    "total": 5
+   }
+  },
+  "solved": 4,
+  "tasks": 0,
+  "total": 40
+ },
+ "benchmark": "heldout-v2",
+ "domains": [
+  {
+   "id": "software-engineering",
+   "name": "Software engineering",
+   "short": "Software"
+  },
+  {
+   "id": "industrial-physical-systems",
+   "name": "Industrial & physical systems",
+   "short": "Industrial"
+  },
+  {
+   "id": "natural-science",
+   "name": "Natural science",
+   "short": "Science"
+  },
+  {
+   "id": "office-white-collar",
+   "name": "Office & white-collar",
+   "short": "Office"
+  },
+  {
+   "id": "finance-economics",
+   "name": "Finance & economics",
+   "short": "Finance"
+  },
+  {
+   "id": "mathematics-or-formal-reasoning",
+   "name": "Math & formal reasoning",
+   "short": "Math"
+  },
+  {
+   "id": "cybersecurity",
+   "name": "Cybersecurity",
+   "short": "Security"
+  },
+  {
+   "id": "media-content-production",
+   "name": "Media & content production",
+   "short": "Media"
+  }
+ ],
+ "max_tasks": 50,
+ "next_cursor": null,
+ "runs": [
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "burtenshaw/openenv-sql-investigation",
+    "revision": "2ce79be32f693c42d90b8febf1bef5f485024096",
+    "url": "https://huggingface.co/datasets/burtenshaw/openenv-sql-investigation/tree/2ce79be32f693c42d90b8febf1bef5f485024096"
+   },
+   "delta": 0,
+   "evaluated_at": 1791464238.1075242,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "SQL Investigation Lab",
+   "owner": "space:burtenshaw",
+   "run_id": "16b837f08ba5e6d59b7c4779",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.4,
+     "solved": 2,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 4,
+   "source": "arena",
+   "steps": 10,
+   "submission_id": "sql-investigation-v5",
+   "tasks": 10,
+   "total": 40,
+   "user": "burtenshaw"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "ruv/metaharness-arena-tasks",
+    "revision": "c359366240115bfb24d2edae807c8e52ed5b39f0",
+    "url": "https://huggingface.co/datasets/ruv/metaharness-arena-tasks/tree/c359366240115bfb24d2edae807c8e52ed5b39f0"
+   },
+   "delta": 0,
+   "evaluated_at": 1791519590.728545,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "MetaHarness Procedural Reasoning (mixed-signal cells)",
+   "owner": "space:ruv",
+   "run_id": "accd075dcaf721b0d7ee15e1",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.6,
+     "solved": 3,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    }
+   },
+   "solved": 4,
+   "source": "arena",
+   "steps": 274,
+   "submission_id": "metaharness-mix8-20261009",
+   "tasks": 8,
+   "total": 40,
+   "user": "ruv"
+  },
+  {
+   "benchmark": "heldout-v2",
+   "dataset": {
+    "repo": "ruv/metaharness-arena-tasks",
+    "revision": "c359366240115bfb24d2edae807c8e52ed5b39f0",
+    "url": "https://huggingface.co/datasets/ruv/metaharness-arena-tasks/tree/c359366240115bfb24d2edae807c8e52ed5b39f0"
+   },
+   "delta": -2,
+   "evaluated_at": 1791692764.833564,
+   "model_id": "Qwen/Qwen3.8-27B",
+   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+   "name": "MetaHarness Procedural Reasoning (office focus)",
+   "owner": "space:ruv",
+   "run_id": "2b1bed069459db5b029cbf52",
+   "scores": {
+    "cybersecurity": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "finance-economics": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "industrial-physical-systems": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "mathematics-or-formal-reasoning": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "media-content-production": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "natural-science": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    },
+    "office-white-collar": {
+     "score": 0.2,
+     "solved": 1,
+     "total": 5
+    },
+    "software-engineering": {
+     "score": 0.0,
+     "solved": 0,
+     "total": 5
+    }
+   },
+   "solved": 2,
+   "source": "arena",
+   "steps": 245,
+   "submission_id": "metaharness-office-20261011",
+   "tasks": 1,
+   "total": 40,
+   "user": "ruv"
+  }
+ ],
+ "tasks_per_domain": 5
+}
