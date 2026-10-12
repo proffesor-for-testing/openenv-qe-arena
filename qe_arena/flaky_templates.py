@@ -7,7 +7,7 @@ import json
 import random
 from dataclasses import dataclass, field
 
-from .flaky import TICK
+from .flaky import FRAC_SWEEP, TICK
 
 P_TWIN = 0.85  # a decoy on the flaky test's facility uses the very template the flaky test uses
 SINGLE = ("draw", "frac", "now", "pool")
@@ -19,10 +19,12 @@ FLOAT_FORMS = (  # (setup line or "", asserted expression); {a} {b} are constant
     ("", "(w + {a}) + {b} == w + ({a} + {b})"), ("", "w * {a} * {b} == w * ({a} * {b})"),
     ("total = w * {a}", "total / {a} == w"), ("total = w / {a}", "total * {a} == w"),
     ("total = w + {a}", "total - {a} == w"), ("parts = [{p}]", "sum(parts) == {q}"),
+    ("", "w * {a} == {a} * w"), ("", "w + {a} == {a} + w"), ("total = w + {a}", "total == {a} + w"),
 )
+POW2 = frozenset({"0.5", "0.25", "0.125", "2", "4", "8", "16"})
 _r = random.Random(20261012)
 FRAC_SAMPLE = [_r.randrange(1, 2147483647) / 2147483647 for _ in range(3000)]
-FRAC_GRID = [i / 64 for i in range(1, 64)] + [i / 10 for i in range(1, 10)] + [i / 97 for i in range(1, 97, 3)]
+FRAC_GRID = FRAC_SWEEP  # values env.frac can actually produce
 _FLOAT_CLASS: dict[tuple[str, str], str] = {}
 
 
@@ -111,10 +113,12 @@ def _float_class(setup: str, expr: str) -> str:
 
 
 def _float_expr(rng: random.Random, want: str, form: int | None = None) -> tuple[str, str, int] | None:
-    for attempt in range(200):
+    pow2 = rng.random() < 0.5  # exact and inexact checks both come with power-of-two and other constants
+    pool = [c for c in CONSTS if (c in POW2) == pow2]
+    for attempt in range(300):
         index = form if form is not None and attempt < 100 else rng.randrange(len(FLOAT_FORMS))
         setup, expr = FLOAT_FORMS[index]
-        a, b = rng.sample(CONSTS, 2)
+        a, b = rng.sample(pool if attempt < 200 else CONSTS, 2)
         terms = ["w", a, b]
         rng.shuffle(terms)
         fields = {"a": a, "b": b, "p": ", ".join(terms), "q": " + ".join(rng.sample(["w", a, b], 3))}
@@ -147,6 +151,10 @@ def single_check(p: Plan, facility: str, mode: str) -> Check | None:
             return None
         (a, oa), (b, ob) = rows[0], rows[1]
         want = f"== {oa!r}" if bad or same else f"in ({_lit([r[1] for r in rows])})"
+        if bad and rng.random() < 0.4:  # a faulty check spelled like a safe one: the tuple misses one branch
+            other = next((o for _, o in p.rows if all(not (o == r[1]) for r in rows)), None)
+            if other is not None:
+                want = f"in ({_lit([oa, other] if rng.random() < 0.5 else [other, oa])})"
         repair = [f"assert {p.call(a)} == {oa!r}"] if bad else None
         if tmpl == "list":
             items = [r[0] for r in rows]
@@ -183,6 +191,9 @@ def single_check(p: Plan, facility: str, mode: str) -> Check | None:
         index = rng.choice((0, -1))
         target = (a, oa) if index == 0 else (b, ob)
         want = f"== {target[1]!r}" if bad or same else f"in ({oa!r}, {ob!r})"
+        other = next((o for _, o in p.rows if not (o == oa) and not (o == ob)), None)
+        if bad and other is not None and rng.random() < 0.4:
+            want = f"in ({_lit([target[1], other] if rng.random() < 0.5 else [other, target[1]])})"
         return Check([f"first = env.pool([{a!r}, {b!r}])[{index}]", f"assert {E}(*first) {want}"], [a, b],
                      [f"assert {p.call(target[0])} == {target[1]!r}"] if bad else None)
     rows = p.distinct(1)
@@ -201,25 +212,36 @@ def single_check(p: Plan, facility: str, mode: str) -> Check | None:
             p.form = form
         lines = ["w = env.frac()"] + ([setup] if setup else []) + [f"assert {p.call(a)} == {oa!r} and {expr}"]
         return Check(lines, [a], [f"assert {p.call(a)} == {oa!r}"] if bad else None)
-    bucket = rng.choice((4000, 5000, 10000) if bad and p.low else (500, 1000, 2000, 2500))
+    bucket = rng.choice((4000, 5000, 10000) if bad and p.low else (500, 1000, 2000, 2500) if bad else
+                        (500, 1000, 2000, 2500, 4000, 5000, 10000))
     got = [f"got = {p.call(a)}"]
     repair = got + [f"assert got == {oa!r}"] if bad else None
     if tmpl == "filler":
         return Check(["start = env.now()"] + got + [f"assert got == {oa!r} and env.now() - start < {bucket}"], [a])
-    if tmpl == "stamp":
-        if bad or imitate or rng.random() < 0.6:
-            first = f"stamp = env.now() // {bucket}" if bad else f"stamp = (env.now() + {TICK}) // {bucket}"
-            return Check([first] + got + [f"assert got == {oa!r} and env.now() // {bucket} == stamp"], [a], repair)
-        m = rng.choice((2, 5, 10, 25, 50, 125, 250))
-        return Check([f"stamp = env.now() % {m}"] + got + [f"assert got == {oa!r} and env.now() % {m} == stamp"], [a])
-    if tmpl == "window":
-        later = "env.now()" if bad else f"(env.now() - {TICK})"
-        return Check(["start = env.now()"] + got + [f"assert got == {oa!r} and {later} // {bucket} == start // {bucket}"],
-                     [a], repair)
-    first = f"deadline = (env.now() // {bucket} + 1) * {bucket}" if bad else \
-        f"deadline = (env.now() + {TICK}) // {bucket} * {bucket} + {bucket}" if imitate or rng.random() < 0.5 else \
-        f"deadline = env.now() + {bucket}"
-    return Check([first] + got + [f"assert got == {oa!r} and env.now() < deadline"], [a], repair)
+    B, T = bucket, TICK
+    # (first line, check): the second read is always the first plus the tick, so each pair is faulty or safe
+    faulty = {"stamp": [(f"stamp = env.now() // {B}", f"env.now() // {B} == stamp"),
+                        (f"stamp = (env.now() + {T}) // {B}", f"(env.now() - {T}) // {B} == stamp"),
+                        (f"stamp = (env.now() - {T}) // {B}", f"env.now() // {B} == stamp")],
+              "window": [("start = env.now()", f"env.now() // {B} == start // {B}"),
+                         (f"start = env.now() - {T}", f"env.now() // {B} == start // {B}")],
+              "deadline": [(f"deadline = (env.now() // {B} + 1) * {B}", "env.now() < deadline"),
+                           (f"deadline = (env.now() - {T}) // {B} * {B} + {B}", "env.now() < deadline")]}
+    safe = {"stamp": [(f"stamp = (env.now() + {T}) // {B}", f"env.now() // {B} == stamp"),
+                      (f"stamp = env.now() // {B}", f"(env.now() - {T}) // {B} == stamp"),
+                      (f"stamp = env.now() // {B}", f"env.now() // {B} - stamp <= 1"),
+                      (f"stamp = (env.now() - {T}) // {B}", f"env.now() // {B} >= stamp")],
+            "window": [("start = env.now()", f"(env.now() - {T}) // {B} == start // {B}"),
+                       ("start = env.now()", f"env.now() // {B} - start // {B} <= 1")],
+            "deadline": [(f"deadline = (env.now() + {T}) // {B} * {B} + {B}", "env.now() < deadline"),
+                         (f"deadline = env.now() + {B}", "env.now() < deadline")]}
+    options = faulty[tmpl][:1 if p.low and tmpl != "stamp" else None] if bad else safe[tmpl]
+    if bad and B == 500:  # a two-tick window on a 500 ms bucket would fail on every run
+        options = [o for o in options if f"- {T}" not in o[0]]
+    if bad and p.low and tmpl == "stamp":
+        options = options[:2]  # keep a low-rate flake's window at one tick
+    first, check = rng.choice(options)
+    return Check([first] + got + [f"assert got == {oa!r} and {check}"], [a], repair)
 
 
 def state_unit(p: Plan, mode: str, key: str, single: bool = False) -> list[list[Check]] | None:
@@ -230,9 +252,11 @@ def state_unit(p: Plan, mode: str, key: str, single: bool = False) -> list[list[
         if rows is None:
             return None
         (c, oc), = rows
+        p.state[key] = c
         if rng.random() < 0.5:
             return [[Check([f"{D}[{key!r}] = {c!r}", f"assert {E}(*{D}[{key!r}]) == {oc!r}"], [c])]]
-        p.state[key] = c
+        if rng.random() < 0.5:
+            return [[Check([f"case = {D}[{key!r}]", f"assert {E}(*case) == {oc!r}"], [c])]]
         return [[Check([f"assert {E}(*{D}[{key!r}]) == {oc!r}"], [c])]]
     reader_zone = p.zone
     rows = p.distinct(1)

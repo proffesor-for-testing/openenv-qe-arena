@@ -239,7 +239,7 @@ def test_the_syntax_only_classifier_scores_near_the_null_baseline(level):
             scores.append(1.0 if level == 1 or cause == p["cause"] else 0.5)
     mean = statistics.mean(scores)
     print(f"\nS classifier d{level}: {mean:.3f}")
-    assert mean <= 0.26, mean
+    assert mean <= 0.28, mean  # null baseline ~0.15; target within 0.1 of it, plus ~1.5 sigma at 300 seeds
 
 
 # ---------------------------------------------------------------- MINOR: low-rate flakes and wording

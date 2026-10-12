@@ -161,7 +161,13 @@ def _build(task_id, level, seed, rng, corpus_name, entry, function, rows, cause,
         return _reject("no_decoy_rows")
     for checks in plan:
         if rng.random() < P_MIX[level]:
-            extra = single_check(p, rng.choice([f for f in SINGLE if f != facility]), "safe")
+            kind = rng.choice([f for f in SINGLE if f != facility] + ["state"])
+            if kind == "state":  # a test that writes and reads its own dict entry, harmless wherever it sits
+                key = [k for k in KEY_NAMES if k not in p.state and k != names["state_key"]]
+                unit = state_unit(p, "safe", rng.choice(key), single=True) if key else None
+                extra = unit[0][0] if unit else None
+            else:
+                extra = single_check(p, kind, "safe")
             if extra:
                 checks.append(extra)
     test_names = [f"test_{w}" for w in rng.sample(words, len(plan))]
