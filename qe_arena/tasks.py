@@ -151,7 +151,8 @@ def _budget_text(budget: int, allowance: int) -> str:
     return (f"Edit budget: {budget} characters in total, counted as len(old) + len(new) over all your edits; "
             "every edit reply shows what is left. Only a localised repair is accepted: keep every function and "
             "all top-level code as they are (no new or redefined functions, no lambdas, no dead code such as an "
-            f"early return or a constant condition) and change at most {allowance} syntax tokens in total. "
+            "early return or a constant condition; a `try: return X / except: pass` fallback counts as an "
+            f"unreachable fall-through and is refused) and change at most {allowance} syntax tokens in total. "
             "An edit that breaks either rule is refused and not applied. The first "
             f"{MAX_FREE_REFUSALS} refusals do not use a step; later ones do. Graded files must follow the same rules.")
 
