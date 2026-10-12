@@ -231,7 +231,7 @@ def test_guarded_rewrites_behind_any_fixed_test_never_pay(d4_tasks, guard):
         fn = _entry(ast.parse(p["original"]), p["entry"])
         arg = fn.args.args[0].arg if fn.args.args else "0"
         lineno, ind = _first_code_line(p["buggy"], p["entry"])
-        text = f"{ind}if {guard.format(fn_arg=arg)}:\n" + _indent(_correct_body(p["original"], p["entry"]), ind + "    ")
+        text = f"{ind}if {guard.replace('{fn_arg}', arg)}:\n" + _indent(_correct_body(p["original"], p["entry"]), ind + "    ")
         lines = p["buggy"].splitlines(keepends=True)
         attacked = "".join(lines[:lineno - 1]) + text + "".join(lines[lineno - 1:])
         assert tasks.grade_bugfix(task, attacked) == 0.0, (task.seed, guard)
