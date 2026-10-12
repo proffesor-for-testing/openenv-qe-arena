@@ -298,18 +298,14 @@ def _store_pair(p: _Plan) -> tuple[tuple, tuple, int] | None:
     """Two rows whose call keys share a prefix of at least 4 characters but whose outputs differ."""
     free = [r for r in p.rows if json.dumps(r[0]) not in p.used and r[1] is not None]
     p.rng.shuffle(free)
-    zone = p.zone
-    for i, a in enumerate(free):
-        for b in free[i + 1:]:
+    for i, first in enumerate(free):
+        for second in free[i + 1:]:
+            a, b = first, second
             if p.zones is not None:  # the reader's input must be killed, the writer's spared
-                p.zone = "kill"
-                if not p.allowed(a):
+                kill, spare = p.zones["kill"], p.zones["spare"]
+                if json.dumps(a[0]) not in kill:
                     a, b = b, a
-                ok = p.allowed(a)
-                p.zone = "spare"
-                ok = ok and p.allowed(b)
-                p.zone = zone
-                if not ok:
+                if json.dumps(a[0]) not in kill or json.dumps(b[0]) not in spare:
                     continue
             ka, kb = _key_repr(a[0]), _key_repr(b[0])
             common = next((n for n in range(min(len(ka), len(kb))) if ka[n] != kb[n]), None)
@@ -411,7 +407,7 @@ def _probe(harness: str, boxes: list[str], names: dict) -> str:
 
 
 def _varying(outcomes: list[dict], names: list[str]) -> tuple[list[str], list[str]]:
-    """(tests that both pass and fail, tests that never pass in every run)."""
+    """(tests that both pass and fail, tests that never pass)."""
     vary, broken = [], []
     for n in names:
         seen = {o.get(n) for o in outcomes}
