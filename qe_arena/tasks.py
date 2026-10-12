@@ -17,7 +17,7 @@ from typing import Any
 
 from . import corpus, mutation, sandbox
 
-FAMILIES = ("qe_bugfix", "qe_mutant_kill")
+FAMILIES = ("qe_bugfix", "qe_mutant_kill", "qe_flaky")
 DOMAIN = "software engineering"
 TASK_IDS = [f"{family}-d{level}" for family in FAMILIES for level in (1, 2, 3)]
 
@@ -386,6 +386,10 @@ def make_task(task_id: str, seed: int, *, pool: tuple[str, ...] | None = None,
     rng = random.Random(f"{task_id}:{seed}")
     if family == "qe_mutant_kill":
         return _make_mutant_kill(task_id, level, seed, rng, injected)
+    if family == "qe_flaky":
+        from .flaky import make_flaky_task  # noqa: PLC0415 - flaky imports this module
+
+        return make_flaky_task(task_id, level, seed, rng, injected)
     if fault_kind == "real" and not real:
         raise ValueError("fault_kind 'real' needs a pool with real-bug entries")
     kind = fault_kind or ("real" if real and rng.random() < REAL_SHARE else "injected")

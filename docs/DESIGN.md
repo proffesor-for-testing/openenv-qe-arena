@@ -98,6 +98,29 @@ right answer by hand). A correct `expected` on an input that does not kill earns
 give no free credit. A kill with a wrong `expected` still earns half, which keeps a learning gradient for
 partly right reasoning. The episode reward is the mean over mutants.
 
+### `qe_flaky`: find, diagnose and repair a flaky test
+
+`module.py` holds a corpus function, a suite of 3-5 tests and a fixed harness `run_suite(order, seed, t0)`. The
+sandbox has no clock and no `random`, so flakiness is simulated deterministically: each test gets an `env` whose
+seeded streams (`draw`, `frac`), fake clock (`now`) and unordered-collection order (`pool`) derive from the run's
+(order, seed, t0), and module-level dicts persist between tests within a run. One test carries one injected cause
+(`shared_state`, `cache_leak`, `shared_random`, `clock_boundary`, `unordered_iteration`, `float_equality`); the
+other tests use the same facilities safely, often in a form that looks like the faulty one. About 15% of tasks are
+clean controls with no flaky test, where the right answer is `{"test": null}`.
+
+| Level | What the model does | Reward |
+|---|---|---|
+| d1 | Name the flaky test (or null) | 1.0 for the right test |
+| d2 | Name the test and its cause | 0.5 for the test, 1.0 with the cause |
+| d3 | Repair the test by edits, then name it | 0.5 for the test; 1.0 only if the suite passes on all K graded runs and the repaired test fails on every run against a reference mutant |
+
+Ground truth comes from execution, not the generator: the suite runs under K = 24 hidden combinations; exactly one
+test must both pass and fail and every other test must always pass, and the cause is the single facility whose
+per-test reset (a grader-only harness variant) makes that test constant. The d3 mutant returns a different value on
+every input the faulty check uses and the same value on every input any other test uses, so `assert True`, deleted
+assertions, early returns, swallowed failures and conditional skips earn at most 0.5. Shown runs (all passing) use
+seeds disjoint from the graded ones. Code lives in `qe_arena/flaky.py`; tests in `tests/test_flaky.py`.
+
 ## Action protocol (one schema for both families)
 
 ```json
