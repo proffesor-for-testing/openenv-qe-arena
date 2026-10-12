@@ -173,7 +173,7 @@ def test_pool_accounting_through_warm_dispatch_failure_and_shutdown(monkeypatch)
     monkeypatch.undo()
 
     class Broken:
-        def __init__(self):
+        def __init__(self, *args):  # ported: _Worker now receives the dispatch deadline
             raise RuntimeError("no start")
     monkeypatch.setattr(sandbox, "_Worker", Broken)
     with pytest.raises(RuntimeError):
@@ -205,6 +205,9 @@ def test_budgets_harness_and_memory_are_pinned_literals():
 
 
 class _FakeWorker:
+    def __init__(self, *args):  # _acquire passes the dispatch deadline
+        pass
+
     def close(self):
         pass
 

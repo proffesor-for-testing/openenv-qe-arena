@@ -6,6 +6,7 @@ deterministic, so the old wall-clock and rlimit tests are now exact fuel and WAS
 
 from __future__ import annotations
 
+import collections
 import ctypes
 import importlib.metadata
 import json
@@ -34,7 +35,7 @@ CORPUS = ROOT / "qe_arena" / "corpus"
 
 # Cross-host golden: identical on arm64 macOS, amd64 Linux and the amd64 arena image. Regenerate only
 # when the runtime, guest harness, budgets, SAFE_EXPORTS or corpus change, and say why in the commit.
-CORPUS_FINGERPRINT = ("dc04044963628f04", 221_670_568, 2880)
+CORPUS_FINGERPRINT = ("f50dbb1dd3917498", 1_732_616_699, 2880)
 
 
 def ok(value):
@@ -161,7 +162,7 @@ def test_a_looping_call_ends_at_exactly_its_budget_and_skips_the_rest():
     assert [(r.kind, r.value) for r in results] == [("ok", 0), ("ok", 2), ("fuel", None), ("skipped", None),
                                                      ("skipped", None)]
     assert results[2].fuel == FUEL_PER_CALL
-    assert all(0 < r.fuel < 100_000 for r in results if r.kind == "ok")
+    assert all(0 < r.fuel < 1_000_000 for r in results if r.kind == "ok")  # call + result row + cleanup
 
 
 def test_a_trap_never_lets_later_calls_run_on_reconstructed_state():
@@ -321,6 +322,26 @@ def test_a_caught_resource_failure_is_still_resource(src, call):
     assert r.kind == "resource", r
 
 
+# Codex follow-up #1: the resource check ran before the call's objects were released, so a generator
+# whose finally raised and caught RecursionError during cleanup left a settled exc behind.
+CLEANUP_RECURSION = ("def f():\n"
+                     "    def g():\n        try:\n            yield 1\n        finally:\n"
+                     "            try:\n                raise RecursionError()\n            except Exception:\n                pass\n"
+                     "    def started():\n        it = g(); next(it); return it\n"
+                     "    raise ValueError(started())\n")
+CLEANUP_CYCLE = ("def f():\n"
+                 "    def g():\n        try:\n            yield 1\n        finally:\n"
+                 "            try:\n                raise RecursionError()\n            except Exception:\n                pass\n"
+                 "    box = []\n    it = g(); next(it); box.append(it); box.append(box)  # only a collection frees it\n"
+                 "    return 1\n")
+
+
+@pytest.mark.parametrize("src", [CLEANUP_RECURSION, CLEANUP_CYCLE])
+def test_a_resource_failure_during_cleanup_is_still_resource(src):
+    assert static_gate(src) == []
+    assert kinds(run_calls(src, "f", [[], []])) == ["resource", "resource"]
+
+
 def test_the_memory_cap_cannot_choose_a_settled_value():
     big = 10**9  # the fill costs more than the default budget
     small = run_calls(CAUGHT, "f", [[20_000_000]], mem_mb=64, fuel=big)
@@ -442,7 +463,7 @@ def test_batch_of_64_calls_costs_a_fixed_small_amount_of_fuel():
     # The gating cost check is in fuel, which load cannot move: wall-clock asserts flaked on ruos.
     first, second = run_calls(BENCH_SRC, "f", BENCH_CALLS), run_calls(BENCH_SRC, "f", BENCH_CALLS)
     assert kinds(first) == ["ok"] * 64 and outcome(first) == outcome(second)
-    assert sum(r.fuel for r in first) == 6_384_032 and max(r.fuel for r in first) < FUEL_PER_CALL // 100
+    assert sum(r.fuel for r in first) == 39_940_964 and max(r.fuel for r in first) < FUEL_PER_CALL // 100
 
 
 @pytest.mark.skipif(os.environ.get("QE_ARENA_BENCH") != "1", reason="wall-clock benchmark; set QE_ARENA_BENCH=1")
@@ -563,7 +584,7 @@ def test_a_stopped_pool_worker_is_replaced_within_the_backstop(monkeypatch):
 class _FakeWorker:
     made = 0
 
-    def __init__(self):
+    def __init__(self, *args):
         type(self).made += 1
         if type(self).made == 2:
             raise RuntimeError("simulated startup failure")
@@ -576,6 +597,8 @@ def test_pool_acquisition_has_a_deadline(monkeypatch):
     monkeypatch.setenv("QE_ARENA_WASI_WORKERS", "1")
     monkeypatch.setattr(sandbox, "_IDLE", [])
     monkeypatch.setattr(sandbox, "_LIVE", [1])  # the only worker is busy elsewhere
+    monkeypatch.setattr(sandbox, "_WAITING", collections.deque())  # isolate every piece of pool state:
+    monkeypatch.setattr(sandbox, "_INFLIGHT", collections.Counter())  # a leaked count blocks later tests
     monkeypatch.setattr(sandbox, "BATCH_BACKSTOP_S", 0.3)
     t = time.monotonic()
     assert sandbox._dispatch({"probe": "surface"}) == "pool timeout"
@@ -588,6 +611,8 @@ def test_a_failing_warm_up_returns_the_workers_it_started(monkeypatch):
     monkeypatch.setattr(sandbox, "_IDLE", [])
     monkeypatch.setattr(sandbox, "_LIVE", [0])
     monkeypatch.setattr(sandbox, "_Worker", _FakeWorker)
+    monkeypatch.setattr(sandbox, "_WAITING", collections.deque())  # isolate every piece of pool state:
+    monkeypatch.setattr(sandbox, "_INFLIGHT", collections.Counter())  # a leaked count blocks later tests
     _FakeWorker.made = 0
     with pytest.raises(RuntimeError):
         sandbox.warm()
@@ -595,6 +620,28 @@ def test_a_failing_warm_up_returns_the_workers_it_started(monkeypatch):
     first = sandbox._acquire(time.monotonic() + 1)      # neither the pool nor a retry is stuck
     again = sandbox._acquire(time.monotonic() + 1)
     assert sandbox._LIVE[0] == 2 and first is not again
+
+
+# Codex follow-up #3: worker startup waited WORKER_STARTUP_S regardless of the dispatch deadline.
+SLOW_START = "import time; time.sleep(30); print('{\"ready\": true}', flush=True)"
+
+
+def test_worker_startup_never_outlives_the_dispatch_deadline(monkeypatch):
+    import collections  # noqa: PLC0415
+    real = sandbox.subprocess.Popen
+    monkeypatch.setattr(sandbox.subprocess, "Popen", lambda cmd, **kw: real([sys.executable, "-c", SLOW_START], **kw))
+    t = time.monotonic()
+    with pytest.raises(RuntimeError, match="did not start"):
+        sandbox._Worker(time.monotonic() + 0.5)
+    assert time.monotonic() - t < 5.0
+    monkeypatch.setattr(sandbox, "_IDLE", [])
+    monkeypatch.setattr(sandbox, "_LIVE", [0])
+    monkeypatch.setattr(sandbox, "_WAITING", collections.deque())
+    monkeypatch.setattr(sandbox, "_INFLIGHT", collections.Counter())
+    monkeypatch.setattr(sandbox, "BATCH_BACKSTOP_S", 0.5)
+    t = time.monotonic()
+    assert sandbox._dispatch({"probe": "surface"}).startswith("worker start failed")
+    assert time.monotonic() - t < 5.0 and sandbox._LIVE[0] == 0
 
 
 def test_wasmtime_private_fuel_surface_is_pinned():
@@ -758,6 +805,16 @@ def test_format_traversal_reproductions_are_rejected(src):
 ])
 def test_static_gate_rejects_runtime_traversal_routes(src):
     assert static_gate(src), src
+
+
+@pytest.mark.parametrize("literal, rejected", [
+    ("prefix_f_back", False), ("f_back_suffix", False), ("x_f_back_y", False), ("lines_of_code", False),
+    ("f_back", True), ("x.f_back", True), ("[f_back]", True), ("a f_locals b", True), ("{0.tb_frame}", True),
+])
+def test_traversal_names_match_as_whole_words_on_both_sides(literal, rejected):
+    # Codex follow-up #2: "_" ended a word on the left but continued it on the right, so
+    # d["prefix_f_back"] was refused while "f_back_suffix" passed.
+    assert bool(static_gate(f"def f(d):\n    return d[{literal!r}]\n")) is rejected
 
 
 def test_ordinary_formatting_still_works():

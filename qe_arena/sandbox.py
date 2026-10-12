@@ -131,8 +131,11 @@ DENIED_ATTRS = frozenset({"mro", "format_map", "get_field", "vformat", "convert_
 # positions or names, and format() needs a literal spec.
 TRAVERSAL_TOKENS = ("__", "tb_frame", "tb_next", "f_back", "f_locals", "f_globals", "f_builtins", "f_code",
                     "gi_frame", "gi_code", "cr_frame", "cr_code", "ag_frame", "ag_code")
-# "__" anywhere; the frame attribute names as whole words, so "lines_of_code" in a docstring is fine
-_TRAVERSAL_RE = re.compile(r"__|(?<![A-Za-z0-9])(?:" + "|".join(TRAVERSAL_TOKENS[1:]) + r")(?![A-Za-z0-9_])")
+# "__" anywhere; the frame attribute names as whole identifier words, with the same boundary on both sides
+# (letters, digits and "_" continue a word), so "lines_of_code" or "prefix_f_back" is fine and ".f_back" or
+# "[f_back]" is not.
+_WORD = "A-Za-z0-9_"
+_TRAVERSAL_RE = re.compile(r"__|(?<![" + _WORD + r"])(?:" + "|".join(TRAVERSAL_TOKENS[1:]) + r")(?![" + _WORD + r"])")
 REJECTED_NODES = {
     ast.ClassDef: "class definitions are not allowed",
     ast.Global: "global statements are not allowed",
@@ -334,7 +337,9 @@ def runtime_root() -> Path:
 
 
 class _Worker:
-    def __init__(self) -> None:
+    def __init__(self, deadline: float | None = None) -> None:
+        """Start a worker and wait for its ready line, no longer than WORKER_STARTUP_S and never past
+        ``deadline`` (the caller's dispatch deadline)."""
         env = dict(os.environ, QE_ARENA_WASI_ROOT=str(runtime_root()), PYTHONDONTWRITEBYTECODE="1",
                    PYTHONPATH=os.pathsep.join(filter(None, [str(PACKAGE_PARENT), os.environ.get("PYTHONPATH")])))
         self.proc = subprocess.Popen(
@@ -342,7 +347,8 @@ class _Worker:
             stdout=subprocess.PIPE, stderr=None, env=env, close_fds=True)
         os.set_blocking(self.proc.stdin.fileno(), False)  # writes honour the deadline (see send)
         self.buf = bytearray()
-        ready = self.read(time.monotonic() + WORKER_STARTUP_S)
+        limit = time.monotonic() + WORKER_STARTUP_S
+        ready = self.read(limit if deadline is None else min(limit, deadline))
         if not (isinstance(ready, dict) and ready.get("ready")):
             self.close()
             raise RuntimeError(f"sandbox worker did not start: {ready!r}")
@@ -528,7 +534,7 @@ def _acquire(deadline: float, *, capped: bool = True) -> _Worker:
             return worker
         _LIVE[0] += 1
     try:
-        worker = _Worker()
+        worker = _Worker(deadline)
     except BaseException:
         with _POOL:
             _LIVE[0] -= 1

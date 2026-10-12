@@ -128,8 +128,9 @@ The oracle never runs in the same process as model-influenced code, and no code 
    wasi-build v3.14.7) in wasmtime 47.0.1, with a fresh Store and Instance per batch:
    - **Fuel, not time.** Every call is metered in wasmtime fuel (about one unit per wasm instruction):
      `FUEL_PER_CALL` = 100 M per call and `MODULE_FUEL` = 200 M for the module body. A call's fuel includes
-     building its result row (normalizing, serializing, `str()` of an exception), so corpus calls use 24 k
-     to 1.34 M fuel (median 58 k), a 75x margin. Between calls the harness gets only 20 M
+     building its result row (normalizing, serializing, `str()` of an exception) and releasing what the call
+     left behind (a full `gc.collect()` of objects created since setup, which the harness freezes), so corpus
+     calls use 542 k to 2.05 M fuel (median 580 k), a 49x margin. Between calls the harness gets only 20 M
      (`HARNESS_FUEL`); no candidate code runs there. A 60 s wall-clock epoch deadline exists only as an
      infrastructure backstop.
    - **Memory and stack.** Linear memory is capped at 256 MiB (`DEFAULT_MEM_MB`); the wasm stack is bounded.
@@ -161,8 +162,10 @@ The oracle never runs in the same process as model-influenced code, and no code 
      closed.
    - **Candidate code only ever runs on its call's fuel.** The result row is built before the end marker:
      the exception's `str()` (an instance can override what it calls), normalizing and serializing the
-     value, and dropping the call's objects (a generator's `finally:` runs there). The red team finished a
-     2.8e8-fuel loop inside an exception's `str()` on the harness's refill before this.
+     value, dropping the call's objects and collecting cycles (a generator's `finally:` runs there). The
+     resource flag is checked only after that cleanup, so a `RecursionError` raised and caught in a `finally:`
+     during release still makes the call `resource`. The red team finished a 2.8e8-fuel loop inside an
+     exception's `str()` on the harness's refill before this.
    - **Nothing worth reading above the candidate.** Candidate code runs below exactly two frames: the closure
      the harness's setup returns, and the root module frame, whose globals are cleared first. The nonce
      exists only inside `itertools.cycle` objects (no attribute or repr shows their bytes), the pending
@@ -276,7 +279,7 @@ The oracle never runs in the same process as model-influenced code, and no code 
      checks at startup. The Docker builder stage runs it. Both base images are pinned by digest, and wasmtime
      installs with `--require-hashes` (`requirements-wasmtime.lock`).
    - `scripts/fingerprint.py` hashes kind, value and fuel for every corpus function on 64 inputs.
-     `tests/test_sandbox.py` pins the result, currently `dc04044963628f04` with 221,670,568 total fuel over 45
+     `tests/test_sandbox.py` pins the result, currently `f50dbb1dd3917498` with 1,732,616,699 total fuel over 45
      functions (2,880 calls), identical on arm64 macOS, an amd64 Linux host and the amd64 image run with the
      arena flags. The commit that changes the pin says why.
    - Regenerate the pin only when the runtime, the guest harness, the budgets, `SAFE_EXPORTS` or the corpus

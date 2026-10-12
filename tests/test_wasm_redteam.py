@@ -149,6 +149,9 @@ def test_unsettled_outcomes_never_pay():
 # W1: one session repeatedly grading loopers could hold the shared pool. Acquisition is now first come,
 # first served among sessions under their cap, and no session holds more than pool_size - 1 workers.
 class _Fake:
+    def __init__(self, *args):  # _acquire passes the dispatch deadline
+        pass
+
     def close(self):
         pass
 

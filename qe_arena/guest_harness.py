@@ -13,7 +13,7 @@
 # variables are the candidate's own namespace plus opaque objects: the nonce exists only inside
 # itertools.cycle objects (no attribute or repr exposes their contents) and the pending inputs only
 # inside a list iterator. The request, sys.argv and sys.orig_argv are gone by then.
-import builtins, copy, itertools, json, os, sys, types
+import builtins, copy, gc, itertools, json, os, sys, types
 
 MONITOR_TOOL = 4  # sys.monitoring tool id used for the RAISE hook (0-2 and 5 are conventionally taken)
 
@@ -27,7 +27,7 @@ def _setup():
     end = itertools.cycle((b"\x01E " + nonce + b"\n",))
     head = itertools.cycle((b"\x01R " + nonce + b" ",))
     del nonce
-    write, dumps, deepcopy = os.write, json.dumps, copy.deepcopy
+    write, dumps, deepcopy, collect, freeze = os.write, json.dumps, copy.deepcopy, gc.collect, gc.freeze
 
     def emit(marker, payload=b""):
         view = memoryview(next(marker) + payload)
@@ -162,6 +162,9 @@ def _setup():
         return b'{"k": "ok", "v": ' + text.encode("utf-8", "surrogatepass") + b"}\n", len(text)
 
     def run():
+        # Everything alive now (interpreter, stdlib, harness) moves to the permanent generation, so the
+        # per-call collect() scans only what candidate code created: about 6 M fuel per call less.
+        freeze()
         ns = {"__builtins__": safe, "__name__": "candidate"}
         hit[0] = False
         emit(begin)  # the module body is metered with the module budget
@@ -196,9 +199,14 @@ def _setup():
                 payload, size = settle(value, err, total)
             except BaseException:
                 payload, size = encode({"k": "crash", "e": "result could not be read"}), 0
+            # Release everything the call left behind BEFORE the last resource check, on the call's own
+            # fuel: dropping the value, the exception (whose traceback holds the call's frames) and the
+            # arguments can run candidate code (a generator's finally block), and a cycle keeps such
+            # objects alive until a collection, so collect now rather than later in the harness.
+            value = err = args = None
+            collect()
             if hit[0]:
                 payload, size = encode({"k": "resource", "e": "memory or recursion limit reached during the call"}), 0
-            value = err = args = None  # candidate objects die here, on the call's fuel
             write(1, next(end))
             total += size
             emit(head, payload)
