@@ -11,6 +11,7 @@ from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import Action, Observation, State
 from pydantic import Field
 
+from . import sandbox
 from .sandbox import InfraError
 from .tasks import MODULE, TASK_IDS, Task, grade_bugfix, grade_mutant_kill, make_task, run_visible
 
@@ -56,8 +57,13 @@ class QEEnvironment(Environment[QEAction, QEObservation, State]):
         self._done = False
         self._reward = 0.0
         self._test_runs = 0
+        self._sandbox_session = uuid4().hex  # fairness key for the shared sandbox worker pool
 
     def reset(self, seed: int | None = None, episode_id: str | None = None, **kwargs: Any) -> QEObservation:
+        with sandbox.session(self._sandbox_session):
+            return self._reset(seed, episode_id, **kwargs)
+
+    def _reset(self, seed: int | None = None, episode_id: str | None = None, **kwargs: Any) -> QEObservation:
         task_id = kwargs.get("task_id", TASK_IDS[0])
         if seed is None:
             seed = secrets.randbelow(2**63)
@@ -81,7 +87,8 @@ class QEEnvironment(Environment[QEAction, QEObservation, State]):
             return self._observe(error="episode is terminal; reset before another attempt")
         self._state.step_count += 1
         try:
-            return self._act(action)
+            with sandbox.session(self._sandbox_session):
+                return self._act(action)
         except InfraError:
             self._state.step_count -= 1
             raise

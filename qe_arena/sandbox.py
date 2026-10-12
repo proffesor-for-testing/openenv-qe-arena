@@ -32,6 +32,9 @@ from __future__ import annotations
 
 import ast
 import atexit
+import collections
+import contextlib
+import contextvars
 import json
 import re
 import string
@@ -468,41 +471,86 @@ def _pool_size() -> int:
 _POOL = threading.Condition()
 _IDLE: list[_Worker] = []
 _LIVE = [0]
+_WAITING: collections.deque = collections.deque()  # (ticket, session, capped), oldest first
+_INFLIGHT: collections.Counter = collections.Counter()  # workers held per session
+
+# Which episode a batch belongs to. QEEnvironment sets it around reset and step, so one session cannot
+# hold every worker: a session that keeps grading looping code waits its turn like anyone else.
+_SESSION: contextvars.ContextVar = contextvars.ContextVar("qe_arena_sandbox_session", default=None)
+
+
+@contextlib.contextmanager
+def session(key: Any):
+    """Attribute the sandbox batches run inside this block to ``key`` (fairness only)."""
+    token = _SESSION.set(key)
+    try:
+        yield
+    finally:
+        _SESSION.reset(token)
+
+
+def _session_cap() -> int:
+    """Workers one session may hold at once: all but one, so another session can always get one."""
+    return max(1, _pool_size() - 1)
 
 
 class _PoolTimeout(Exception):
     pass
 
 
-def _acquire(deadline: float) -> _Worker:
-    """An idle worker, or a new one if the pool has room; waits for one until the deadline."""
+def _next_eligible() -> Any:
+    """The oldest waiting ticket whose session is under its cap (FIFO among those that may proceed)."""
+    for ticket, key, capped in _WAITING:
+        if not capped or _INFLIGHT[key] < _session_cap():
+            return ticket
+    return None
+
+
+def _acquire(deadline: float, *, capped: bool = True) -> _Worker:
+    """A worker for the current session, served first come first served among sessions under their cap.
+    Reuses an idle worker or starts one if the pool has room; waits only until the deadline."""
+    key, ticket = _SESSION.get(), object()
     with _POOL:
-        while not _IDLE and _LIVE[0] >= _pool_size():
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise _PoolTimeout("no sandbox worker became free before the deadline")
-            _POOL.wait(remaining)
+        _WAITING.append((ticket, key, capped))
+        try:
+            while _next_eligible() is not ticket or (not _IDLE and _LIVE[0] >= _pool_size()):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise _PoolTimeout("no sandbox worker became free before the deadline")
+                _POOL.wait(remaining)
+        finally:
+            _WAITING.remove(next(item for item in _WAITING if item[0] is ticket))
+            _POOL.notify_all()
+        _INFLIGHT[key] += 1
         if _IDLE:
-            return _IDLE.pop()
+            worker = _IDLE.pop()
+            worker.session = key
+            return worker
         _LIVE[0] += 1
     try:
-        return _Worker()
+        worker = _Worker()
     except BaseException:
         with _POOL:
             _LIVE[0] -= 1
-            _POOL.notify()
+            _INFLIGHT[key] -= 1
+            _POOL.notify_all()
         raise
+    worker.session = key
+    return worker
 
 
 def _release(worker: _Worker, healthy: bool) -> None:
     if not healthy:
         worker.close()
     with _POOL:
+        key = getattr(worker, "session", None)
+        if _INFLIGHT[key] > 0:
+            _INFLIGHT[key] -= 1
         if healthy:
             _IDLE.append(worker)
         else:
             _LIVE[0] -= 1
-        _POOL.notify()
+        _POOL.notify_all()
 
 
 def _dispatch(payload: dict) -> Any:
@@ -530,7 +578,7 @@ def warm() -> None:
     acquired = []
     try:
         for _ in range(_pool_size()):
-            acquired.append(_acquire(deadline))
+            acquired.append(_acquire(deadline, capped=False))
     finally:
         for worker in acquired:
             _release(worker, True)

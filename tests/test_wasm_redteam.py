@@ -6,6 +6,10 @@ attacked head and must fail now.
 
 from __future__ import annotations
 
+import collections
+import threading
+import time
+
 import pytest
 
 from qe_arena import sandbox, tasks, wasi_worker
@@ -140,3 +144,88 @@ def test_unsettled_outcomes_never_pay():
     assert mk.private["corpus"] == "glob_match"
     slow = [{"args": ["a*" * 8 + "b", "a" * 200], "expected": False}]   # original runs out of fuel
     assert tasks.grade_mutant_kill(mk, {"tests": slow}) == 0.0
+
+
+# W1: one session repeatedly grading loopers could hold the shared pool. Acquisition is now first come,
+# first served among sessions under their cap, and no session holds more than pool_size - 1 workers.
+class _Fake:
+    def close(self):
+        pass
+
+
+@pytest.fixture
+def fake_pool(monkeypatch):
+    monkeypatch.setattr(sandbox, "_IDLE", [])
+    monkeypatch.setattr(sandbox, "_LIVE", [0])
+    monkeypatch.setattr(sandbox, "_WAITING", collections.deque())
+    monkeypatch.setattr(sandbox, "_INFLIGHT", collections.Counter())
+    monkeypatch.setattr(sandbox, "_Worker", _Fake)
+    return monkeypatch
+
+
+def _acquire_as(key, out, deadline=5.0):
+    with sandbox.session(key):
+        try:
+            out.append((key, sandbox._acquire(time.monotonic() + deadline)))
+        except sandbox._PoolTimeout:
+            pass  # the caller checks that nothing was acquired
+
+
+def test_one_session_cannot_hold_every_worker(fake_pool):
+    fake_pool.setenv("QE_ARENA_WASI_WORKERS", "2")
+    held = []
+    _acquire_as("looper", held)
+    second = []
+    blocked = threading.Thread(target=_acquire_as, args=("looper", second, 0.5))
+    blocked.start()
+    time.sleep(0.1)
+    honest = []
+    _acquire_as("honest", honest, 0.5)       # served at once, although the looper asked first
+    assert honest and not second
+    blocked.join()
+    assert not second                        # the looper's second request timed out at its cap
+    sandbox._release(held[0][1], True)
+    _acquire_as("looper", second)            # with its first worker back it is served again
+    assert second
+
+
+def test_waiters_are_served_first_come_first_served(fake_pool):
+    fake_pool.setenv("QE_ARENA_WASI_WORKERS", "1")
+    held, order = [], []
+    _acquire_as("first", held)
+    threads = []
+    for key in ("a", "b", "c"):
+        t = threading.Thread(target=_acquire_as, args=(key, order))
+        t.start()
+        threads.append(t)
+        time.sleep(0.05)                     # arrival order a, b, c
+    for _ in range(3):
+        worker = held.pop()[1] if held else order[-1][1]
+        sandbox._release(worker, True)
+        time.sleep(0.05)
+    for t in threads:
+        t.join()
+    assert [key for key, _ in order] == ["a", "b", "c"]
+
+
+def test_warm_up_is_not_limited_by_the_session_cap(fake_pool):
+    fake_pool.setenv("QE_ARENA_WASI_WORKERS", "3")
+    sandbox.warm()
+    assert sandbox._LIVE[0] == len(sandbox._IDLE) == 3 and sum(sandbox._INFLIGHT.values()) == 0
+
+
+def test_each_environment_grades_under_its_own_session(monkeypatch):
+    task = make_task("qe_bugfix-d1", 4)
+    seen = []
+    real = sandbox.run_calls
+
+    def recording(source, entry, calls, **kw):
+        seen.append(sandbox._SESSION.get())
+        return real(source, entry, calls, **kw)
+    monkeypatch.setattr(sandbox, "run_calls", recording)
+    envs = [QEEnvironment(), QEEnvironment()]
+    for env in envs:
+        env.reset(seed=4, task_id=task.task_id)
+        env.step(QEAction(op="run_tests"))
+    keys = {env._sandbox_session for env in envs}
+    assert len(keys) == 2 and set(seen) == keys and sandbox._SESSION.get() is None
