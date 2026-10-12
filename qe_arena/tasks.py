@@ -15,19 +15,23 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import corpus, mutation, sandbox
+from . import corpus, edit_budget, mutation, sandbox
 
 FAMILIES = ("qe_bugfix", "qe_mutant_kill", "qe_flaky")
 DOMAIN = "software engineering"
-TASK_IDS = [f"{family}-d{level}" for family in FAMILIES for level in (1, 2, 3)]
+LEVELS = {"qe_bugfix": (1, 2, 3, 4), "qe_mutant_kill": (1, 2, 3), "qe_flaky": (1, 2, 3)}
+# d4 is appended so the order of the original six cells (and exports) is unchanged.
+TASK_IDS = [f"{family}-d{level}" for family in FAMILIES for level in (1, 2, 3)] + ["qe_bugfix-d4"]
+BUDGETED = 4  # qe_bugfix-d4: d3's faults plus a total edit budget, so a full rewrite does not fit
 
 HIDDEN_INPUTS = 48
 SUBTLE_RATE = 0.15  # a fault or mutant that at most this share of hidden inputs reveals
-FAULTS = {1: 1, 2: 2, 3: 3}  # qe_bugfix faults per level; the prompt never states the count
-MIN_SUBTLE = {1: 0, 2: 1, 3: 2}
+FAULTS = {1: 1, 2: 2, 3: 3, 4: 3}  # qe_bugfix faults per level; the prompt never states the count
+MIN_SUBTLE = {1: 0, 2: 1, 3: 2, 4: 2}
 MIN_REVEALING_D1 = 3  # distinct hidden calls that reveal a d1 fault; the bug report names one of them
 MAX_TESTS = {1: 1, 2: 1, 3: 3}
 MAX_ARGS_BYTES = 2048
+MAX_FREE_REFUSALS = 4  # d4: refused edits that do not use a step; later ones do, so episodes stay bounded
 MODULE = "module.py"
 BUGFIX_CANDIDATES = 24  # fault candidates tried per corpus function
 REAL_SHARE = 0.15  # share of qe_bugfix tasks that carry a real upstream fault (when real entries exist)
@@ -49,16 +53,16 @@ class Task:
 def format_task_id(family: str, difficulty: int) -> str:
     if family not in FAMILIES:
         raise ValueError(f"unknown family: {family!r}")
-    if type(difficulty) is not int or difficulty not in (1, 2, 3):
-        raise ValueError("difficulty must be 1, 2 or 3")
+    if type(difficulty) is not int or difficulty not in LEVELS[family]:
+        raise ValueError(f"difficulty must be one of {LEVELS[family]} for {family}")
     return f"{family}-d{difficulty}"
 
 
 def parse_task_id(task_id: str) -> tuple[str, int]:
     if type(task_id) is not str or len(task_id) > 64:
         raise ValueError("task_id must be a short string")
-    match = re.fullmatch(r"(qe_[a-z_]+)-d([123])", task_id)
-    if match is None or match.group(1) not in FAMILIES:
+    match = re.fullmatch(r"(qe_[a-z_]+)-d([1-4])", task_id)
+    if match is None or match.group(1) not in FAMILIES or int(match.group(2)) not in LEVELS[match.group(1)]:
         raise ValueError(f"invalid task_id: {task_id!r}")
     return match.group(1), int(match.group(2))
 
@@ -143,11 +147,23 @@ REPLY_FORMAT = (
 )
 
 
-def _bugfix_prompt(entry: str, visible: list[str], report: str) -> str:
+def _budget_text(budget: int, allowance: int) -> str:
+    return (f"Edit budget: {budget} characters in total, counted as len(old) + len(new) over all your edits; "
+            "every edit reply shows what is left. Only a localised repair is accepted: keep every function and "
+            "all top-level code as they are (no new or redefined functions, no lambdas, no dead code such as an "
+            "early return or a constant condition; a `try: return X / except: pass` fallback counts as an "
+            f"unreachable fall-through and is refused) and change at most {allowance} syntax tokens in total. "
+            "An edit that breaks either rule is refused and not applied. The first "
+            f"{MAX_FREE_REFUSALS} refusals do not use a step; later ones do. Graded files must follow the same rules.")
+
+
+def _bugfix_prompt(entry: str, visible: list[str], report: str, budget: int | None = None,
+                   allowance: int | None = None) -> str:
     lines = [
         f"Faults were introduced into `{entry}` in {MODULE}. The docstring is the specification "
         "and is correct; the code is not. There may be more than one fault, and the number is not given.",
         report,
+        *([_budget_text(budget, allowance)] if budget is not None else []),
         "Fix the code so it matches the specification for every input. Hidden tests decide the reward, "
         "and a partial fix earns nothing.",
         "Visible tests:",
@@ -273,11 +289,19 @@ def _make_bugfix(task_id: str, level: int, seed: int, rng: random.Random, pool: 
                 continue
             if chosen and not _subsets_all_fail(original, chosen + [site], item.entry, inputs, reference):
                 continue  # some faults cancel out: a partial fix would pass
+            if level == BUDGETED and edit_budget.plan(trial, original) is None:
+                continue  # try another fault rather than another function: the fix must fit budget and gate
             chosen, buggy, killed, subtle = chosen + [site], trial, kills, subtle + is_subtle
             if len(chosen) == FAULTS[level]:
                 break
         if len(chosen) != FAULTS[level] or (kind == "real" and not any(s in real for s in chosen)):
             continue
+        budget = None
+        if level == BUDGETED:
+            planned = edit_budget.plan(buggy, original)
+            if planned is None:
+                continue  # the minimal fix must fit the budget and the gate, and a full rewrite must not
+            budget = planned[0]
         shown_ref = _outputs(original, item.entry, display)
         shown_bug = _outputs(buggy, item.entry, display)
         if not (_usable(shown_ref) and _usable(shown_bug)):
@@ -297,13 +321,14 @@ def _make_bugfix(task_id: str, level: int, seed: int, rng: random.Random, pool: 
         shown = [f"  {_call_text(item.entry, v['args'])} == {_result_text(v['expected'])}" for v in visible]
         return Task(
             task_id=task_id, family="qe_bugfix", difficulty=level, seed=seed,
-            prompt=_bugfix_prompt(item.entry, shown, report),
+            prompt=_bugfix_prompt(item.entry, shown, report, budget,
+                                  edit_budget.change_allowance(buggy) if budget is not None else None),
             files={MODULE: buggy},
             private={
                 "corpus": name, "entry": item.entry, "original": original, "buggy": buggy,
                 "sites": [s.description for s in chosen], "inputs": inputs, "reference": reference,
                 "visible": visible, "report_args": display[revealing[0]] if level == 1 else None,
-                "fault_kind": kind, "fault_sites": chosen,
+                "fault_kind": kind, "fault_sites": chosen, "edit_budget": budget,
                 "faults": [_fault_record(s, real.get(s)) for s in chosen],
             },
         )
@@ -424,6 +449,8 @@ def grade_bugfix(task: Task, source: str) -> float:
     p = task.private
     if source.strip() == p["buggy"].strip():
         return 0.0
+    if p.get("edit_budget") is not None and edit_budget.structure_violation(p["buggy"], source) is not None:
+        return 0.0  # d4: only a localised repair counts, whatever path produced the file
     results = _outputs(source, p["entry"], p["inputs"])
     return 1.0 if len(results) == len(p["reference"]) and all(
         sandbox.compare(r, o) for r, o in zip(p["reference"], results)) else 0.0

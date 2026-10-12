@@ -222,7 +222,7 @@ def test_step_budget_ends_the_episode_with_zero():
     assert "terminal" in env.step(QEAction(op="read", path="*")).error
 
 
-@pytest.mark.parametrize("bad", ["qe_bugfix", "qe_bugfix-d4", "other-d1", "qe_bugfix-d1 ", 7])
+@pytest.mark.parametrize("bad", ["qe_bugfix", "qe_bugfix-d5", "qe_mutant_kill-d4", "other-d1", "qe_bugfix-d1 ", 7])
 def test_invalid_task_ids_are_rejected(bad):
     with pytest.raises(ValueError):
         parse_task_id(bad)

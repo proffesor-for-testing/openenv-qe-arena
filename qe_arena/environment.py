@@ -11,9 +11,10 @@ from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import Action, Observation, State
 from pydantic import Field
 
-from . import flaky, sandbox
+from . import edit_budget, flaky, sandbox
 from .sandbox import InfraError
-from .tasks import MODULE, TASK_IDS, Task, grade_bugfix, grade_mutant_kill, make_task, run_visible
+from .tasks import (MAX_FREE_REFUSALS, MODULE, TASK_IDS, Task, grade_bugfix, grade_mutant_kill, make_task,
+                    run_visible)
 
 MAX_STEPS = 12
 MAX_TEST_RUNS = 3
@@ -61,6 +62,8 @@ class QEEnvironment(Environment[QEAction, QEObservation, State]):
         self._done = False
         self._reward = 0.0
         self._test_runs = 0
+        self._edit_spent = 0
+        self._refusals = 0
         self._sandbox_session = uuid4().hex  # fairness key for the shared sandbox worker pool
 
     def reset(self, seed: int | None = None, episode_id: str | None = None, **kwargs: Any) -> QEObservation:
@@ -76,6 +79,7 @@ class QEEnvironment(Environment[QEAction, QEObservation, State]):
         self._files = dict(self._task.files)
         self._state = State(episode_id=episode_id or str(uuid4()), step_count=0)
         self._done, self._reward, self._test_runs = False, 0.0, 0
+        self._edit_spent, self._refusals = 0, 0
         return self._observe(prompt=self._task.prompt, files=sorted(self._files))
 
     def _observe(self, **fields: Any) -> QEObservation:
@@ -90,6 +94,9 @@ class QEEnvironment(Environment[QEAction, QEObservation, State]):
             raise RuntimeError("reset required")
         if self._done:
             return self._observe(error="episode is terminal; reset before another attempt")
+        free = self._free_refusal(action)
+        if free is not None:
+            return self._refused(free)
         self._state.step_count += 1
         try:
             with sandbox.session(self._sandbox_session):
@@ -122,11 +129,43 @@ class QEEnvironment(Environment[QEAction, QEObservation, State]):
             return self._observe(content=report)
         return self._edit(action)
 
+    def _refusal_reason(self, action: QEAction) -> str | None:
+        """d4: why an otherwise valid edit is refused (over budget, or not a localised repair), else None."""
+        budget = self._task.private.get("edit_budget")
+        if budget is None or action.op != "edit" or action.path != MODULE or not action.old:
+            return None
+        cost = len(action.old) + len(action.new)
+        if self._edit_spent + cost > budget:
+            return (f"it costs {cost} characters (len(old) + len(new)) and {budget - self._edit_spent} of the "
+                    f"{budget} budget are left")
+        text = self._files[MODULE]
+        if text.count(action.old) != 1:
+            return None  # reported as an ordinary edit error
+        violation = edit_budget.structure_violation(self._task.private["buggy"], text.replace(action.old, action.new, 1))
+        return None if violation is None else f"not a localised repair: {violation}"
+
+    def _free_refusal(self, action: QEAction) -> str | None:
+        """A refusal that does not use a step, for the first MAX_FREE_REFUSALS refusals."""
+        reason = self._refusal_reason(action)
+        if reason is None or self._refusals >= MAX_FREE_REFUSALS:
+            return None
+        self._refusals += 1
+        return reason
+
+    def _refused(self, reason: str) -> QEObservation:
+        return self._observe(error=f"edit refused, nothing was changed: {reason}")
+
     def _edit(self, action: QEAction) -> QEObservation:
         if action.path != MODULE:
             return self._observe(error=f"only {MODULE} can be edited")
         if not action.old or len(action.old) + len(action.new) > MAX_EDIT_BYTES:
             return self._observe(error="old must be non-empty and the edit small")
+        budget = self._task.private.get("edit_budget")
+        cost = len(action.old) + len(action.new)
+        reason = self._refusal_reason(action)
+        if reason is not None:
+            self._refusals += 1
+            return self._refused(reason)
         text = self._files[MODULE]
         count = text.count(action.old)
         if count != 1:
@@ -139,7 +178,11 @@ class QEEnvironment(Environment[QEAction, QEObservation, State]):
         if size > MAX_FILE_BYTES:
             return self._observe(error="file too large after edit")
         self._files[MODULE] = updated
-        return self._observe(content=f"edited {MODULE}; {len(updated.splitlines())} lines")
+        message = f"edited {MODULE}; {len(updated.splitlines())} lines"
+        if budget is not None:
+            self._edit_spent += cost
+            message += f"; edit budget left: {budget - self._edit_spent} of {budget} characters"
+        return self._observe(content=message)
 
     def _submit(self, action: QEAction) -> QEObservation:
         try:

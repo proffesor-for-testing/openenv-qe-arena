@@ -35,6 +35,10 @@
     {
       "task_id": "qe_flaky-d3",
       "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-d4",
+      "split": "train"
     }
   ]
 }

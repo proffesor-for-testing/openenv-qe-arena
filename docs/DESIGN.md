@@ -71,6 +71,7 @@ Faults come from two sources, drawn per task. Nothing in the prompt or files say
 | d1 | One fault. An input that the bug breaks, without its expected value (derive it from the docstring). Visible tests pass |
 | d2 | Two faults, at least one subtle (at most 15% of hidden inputs reveal it). No failing input |
 | d3 | Three faults, at least two subtle. No failing input |
+| d4 | d3's faults plus a total edit budget (below). No failing input |
 
 Calibration v1 (thinking off, 8 episodes per cell) showed that giving the expected value of a failing test made
 the task trivial (d1 and the old d3 both 8/8), so no level shows an expected value for a failing input. Calibration v2 (12 episodes per cell) still
@@ -80,6 +81,45 @@ are, so the model has to keep checking the code against the spec instead of stop
 Reward: **1.0 only if every hidden differential test passes** (edge cases plus seeded random inputs,
 compared against the original function's outputs). Otherwise 0. Unchanged code is 0. Partial credit is
 deliberately absent: a mutant already passes most inputs, so a pass fraction would pay for doing nothing.
+
+#### `qe_bugfix-d4`: the edit budget and the localised-repair gate
+
+d4 is d3's fault generation plus two limits that rule out rewriting the function from its docstring. Its
+random stream is `qe_bugfix-d4:<seed>`, and the task ID was appended to `TASK_IDS`, so d1-d3 and every
+existing pin are byte-identical. Code: `qe_arena/edit_budget.py`.
+
+- **Budget:** 25% of the buggy file's length, rounded up to 25 characters, counted as `len(old) + len(new)`
+  over all edits. It is priced on the character-level minimal fix: changes closer than 16 characters merge
+  into one edit, and each edit widens until its `old` is unique. That fix's median share of the file is
+  about 0.10 (p90 0.21).
+- **Localised-repair gate:** checked on every edit and again at grading. The candidate must keep:
+  - the buggy file's top-level statements, in the same order (no shadow definition, no new top-level code,
+    no `globals()` trick);
+  - every function definition, with the same arguments and decorators (no nested shadow function);
+  - no lambda beyond those already in the file;
+  - every statement stays reachable. A static check proves exits through return, raise, if/else,
+    try (when its body or finally ends), with, and loops that must run their body. No branch or loop may
+    test something whose value cannot depend on the input: a literal or display (`{0}`, `()`, `[x]`, an
+    f-string with text), anything with no variable in it, `x OP x`, `x or <truthy>`,
+    `isinstance(_, object)`, or `len(...) >= 0`. So no wrapper (`if True:`, `while 1:`, `for _ in [0]:`,
+    try/finally) can bypass the old body. Tautologies are open-ended; the token allowance bounds what a
+    tautology the check misses can hide;
+  - a total change of at most `min(50, 0.35 × code tokens)` preorder AST tokens. The code tokens are
+    counted on the shown file without docstrings.
+  A compact re-implementation, even behind an always-true guard, needs more tokens than that.
+- **What the model sees:** the prompt states the budget, the token allowance, the rules and the refusal
+  cap. Each applied edit reports the budget left. A refused edit (over budget, or not a localised repair)
+  is not applied and costs no budget. The first `MAX_FREE_REFUSALS` (4) refusals use no step; later ones do.
+- **Serving:** a fault is added only if the resulting task still fits the budget and the gate. Generation
+  tries other faults in the same function before moving to another function.
+- **No fault leak:** the budget and the token allowance are functions of the shown file only. A budget
+  derived from the faults (the calibrated 1.5x line-diff prototype) would tell the model how large the
+  faulty code is.
+- **Adversarial tests** (`tests/test_d4_attacks.py`, 300 seeds, attacker given the correct function):
+  shadow append, early return, guarded early return, nested-def shadow, `if False:` wrap, try/finally,
+  `for _ in [0]:` and `while 1:` wrappers, an inserted one-line return, lambda reassignment, decorator
+  and `globals()` redefinition. Every one breaks the gate and grades 0. The oracle
+  (the minimal fix) earns 1.0 on all 300 within budget, gate and the 12-step limit.
 
 ### `qe_mutant_kill`: write a test that kills a mutant
 
