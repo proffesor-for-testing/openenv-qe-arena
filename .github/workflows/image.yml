@@ -23,6 +23,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install --no-cache-dir -r requirements.lock pytest
+      - run: python scripts/build_wasi_runtime.py --out runtime
       - run: python -m pytest -q tests
 
   image:

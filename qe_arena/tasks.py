@@ -93,21 +93,16 @@ def _settled(result: sandbox.CallResult) -> bool:
 
 
 def _outputs(source: str, entry: str, calls: list[list]) -> list[sandbox.CallResult]:
-    """Run calls so that machine load cannot decide an outcome.
+    """Run calls once: fuel metering makes every outcome deterministic, so machine load cannot decide one.
 
-    A timeout is re-probed alone with a 200x margin over the corpus's 5 ms
-    budget, and the rerun is capped at 10 s so slow code cannot multiply cost. Code that still times out really loops; otherwise the batch is
-    rerun with generous limits. Callers treat any unsettled result (timeout,
-    crash) as unusable, never as a behavioural difference.
+    Callers treat any unsettled result (fuel, resource, crash, infra) as unusable, never as a
+    behavioural difference. Only ``infra`` (the sandbox worker itself failed; ``timeout`` is its
+    legacy alias) is transient, so a batch that reports it is run once more.
     """
     results = sandbox.run_calls(source, entry, calls)
-    timed_out = [i for i, r in enumerate(results) if r.kind == "timeout"]
-    if not timed_out:
-        return results
-    probe = sandbox.run_calls(source, entry, [calls[timed_out[0]]], timeout_s=2.0, per_call_timeout_s=1.0)
-    if probe and probe[0].kind == "timeout":
-        return results
-    return sandbox.run_calls(source, entry, calls, timeout_s=10.0, per_call_timeout_s=1.0)
+    if any(r.kind in ("infra", "timeout") for r in results):
+        results = sandbox.run_calls(source, entry, calls)
+    return results
 
 
 def _killing(reference: list, outputs: list) -> list[int]:
