@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import sys
@@ -205,10 +206,11 @@ def _gguf_loader(metadata, bool_is_int):
     return table[name]
 
 
-def _gguf_special_ids(metadata, vocab):
+def _gguf_special_ids(metadata, vocab, bool_is_int=False):
     def declared(x):
         v = metadata.get("tokenizer.ggml." + x + "_token_id")
-        return v if type(v) is int and 0 <= v < len(vocab) else None  # "an int (not a bool)"
+        is_int = isinstance(v, int) if bool_is_int else type(v) is int
+        return v if is_int and 0 <= v < len(vocab) else None
     eos = declared("eos")
     if eos is None:
         eos = next((vocab[t] for t in ["</s>", "<end_of_text>", "<endoftext>", "<eot_id>"] if t in vocab), None)
@@ -238,6 +240,20 @@ SPEC_READINGS = {
 }
 
 
+def _entry_doc(name):
+    item = corpus.ENTRIES[name]
+    entry = next(n for n in ast.parse(item.function_source).body if isinstance(n, ast.FunctionDef) and n.name == item.entry)
+    return ast.get_docstring(entry)
+
+
+def readings(name):
+    """The readings the current docstring permits. A bare "an int" also admits bools in Python."""
+    found = list(SPEC_READINGS[name])
+    if name == "gguf_special_ids" and "(not a bool)" not in _entry_doc(name):
+        found.append(lambda m, v: _gguf_special_ids(m, v, bool_is_int=True))
+    return found
+
+
 def _run(fn, args):
     try:
         return "ok", json.dumps(fn(*json.loads(json.dumps(args))), sort_keys=True)
@@ -254,7 +270,7 @@ def test_docstring_readings_equal_the_reference(name):
     for seed in range(100):
         for args in corpus.gen_inputs(name, seed, tasks.HIDDEN_INPUTS):
             reference = _run(lambda *a: corpus.call_reference(name, list(a)), args)
-            for reading in SPEC_READINGS[name]:
+            for reading in readings(name):
                 assert _run(reading, args) == reference, (name, args)
 
 
@@ -264,11 +280,28 @@ def test_no_served_real_fault_matches_a_literal_reading(level):
         p = make_task(f"qe_bugfix-d{level}", seed, fault_kind="real").private
         for site in p["fault_sites"]:
             outputs = sandbox.run_calls(mutation.apply(p["original"], [site]), p["entry"], p["inputs"])
-            for reading in SPEC_READINGS[p["corpus"]]:
+            for reading in readings(p["corpus"]):
                 literal = [_run(reading, args) for args in p["inputs"]]
                 got = [("ok", json.dumps(o.value, sort_keys=True)) if o.kind == "ok" else ("exc", o.value)
                        for o in outputs]
                 assert got != literal, (p["corpus"], site.description)
+
+
+def test_gguf_special_ids_docstring_excludes_bools():
+    assert "an int (not a bool)" in _entry_doc("gguf_special_ids")
+
+
+def test_bool_admitting_reading_differs_from_the_reference_only_on_bools():
+    """Negative control: the reading of the old docstring ("an int") is wrong exactly on bool ids."""
+    lenient = lambda m, v: _gguf_special_ids(m, v, bool_is_int=True)  # noqa: E731
+    differing = []
+    for seed in range(50):
+        for metadata, vocab in corpus.gen_inputs("gguf_special_ids", seed, tasks.HIDDEN_INPUTS):
+            reference = _run(lambda *a: corpus.call_reference("gguf_special_ids", list(a)), [metadata, vocab])
+            if _run(lenient, [metadata, vocab]) != reference:
+                differing.append(metadata)
+    assert differing, "the generated inputs must contain bool ids, or MAJOR-1 cannot be caught"
+    assert all(any(type(v) is bool for v in m.values()) for m in differing)
 
 
 # --------------------------------------------------------------------------- fallbacks and determinism
