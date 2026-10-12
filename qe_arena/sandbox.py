@@ -538,7 +538,7 @@ def _acquire(deadline: float, *, capped: bool = True) -> _Worker:
         _INFLIGHT[key] += 1
         if _IDLE:
             worker = _IDLE.pop()
-            worker.session = key
+            worker.session, worker.held = key, True
             return worker
         _LIVE[0] += 1
     try:
@@ -549,11 +549,17 @@ def _acquire(deadline: float, *, capped: bool = True) -> _Worker:
             _INFLIGHT[key] -= 1
             _POOL.notify_all()
         raise
-    worker.session = key
+    worker.session, worker.held = key, True
     return worker
 
 
 def _release(worker: _Worker, healthy: bool) -> None:
+    """Return a worker to the pool (or retire it). A second release of the same acquisition is ignored:
+    no caller does that today, but it would list the worker twice or uncount it while it sits idle."""
+    with _POOL:
+        if not getattr(worker, "held", True):
+            return
+        worker.held = False
     if not healthy:
         worker.close()
     with _POOL:
