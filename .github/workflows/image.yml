@@ -15,11 +15,17 @@ concurrency:
 
 jobs:
   # The gate: everything but the slow statistical and many-seed tests (tests/conftest.py).
+  # Four shards: the gate alone is about 30 min on one 4-vCPU runner (5 min on ruos-dev).
   test:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ["0/4", "1/4", "2/4", "3/4"]
     env:
       QE_ARENA_WASI_WORKERS: "1"  # one WASI worker per xdist process, so 4 processes fill 4 vCPUs
+      QE_ARENA_SHARD: ${{ matrix.shard }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0

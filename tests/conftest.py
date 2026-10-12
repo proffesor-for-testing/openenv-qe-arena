@@ -8,6 +8,9 @@ workers, 2 WASI workers each, 2026-10-12). Re-time with `--junitxml` when the su
 
 from __future__ import annotations
 
+import os
+import zlib
+
 import pytest
 
 HEAVY_FIXTURES = frozenset({"many", "d3_by_cause"})
@@ -68,6 +71,18 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         files.add(item.path.name)
         if key in SLOW or HEAVY_FIXTURES & set(getattr(item, "fixturenames", ())):
             item.add_marker(pytest.mark.slow)
+    # QE_ARENA_SHARD=i/n keeps the tests whose node id hashes to shard i (crc32, stable across runs and
+    # hosts), so CI can split the gate over n runners. Unset: every test runs.
+    shard = os.environ.get("QE_ARENA_SHARD")
+    if shard:
+        index, count = (int(x) for x in shard.split("/"))
+        if not 0 <= index < count:
+            raise pytest.UsageError(f"QE_ARENA_SHARD={shard}: need 0 <= i < n")
+        keep, drop = [], []
+        for item in items:
+            (keep if zlib.crc32(item.nodeid.encode()) % count == index else drop).append(item)
+        config.hook.pytest_deselected(items=drop)
+        items[:] = keep
     # A renamed slow test would silently move into the gate; fail collection instead. Only checked for
     # files that were collected in full, so `-k`, `-m` and node-id selection still work.
     if not config.getoption("keyword") and not any("::" in a for a in config.args):
