@@ -1,0 +1,252 @@
+{
+  "dataset": "Profa-QE/openenv-qe-arena-tasks",
+  "example_actions": [
+    {
+      "op": "read",
+      "path": "*"
+    },
+    {
+      "answer": {},
+      "op": "submit"
+    }
+  ],
+  "finish_action": {
+    "answer": {},
+    "op": "submit"
+  },
+  "image": "ghcr.io/proffesor-for-testing/openenv-qe-arena@sha256:66c291befbaa452bb26b3ad3861fa3412777ac08335ecb1dec7227fff653925b",
+  "name": "QE Arena: mutation kill, flaky tests and localised bug repair (Profa-QE)",
+  "schema": {
+    "action": {
+      "additionalProperties": false,
+      "properties": {
+        "answer": {
+          "additionalProperties": true,
+          "description": "submit: {} grades your edited file in a bug-fix task; {\"tests\": [{\"args\": [...], \"expected\": ...}]} in a mutant-kill task; {\"test\": \"test_name\" or null, \"cause\": ...} in a flaky-test task, where cause is one of shared_state, cache_leak, shared_random, clock_boundary, unordered_iteration, float_equality.",
+          "title": "Answer",
+          "type": "object"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "description": "Additional metadata for the action",
+          "title": "Metadata",
+          "type": "object"
+        },
+        "new": {
+          "default": "",
+          "description": "edit: the text that replaces old.",
+          "title": "New",
+          "type": "string"
+        },
+        "old": {
+          "default": "",
+          "description": "edit: exact text copied from the file; it must occur exactly once.",
+          "title": "Old",
+          "type": "string"
+        },
+        "op": {
+          "description": "One action per reply. Start with read path * to see every file. read: show a file. run_tests: run the visible tests on your edited code (bug-fix and flaky-test tasks). edit: replace old with new in a file (bug-fix tasks and flaky-test repair). submit: end the episode and get graded.",
+          "enum": [
+            "read",
+            "run_tests",
+            "edit",
+            "submit"
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "path": {
+          "default": "",
+          "description": "read/edit: the file name, or * with read for all files.",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "title": "QEAction",
+      "type": "object"
+    },
+    "observation": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "default": "",
+          "title": "Content",
+          "type": "string"
+        },
+        "done": {
+          "default": false,
+          "description": "Whether the episode has terminated",
+          "title": "Done",
+          "type": "boolean"
+        },
+        "error": {
+          "default": "",
+          "title": "Error",
+          "type": "string"
+        },
+        "files": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Files",
+          "type": "array"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "description": "Additional metadata for the observation",
+          "title": "Metadata",
+          "type": "object"
+        },
+        "prompt": {
+          "default": "",
+          "title": "Prompt",
+          "type": "string"
+        },
+        "remaining_steps": {
+          "default": 0,
+          "title": "Remaining Steps",
+          "type": "integer"
+        },
+        "reward": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Reward signal from the last action",
+          "title": "Reward"
+        },
+        "task_id": {
+          "default": "",
+          "title": "Task Id",
+          "type": "string"
+        }
+      },
+      "title": "QEObservation",
+      "type": "object"
+    }
+  },
+  "server_port": 8000,
+  "source": "https://github.com/proffesor-for-testing/openenv-qe-arena",
+  "submission_id": "profa-qe-arena-v2",
+  "tasks": [
+    {
+      "completion_tokens": 6144,
+      "context_tokens": 12288,
+      "cpu_floor_vcpus": 1,
+      "memory_gib": 2,
+      "reset_wall_s": 180,
+      "rollout_wall_s": 900,
+      "split": "train",
+      "task_id": "qe_mutant_kill-d1",
+      "tool_calls_per_minute": 60,
+      "tool_calls_total": 16,
+      "tool_wall_s": 120,
+      "verifier_wall_s": 120,
+      "workspace_gib": 10
+    },
+    {
+      "completion_tokens": 6144,
+      "context_tokens": 12288,
+      "cpu_floor_vcpus": 1,
+      "memory_gib": 2,
+      "reset_wall_s": 180,
+      "rollout_wall_s": 900,
+      "split": "train",
+      "task_id": "qe_mutant_kill-d2",
+      "tool_calls_per_minute": 60,
+      "tool_calls_total": 16,
+      "tool_wall_s": 120,
+      "verifier_wall_s": 120,
+      "workspace_gib": 10
+    },
+    {
+      "completion_tokens": 6144,
+      "context_tokens": 12288,
+      "cpu_floor_vcpus": 1,
+      "memory_gib": 2,
+      "reset_wall_s": 180,
+      "rollout_wall_s": 900,
+      "split": "train",
+      "task_id": "qe_mutant_kill-d3",
+      "tool_calls_per_minute": 60,
+      "tool_calls_total": 16,
+      "tool_wall_s": 120,
+      "verifier_wall_s": 120,
+      "workspace_gib": 10
+    },
+    {
+      "completion_tokens": 6144,
+      "context_tokens": 12288,
+      "cpu_floor_vcpus": 1,
+      "memory_gib": 2,
+      "reset_wall_s": 180,
+      "rollout_wall_s": 900,
+      "split": "train",
+      "task_id": "qe_flaky-d1",
+      "tool_calls_per_minute": 60,
+      "tool_calls_total": 16,
+      "tool_wall_s": 120,
+      "verifier_wall_s": 120,
+      "workspace_gib": 10
+    },
+    {
+      "completion_tokens": 6144,
+      "context_tokens": 12288,
+      "cpu_floor_vcpus": 1,
+      "memory_gib": 2,
+      "reset_wall_s": 180,
+      "rollout_wall_s": 900,
+      "split": "train",
+      "task_id": "qe_flaky-d2",
+      "tool_calls_per_minute": 60,
+      "tool_calls_total": 16,
+      "tool_wall_s": 120,
+      "verifier_wall_s": 120,
+      "workspace_gib": 10
+    },
+    {
+      "completion_tokens": 6144,
+      "context_tokens": 12288,
+      "cpu_floor_vcpus": 1,
+      "memory_gib": 2,
+      "reset_wall_s": 180,
+      "rollout_wall_s": 900,
+      "split": "train",
+      "task_id": "qe_flaky-d3",
+      "tool_calls_per_minute": 60,
+      "tool_calls_total": 16,
+      "tool_wall_s": 120,
+      "verifier_wall_s": 120,
+      "workspace_gib": 10
+    },
+    {
+      "completion_tokens": 6144,
+      "context_tokens": 12288,
+      "cpu_floor_vcpus": 1,
+      "memory_gib": 2,
+      "reset_wall_s": 180,
+      "rollout_wall_s": 900,
+      "split": "train",
+      "task_id": "qe_bugfix-d4",
+      "tool_calls_per_minute": 60,
+      "tool_calls_total": 16,
+      "tool_wall_s": 120,
+      "verifier_wall_s": 120,
+      "workspace_gib": 10
+    }
+  ]
+}

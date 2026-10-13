@@ -1,0 +1,440 @@
+{
+  "seed": 20261013,
+  "max_cells": 7,
+  "objective": "projected",
+  "measure": "p_mix@G: chance that G fresh instances do not all get the same reward (partial credit counts), drawn from a Dirichlet posterior over the observed reward values",
+  "group_size": 4,
+  "min_mixed": 0.15,
+  "min_groups": 1,
+  "min_episodes": 4,
+  "template": {
+    "path": "runs/template-v2.json",
+    "sha256": "6ee857b3a141bd7e500fa4b2ff758c58c08c8f997b8af38e18f22815fbd243ea"
+  },
+  "runs": [
+    {
+      "path": "runs/cal-v2cells.jsonl",
+      "sha256": "40e2de78aea63319da5c16f0014a3777237ca3106bfd08a46a13f231ba0b145c"
+    },
+    {
+      "path": "runs/cal-v2cells-b.jsonl",
+      "sha256": "f07feb5ba7d05781baac139a8d61a924db4808c8688ff5a957229a6dbb725e7d"
+    }
+  ],
+  "cells": [
+    {
+      "task_id": "qe_bugfix-d1",
+      "solve": {
+        "k": 16,
+        "n": 16,
+        "a": 16.5,
+        "b": 0.5,
+        "mean": 0.9705882352941176,
+        "lo": 0.8885477704202385,
+        "hi": 0.99987903272172
+      },
+      "informative": {
+        "k": 0,
+        "n": 0,
+        "a": 0.5,
+        "b": 0.5,
+        "mean": 0.5,
+        "lo": 0.006155829702431143,
+        "hi": 0.9938441702975689
+      },
+      "errors": 0,
+      "budget": 0,
+      "valid": 16,
+      "mean_reward": 1.0,
+      "p_mixed": 0.10411829205366352,
+      "reward_dirichlet": {
+        "values": [
+          0.0,
+          1.0
+        ],
+        "alphas": [
+          0.5,
+          16.5
+        ]
+      },
+      "decision": "excluded",
+      "reason": "rarely mixed (mostly high reward): posterior-mean p_mix@4 0.104 < 0.15"
+    },
+    {
+      "task_id": "qe_bugfix-d2",
+      "solve": {
+        "k": 16,
+        "n": 16,
+        "a": 16.5,
+        "b": 0.5,
+        "mean": 0.9705882352941176,
+        "lo": 0.8885477704202385,
+        "hi": 0.99987903272172
+      },
+      "informative": {
+        "k": 0,
+        "n": 0,
+        "a": 0.5,
+        "b": 0.5,
+        "mean": 0.5,
+        "lo": 0.006155829702431143,
+        "hi": 0.9938441702975689
+      },
+      "errors": 0,
+      "budget": 0,
+      "valid": 16,
+      "mean_reward": 1.0,
+      "p_mixed": 0.10411829205366352,
+      "reward_dirichlet": {
+        "values": [
+          0.0,
+          1.0
+        ],
+        "alphas": [
+          0.5,
+          16.5
+        ]
+      },
+      "decision": "excluded",
+      "reason": "rarely mixed (mostly high reward): posterior-mean p_mix@4 0.104 < 0.15"
+    },
+    {
+      "task_id": "qe_bugfix-d3",
+      "solve": {
+        "k": 15,
+        "n": 16,
+        "a": 15.5,
+        "b": 1.5,
+        "mean": 0.9117647058823529,
+        "lo": 0.7801882117965204,
+        "hi": 0.98888994280558
+      },
+      "informative": {
+        "k": 0,
+        "n": 0,
+        "a": 0.5,
+        "b": 0.5,
+        "mean": 0.5,
+        "lo": 0.006155829702431143,
+        "hi": 0.9938441702975689
+      },
+      "errors": 0,
+      "budget": 0,
+      "valid": 16,
+      "mean_reward": 0.9375,
+      "p_mixed": 0.28742582559339525,
+      "reward_dirichlet": {
+        "values": [
+          0.0,
+          1.0
+        ],
+        "alphas": [
+          1.5,
+          15.5
+        ]
+      },
+      "draw": 0.39886432146658457,
+      "rank": 8,
+      "decision": "excluded",
+      "reason": "Thompson draw 0.399 (p_mix@4) ranked 8 of 8 eligible; beyond --max-cells 7"
+    },
+    {
+      "task_id": "qe_bugfix-d4",
+      "solve": {
+        "k": 20,
+        "n": 48,
+        "a": 20.5,
+        "b": 28.5,
+        "mean": 0.41836734693877553,
+        "lo": 0.3054149729576493,
+        "hi": 0.5351487410240097
+      },
+      "informative": {
+        "k": 0,
+        "n": 0,
+        "a": 0.5,
+        "b": 0.5,
+        "mean": 0.5,
+        "lo": 0.006155829702431143,
+        "hi": 0.9938441702975689
+      },
+      "errors": 0,
+      "budget": 0,
+      "valid": 48,
+      "mean_reward": 0.4166666666666667,
+      "p_mixed": 0.8398132907008957,
+      "reward_dirichlet": {
+        "values": [
+          0.0,
+          1.0
+        ],
+        "alphas": [
+          28.5,
+          20.5
+        ]
+      },
+      "draw": 0.864087880431807,
+      "rank": 3,
+      "decision": "selected",
+      "reason": "Thompson draw 0.864 (p_mix@4) ranked 3 of 8 eligible"
+    },
+    {
+      "task_id": "qe_flaky-d1",
+      "solve": {
+        "k": 18,
+        "n": 48,
+        "a": 18.5,
+        "b": 30.5,
+        "mean": 0.37755102040816324,
+        "lo": 0.2675782917067182,
+        "hi": 0.4932662781813053
+      },
+      "informative": {
+        "k": 0,
+        "n": 0,
+        "a": 0.5,
+        "b": 0.5,
+        "mean": 0.5,
+        "lo": 0.006155829702431143,
+        "hi": 0.9938441702975689
+      },
+      "errors": 0,
+      "budget": 0,
+      "valid": 48,
+      "mean_reward": 0.375,
+      "p_mixed": 0.8145385654261704,
+      "reward_dirichlet": {
+        "values": [
+          0.0,
+          1.0
+        ],
+        "alphas": [
+          30.5,
+          18.5
+        ]
+      },
+      "draw": 0.7487652384582123,
+      "rank": 7,
+      "decision": "selected",
+      "reason": "Thompson draw 0.749 (p_mix@4) ranked 7 of 8 eligible"
+    },
+    {
+      "task_id": "qe_flaky-d2",
+      "solve": {
+        "k": 11,
+        "n": 48,
+        "a": 11.5,
+        "b": 37.5,
+        "mean": 0.23469387755102042,
+        "lo": 0.14256475995521029,
+        "hi": 0.3392453614775197
+      },
+      "informative": {
+        "k": 0,
+        "n": 0,
+        "a": 0.5,
+        "b": 0.5,
+        "mean": 0.5,
+        "lo": 0.006155829702431143,
+        "hi": 0.9938441702975689
+      },
+      "errors": 0,
+      "budget": 0,
+      "valid": 48,
+      "mean_reward": 0.2604166666666667,
+      "p_mixed": 0.7477208747227011,
+      "reward_dirichlet": {
+        "values": [
+          0.0,
+          0.5,
+          1.0
+        ],
+        "alphas": [
+          34.5,
+          3.5,
+          11.5
+        ]
+      },
+      "draw": 0.7836243201401478,
+      "rank": 6,
+      "decision": "selected",
+      "reason": "Thompson draw 0.784 (p_mix@4) ranked 6 of 8 eligible"
+    },
+    {
+      "task_id": "qe_flaky-d3",
+      "solve": {
+        "k": 17,
+        "n": 48,
+        "a": 17.5,
+        "b": 31.5,
+        "mean": 0.35714285714285715,
+        "lo": 0.24898280609495815,
+        "hi": 0.47200171919182177
+      },
+      "informative": {
+        "k": 0,
+        "n": 0,
+        "a": 0.5,
+        "b": 0.5,
+        "mean": 0.5,
+        "lo": 0.006155829702431143,
+        "hi": 0.9938441702975689
+      },
+      "errors": 0,
+      "budget": 0,
+      "valid": 48,
+      "mean_reward": 0.375,
+      "p_mixed": 0.8445329969890193,
+      "reward_dirichlet": {
+        "values": [
+          0.0,
+          0.5,
+          1.0
+        ],
+        "alphas": [
+          29.5,
+          2.5,
+          17.5
+        ]
+      },
+      "draw": 0.8948783353622034,
+      "rank": 2,
+      "decision": "selected",
+      "reason": "Thompson draw 0.895 (p_mix@4) ranked 2 of 8 eligible"
+    },
+    {
+      "task_id": "qe_mutant_kill-d1",
+      "solve": {
+        "k": 22,
+        "n": 32,
+        "a": 22.5,
+        "b": 10.5,
+        "mean": 0.6818181818181818,
+        "lo": 0.5441231380415461,
+        "hi": 0.8067989291868527
+      },
+      "informative": {
+        "k": 0,
+        "n": 0,
+        "a": 0.5,
+        "b": 0.5,
+        "mean": 0.5,
+        "lo": 0.006155829702431143,
+        "hi": 0.9938441702975689
+      },
+      "errors": 0,
+      "budget": 0,
+      "valid": 32,
+      "mean_reward": 0.734375,
+      "p_mixed": 0.7747950013290341,
+      "reward_dirichlet": {
+        "values": [
+          0.0,
+          0.5,
+          1.0
+        ],
+        "alphas": [
+          7.5,
+          3.5,
+          22.5
+        ]
+      },
+      "draw": 0.8258069167036801,
+      "rank": 4,
+      "decision": "selected",
+      "reason": "Thompson draw 0.826 (p_mix@4) ranked 4 of 8 eligible"
+    },
+    {
+      "task_id": "qe_mutant_kill-d2",
+      "solve": {
+        "k": 19,
+        "n": 32,
+        "a": 19.5,
+        "b": 13.5,
+        "mean": 0.5909090909090909,
+        "lo": 0.448853668136035,
+        "hi": 0.7266017814830603
+      },
+      "informative": {
+        "k": 0,
+        "n": 0,
+        "a": 0.5,
+        "b": 0.5,
+        "mean": 0.5,
+        "lo": 0.006155829702431143,
+        "hi": 0.9938441702975689
+      },
+      "errors": 0,
+      "budget": 0,
+      "valid": 32,
+      "mean_reward": 0.65625,
+      "p_mixed": 0.8604902239300524,
+      "reward_dirichlet": {
+        "values": [
+          0.0,
+          0.5,
+          1.0
+        ],
+        "alphas": [
+          9.5,
+          4.5,
+          19.5
+        ]
+      },
+      "draw": 0.7861473975071053,
+      "rank": 5,
+      "decision": "selected",
+      "reason": "Thompson draw 0.786 (p_mix@4) ranked 5 of 8 eligible"
+    },
+    {
+      "task_id": "qe_mutant_kill-d3",
+      "solve": {
+        "k": 9,
+        "n": 32,
+        "a": 9.5,
+        "b": 23.5,
+        "mean": 0.2878787878787879,
+        "lo": 0.1677406421123006,
+        "hi": 0.4228428145406029
+      },
+      "informative": {
+        "k": 0,
+        "n": 0,
+        "a": 0.5,
+        "b": 0.5,
+        "mean": 0.5,
+        "lo": 0.006155829702431143,
+        "hi": 0.9938441702975689
+      },
+      "errors": 0,
+      "budget": 0,
+      "valid": 32,
+      "mean_reward": 0.6458333333333334,
+      "p_mixed": 0.9830329423615165,
+      "reward_dirichlet": {
+        "values": [
+          0.0,
+          0.166666667,
+          0.333333333,
+          0.5,
+          0.666666667,
+          0.833333333,
+          1.0
+        ],
+        "alphas": [
+          2.5,
+          4.5,
+          2.5,
+          2.5,
+          9.5,
+          4.5,
+          9.5
+        ]
+      },
+      "draw": 0.9761328184116975,
+      "rank": 1,
+      "decision": "selected",
+      "reason": "Thompson draw 0.976 (p_mix@4) ranked 1 of 8 eligible"
+    }
+  ]
+}
