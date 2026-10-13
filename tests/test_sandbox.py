@@ -39,8 +39,13 @@ CORPUS = ROOT / "qe_arena" / "corpus"
 # domain's new entries move only its own line (`python scripts/fingerprint.py` prints them all).
 CORPUS_FINGERPRINT = ("f50dbb1dd3917498", 1_732_616_699, 2880)
 DOMAIN_FINGERPRINTS = {
-    "finance-economics": ("c1c4e318f60a137f", 179_208_328, 256),
     "industrial-physical-systems": ("5b764def6559613a", 167_521_565, 256),
+    "natural-science": ("72484459568e77b5", 203_234_057, 256),
+    "office-white-collar": ("8521af17f780cb91", 192_838_657, 320),
+    "finance-economics": ("c1c4e318f60a137f", 179_208_328, 256),
+    "mathematics-or-formal-reasoning": ("e978c42184ea8837", 158_640_065, 256),
+    "cybersecurity": ("dda5acdfde2d7c34", 156_306_978, 256),
+    "media-content-production": ("d41c4d6b80e4691e", 199_812_685, 320),
 }
 
 

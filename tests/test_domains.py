@@ -75,7 +75,7 @@ def test_the_minimum_is_enforced_when_a_pool_shrinks(monkeypatch):
 
 
 def test_domain_ids_round_trip_and_bad_ids_are_refused():
-    assert DOMAIN_TASK_IDS, "v4 serves at least the finance and industrial cells"
+    assert {task_domain(t) for t in DOMAIN_TASK_IDS} == set(DOMAINS[1:]), "v4 serves every arena domain"
     for task_id in ALL_TASK_IDS:
         family, level = parse_task_id(task_id)
         assert format_task_id(family, level, task_domain(task_id)) == task_id

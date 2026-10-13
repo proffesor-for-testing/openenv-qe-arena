@@ -48,6 +48,7 @@ by domain, family and level, and `ALL_TASK_IDS` is both. A domain's cells (every
 only once it has at least `MIN_DOMAIN_ENTRIES` (4) injected entries: with fewer, one function dominates a cell,
 and a function that cannot serve a seed (no subtle mutant, no fault inside the d4 budget, too few short rows
 for a flaky suite) leaves too few others to fall back on. `tests/test_domains.py` checks the rule both ways.
+Since v4 every domain is served: 4 or 5 original entries each, 70 domain cells beside the 10 software ones.
 Real-bug entries are software engineering, so a domain cell's `qe_bugfix` faults are always injected. A
 calibration `pool` must name entries of the cell's domain. Each generator makes up to `PASSES` (4) passes over its
 pool before giving up, because a 4-entry pool sometimes has no function that serves a seed on the first pass
