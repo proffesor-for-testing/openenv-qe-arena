@@ -21,6 +21,10 @@ MAX_TEST_RUNS = 3
 MAX_EDIT_BYTES = 4096
 MAX_FILE_BYTES = 6000
 MAX_ANSWER_BYTES = 8192
+# Ends every non-terminal step observation: with thinking off the model drifts into prose before its JSON after a
+# few steps, and the reset prompt alone is too far back to hold it. Reset leaves it empty, so the reset prompt
+# and the exported dataset do not change.
+STEP_REMINDER = "Reply with exactly one JSON action object and nothing else."
 
 
 class QEAction(Action):
@@ -46,6 +50,7 @@ class QEObservation(Observation):
     content: str = ""
     error: str = ""
     remaining_steps: int = 0
+    reply_format: str = ""  # declared last so it closes the rendered observation
 
 
 class QEEnvironment(Environment[QEAction, QEObservation, State]):
@@ -80,12 +85,14 @@ class QEEnvironment(Environment[QEAction, QEObservation, State]):
         self._state = State(episode_id=episode_id or str(uuid4()), step_count=0)
         self._done, self._reward, self._test_runs = False, 0.0, 0
         self._edit_spent, self._refusals = 0, 0
-        return self._observe(prompt=self._task.prompt, files=sorted(self._files))
+        return self._observe(remind=False, prompt=self._task.prompt, files=sorted(self._files))
 
-    def _observe(self, **fields: Any) -> QEObservation:
+    def _observe(self, remind: bool = True, **fields: Any) -> QEObservation:
+        """A step observation carries STEP_REMINDER unless the episode is over (there is no next reply)."""
         return QEObservation(
             task_id=self._task.task_id if self._task else "", done=self._done, reward=self._reward,
-            remaining_steps=max(0, MAX_STEPS - self._state.step_count), **fields)
+            remaining_steps=max(0, MAX_STEPS - self._state.step_count),
+            reply_format=STEP_REMINDER if remind and not self._done else "", **fields)
 
     def step(self, action: QEAction, timeout_s: float | None = None, **kwargs: Any) -> QEObservation:
         """One action. An InfraError (the sandbox infrastructure failed) propagates unscored: the step,

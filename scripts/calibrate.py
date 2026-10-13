@@ -9,11 +9,18 @@ process; it never appears in argv, output or logs.
 
     python scripts/calibrate.py --task-id qe_bugfix-d1 --attempts 4 --seeds 2 \
         --output runs/cal.jsonl --max-total-tokens 2000000 --execute
+
+--strict scores an episode as the arena does: a reply that is not exactly one JSON object
+(json.loads of the stripped reply must give a dict; prose, fences or a second object fail) ends it with
+reward 0. The episode still plays on under the lenient parser, so each row records both: ``reward`` (strict),
+``lenient_reward``, ``strict_end`` and ``strict_end_step``, plus ``finish_reward``, what the arena's
+finish_action ({"op": "submit", "answer": {}}) would have scored at that point (a bug fix keeps its edits).
 """
 
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import re
@@ -102,6 +109,22 @@ def parse_action(text: str) -> dict | None:
     return value if isinstance(value, dict) else None
 
 
+def parse_strict(text: str) -> dict | None:
+    """The arena's rule: the stripped reply is exactly one JSON object. No fences, no prose, no second object."""
+    try:
+        value = json.loads(text.strip())
+    except (json.JSONDecodeError, RecursionError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def finish_reward(env: QEEnvironment) -> float:
+    """What finish_action would score now, on a copy so the lenient episode plays on unchanged."""
+    probe = copy.deepcopy(env)
+    obs = probe.step(QEAction(op="submit", answer={}))
+    return float(obs.reward or 0.0)
+
+
 def observation_text(obs) -> str:
     data = {k: v for k, v in obs.model_dump().items() if k not in ("metadata",) and v not in ("", [], None)}
     return json.dumps(data, ensure_ascii=False)
@@ -118,8 +141,11 @@ def run_episode(args, token: str, budget: Budget, task_id: str, seed: int, attem
     record = {"task_id": task_id, "seed": seed, "attempt": attempt, "corpus": env._task.private["corpus"],
               "fault_kind": env._task.private.get("fault_kind"),
               "faults": [f.get("operator") or f.get("id") for f in env._task.private.get("faults", [])],
-              "steps": 0, "invalid": 0,
-              "completion_tokens": 0, "prompt_tokens_last": 0, "end": "", "reward": 0.0}
+              "steps": 0, "invalid": 0, "nonstrict": 0, "strict": args.strict,
+              "strict_end": False, "strict_end_step": None, "finish_reward": None,
+              "episode_completion_tokens": args.episode_completion_tokens,
+              "episode_context_tokens": args.episode_context_tokens, "max_steps": args.max_steps,
+              "completion_tokens": 0, "prompt_tokens_last": 0, "prompt_tokens_max": 0, "end": "", "reward": 0.0}
     while True:
         if record["completion_tokens"] >= args.episode_completion_tokens:
             record["end"] = "completion_budget"
@@ -128,6 +154,7 @@ def run_episode(args, token: str, budget: Budget, task_id: str, seed: int, attem
         usage = reply.get("usage") or {}
         record["completion_tokens"] += int(usage.get("completion_tokens", 0))
         record["prompt_tokens_last"] = int(usage.get("prompt_tokens", 0))
+        record["prompt_tokens_max"] = max(record["prompt_tokens_max"], record["prompt_tokens_last"])
         if not budget.charge(int(usage.get("total_tokens", 0))):
             record["end"] = "global_budget"
             break
@@ -138,6 +165,11 @@ def run_episode(args, token: str, budget: Budget, task_id: str, seed: int, attem
         messages.append({"role": "assistant", "content": text})
         action = parse_action(text)
         record["steps"] += 1
+        if parse_strict(text) is None:
+            record["nonstrict"] += 1
+            if not record["strict_end"]:
+                record["strict_end"], record["strict_end_step"] = True, record["steps"]
+                record["finish_reward"] = finish_reward(env)
         if action is None:
             record["invalid"] += 1
             obs = None
@@ -158,6 +190,9 @@ def run_episode(args, token: str, budget: Budget, task_id: str, seed: int, attem
             record["end"] = "step_cap"
             break
         messages.append({"role": "user", "content": obs_text})
+    record["lenient_reward"] = record["reward"]
+    if args.strict and record["strict_end"]:
+        record["reward"] = 0.0
     record["seconds"] = round(time.time() - started, 1)
     record["messages"] = messages
     return record
@@ -185,6 +220,8 @@ def main(argv=None) -> int:
                         help="pin every episode group to one corpus function, for all functions (difficulty table)")
     parser.add_argument("--fault-kind", choices=["injected", "real"], default=None,
                         help="force the qe_bugfix fault source (default: the environment's own mix)")
+    parser.add_argument("--strict", action="store_true",
+                        help="score as the arena: a reply that is not exactly one JSON object ends the episode, reward 0")
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args(argv)
     tasks = args.task_id or TASK_IDS
@@ -195,7 +232,8 @@ def main(argv=None) -> int:
     jobs = [(t, args.seed_base + s, a, n) for t in tasks for n in names
             for s in range(args.seeds) for a in range(args.attempts)]
     print(f"{len(jobs)} episodes: {len(tasks)} tasks x {len(names)} pools x {args.seeds} seeds x {args.attempts} attempts; "
-          f"model {args.model}, thinking {args.thinking}, token ceiling {args.max_total_tokens}")
+          f"model {args.model}, thinking {args.thinking}, token ceiling {args.max_total_tokens}, "
+          f"{'strict' if args.strict else 'lenient'} replies")
     if not args.execute:
         print("dry run; add --execute to call the model")
         return 0
@@ -225,7 +263,7 @@ def main(argv=None) -> int:
                 if cell:
                     print(f"{task_id:<16}{name:<28} {sum(x == 1.0 for x in cell)}/{len(cell)}   {statistics.mean(cell):.2f}")
         return 0
-    print(f"{'cell':<22}{'seed':>9}  rewards        solved  invalid  ends")
+    print(f"{'cell':<22}{'seed':>9}  rewards        solved  invalid  nonstrict  ends")
     for task_id in tasks:
         for s in range(args.seeds):
             seed = args.seed_base + s
@@ -235,7 +273,8 @@ def main(argv=None) -> int:
             solved = sum(1 for r in rewards if r == 1.0)
             ends = ",".join(sorted({r.get("end", "") for r in rows}))
             print(f"{task_id:<22}{seed:>9}  {str([None if x is None else round(x, 2) for x in rewards]):<15}"
-                  f"{solved}/{len(rows)}   {sum(r.get('invalid', 0) for r in rows):>5}    {ends}")
+                  f"{solved}/{len(rows)}   {sum(r.get('invalid', 0) for r in rows):>5}  "
+                  f"{sum(r.get('nonstrict', 0) for r in rows):>9}    {ends}")
         cell = [r["reward"] for r in results if r["task_id"] == task_id and r["reward"] is not None]
         if cell:
             print(f"{'':<22}{'mean':>9}  {statistics.mean(cell):.3f}")
