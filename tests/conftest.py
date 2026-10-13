@@ -19,6 +19,7 @@ SLOW = frozenset({
     # d4, timed on a loaded host (about 4x the idle times above), so the cut there was 40 s
     "test_bugfix_d4.py::test_a_full_rewrite_is_refused_unapplied_and_free",
     "test_bugfix_d4.py::test_export_rows_keep_the_base_cells_byte_identical",
+    "test_bugfix_d4.py::test_oracle_passes_the_gate_on_a_fixed_sample",
     "test_bugfix_d4.py::test_refused_edits_are_free_up_to_a_cap_so_episodes_stay_bounded",
     "test_d4_attacks.py::test_attacks_played_as_edits_are_refused",
     "test_d4_attacks.py::test_every_attack_breaks_the_gate_and_grades_zero",

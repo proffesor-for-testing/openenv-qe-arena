@@ -241,8 +241,16 @@ def test_repairing_code_after_a_fault_made_early_exit_is_not_new_dead_code():
     assert edit_budget.structure_violation(always, guard) is not None
 
 
-@pytest.mark.parametrize("seed", [3000005, 3000000, 3000001, 3000007, 3000011])
-def test_oracle_passes_the_gate_on_a_fixed_sample_including_seed_3000005(seed):
+def test_oracle_passes_the_gate_on_seed_3000005():
+    _oracle_passes_the_gate_at_every_step(3000005)
+
+
+@pytest.mark.parametrize("seed", [3000000, 3000001, 3000007, 3000011])
+def test_oracle_passes_the_gate_on_a_fixed_sample(seed):
+    _oracle_passes_the_gate_at_every_step(seed)
+
+
+def _oracle_passes_the_gate_at_every_step(seed):
     task = make_task(D4, seed)
     p = task.private
     current = p["buggy"]
