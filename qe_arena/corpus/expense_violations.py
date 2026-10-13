@@ -9,63 +9,54 @@ META = {
 
 
 def expense_violations(items):
-    """Return the policy violations in an expense claim as [index, code] pairs.
+    """Return one day's expense-policy violations as [index, code] pairs.
 
-    items is a list of {"category": str, "cents": int, "receipt": bool, "date": str}.
-    Items are checked in list order; for each item the codes are appended in this order:
-    - "OVER_CAP": cents above the per-item cap for its category: "meal" 7500,
-      "hotel" 25000, "taxi" 6000, "other" 10000 (exactly the cap is allowed);
-    - "NO_RECEIPT": cents of 2500 or more and receipt is false;
-    - "DAILY_MEALS": a meal for which the running total of meal cents on that same date
-      (this item included, earlier items in the list only) is above 10000.
-    Returns [] for a compliant claim. Raises ValueError for an unknown category or for
-    cents of 0 or less; the claim is rejected at the first such item.
+    items are [category, cents, receipt] lines, checked in order; a line adds its codes
+    in this order: "OVER_CAP" if cents exceed the cap (meal 7500, hotel 25000, taxi 6000,
+    other 10000); "NO_RECEIPT" if cents >= 2500 and receipt is false; "DAILY_MEALS" for a
+    meal after which the day's meal total so far exceeds 10000. Raises ValueError at the
+    first line with an unknown category or cents <= 0.
     """
     caps = {"meal": 7500, "hotel": 25000, "taxi": 6000, "other": 10000}
-    meals_by_date = {}
-    found = []
-    for index, item in enumerate(items):
-        category, cents = item["category"], item["cents"]
+    meals, found = 0, []
+    for index, (category, cents, receipt) in enumerate(items):
         if category not in caps:
-            raise ValueError("unknown expense category: " + str(category))
+            raise ValueError("unknown category")
         if cents <= 0:
-            raise ValueError("expense amount must be positive")
+            raise ValueError("cents must be positive")
         if cents > caps[category]:
             found.append([index, "OVER_CAP"])
-        if cents >= 2500 and not item["receipt"]:
+        if cents >= 2500 and not receipt:
             found.append([index, "NO_RECEIPT"])
         if category == "meal":
-            meals_by_date[item["date"]] = meals_by_date.get(item["date"], 0) + cents
-            if meals_by_date[item["date"]] > 10000:
+            meals += cents
+            if meals > 10000:
                 found.append([index, "DAILY_MEALS"])
     return found
 
 
 def gen_inputs(rng, n):
     """Return exactly n argument lists: boundary cases first, then rng-driven cases."""
-    def item(category, cents, receipt=True, date="2025-03-03"):
-        return {"category": category, "cents": cents, "receipt": receipt, "date": date}
-
     cases = [
         [[]],
-        [[item("meal", 7500), item("meal", 7501, date="2025-03-04")]],
-        [[item("hotel", 25000), item("hotel", 25001)]],
-        [[item("taxi", 6000), item("taxi", 6001)]],
-        [[item("other", 10000), item("other", 10001)]],
-        [[item("taxi", 2499, False), item("taxi", 2500, False), item("meal", 1, False)]],
-        [[item("meal", 4000), item("meal", 6000), item("meal", 1, date="2025-03-04")]],
-        [[item("meal", 4000), item("meal", 6001), item("meal", 500)]],
-        [[item("meal", 3000, False), item("meal", 3000, date="2025-03-04"), item("hotel", 30000, False)]],
-        [[item("taxi", 1200), item("meal", 0)]],
-        [[item("taxi", 1200), item("parking", 900)]],
-        [[item("meal", -5)]],
+        [[["meal", 7500, True]]],
+        [[["meal", 7501, True]]],
+        [[["hotel", 25000, True], ["hotel", 25001, True]]],
+        [[["taxi", 6000, True], ["taxi", 6001, True]]],
+        [[["other", 10000, True], ["other", 10001, True]]],
+        [[["taxi", 2499, False], ["taxi", 2500, False]]],
+        [[["meal", 1, False], ["meal", 9999, True]]],
+        [[["meal", 4000, True], ["meal", 6001, True]]],
+        [[["meal", 3000, False], ["hotel", 30000, False]]],
+        [[["taxi", 1200, True], ["meal", 0, True]]],
+        [[["taxi", 1200, True], ["bar", 900, True]]],
+        [[["meal", -5, True]]],
     ]
     categories = ["meal", "meal", "hotel", "taxi", "other"]
-    dates = ["2025-03-03", "2025-03-04", "2025-03-05"]
     while len(cases) < n:
         claim = []
-        for _ in range(rng.randint(1, 7)):
+        for _ in range(rng.choice([1, 2, 2, 3])):
             cents = rng.choice([rng.randint(1, 4000), rng.randint(2000, 12000), rng.randint(5000, 32000)])
-            claim.append(item(rng.choice(categories), cents, rng.random() < 0.7, rng.choice(dates)))
+            claim.append([rng.choice(categories), cents, rng.random() < 0.7])
         cases.append([claim])
     return cases[:n]

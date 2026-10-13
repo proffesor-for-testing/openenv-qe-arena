@@ -11,30 +11,26 @@ META = {
 
 
 def convert_timecode(timecode, src_fps, dst_fps):
-    """Convert a non-drop-frame timecode "HH:MM:SS:FF" from src_fps to dst_fps.
+    """Convert a non-drop-frame "HH:MM:SS:FF" timecode; return [dst frames, dst timecode].
 
-    Both rates must be one of the integer rates 24, 25, 30, 48, 50, 60. The timecode is
-    exactly four two-digit fields with HH 00-23, MM 00-59, SS 00-59 and FF 00 to
-    src_fps - 1. Its frame count is ((HH * 60 + MM) * 60 + SS) * src_fps + FF; at dst_fps
-    that instant falls in frame count * dst_fps // src_fps (rounded down: the frame on
-    screen at that moment), which is rendered back as "HH:MM:SS:FF" with dst_fps frames per
-    second. Returns {"frames": the dst_fps frame count, "timecode": the dst_fps timecode}.
-    Raises ValueError for an unsupported rate, a malformed timecode or a field out of range.
+    Rates must be 24, 25, 30, 48, 50 or 60. Fields are two digits: HH 00-23, MM and SS
+    00-59, FF 00 to src_fps - 1. frames = ((HH * 60 + MM) * 60 + SS) * src_fps + FF becomes
+    frames * dst_fps // src_fps (rounded down) at dst_fps, written back as "HH:MM:SS:FF".
+    Raises ValueError for another rate, a malformed timecode or a field out of range.
     """
     for fps in (src_fps, dst_fps):
         if fps not in (24, 25, 30, 48, 50, 60):
-            raise ValueError("unsupported frame rate: " + str(fps))
+            raise ValueError("unsupported frame rate")
     match = re.fullmatch(r"(\d\d):(\d\d):(\d\d):(\d\d)", timecode)
     if not match:
         raise ValueError("timecode must be HH:MM:SS:FF")
     hours, minutes, seconds, frame = (int(part) for part in match.groups())
     if hours > 23 or minutes > 59 or seconds > 59 or frame >= src_fps:
-        raise ValueError("timecode field out of range: " + timecode)
+        raise ValueError("field out of range")
     count = ((hours * 60 + minutes) * 60 + seconds) * src_fps + frame
     frames = count * dst_fps // src_fps
     whole, frame = divmod(frames, dst_fps)
-    text = "%02d:%02d:%02d:%02d" % (whole // 3600, whole // 60 % 60, whole % 60, frame)
-    return {"frames": frames, "timecode": text}
+    return [frames, "%02d:%02d:%02d:%02d" % (whole // 3600, whole // 60 % 60, whole % 60, frame)]
 
 
 def gen_inputs(rng, n):
@@ -59,7 +55,9 @@ def gen_inputs(rng, n):
     ]
     rates = [24, 25, 30, 48, 50, 60]
     while len(cases) < n:
-        src, dst = rng.choice(rates), rng.choice(rates)
-        parts = [rng.randint(0, 23), rng.randint(0, 59), rng.randint(0, 59), rng.randint(0, src - 1)]
+        src, dst = rng.choice(rates), rng.choice(rates + [29] if rng.random() < 0.1 else rates)
+        hours = rng.choice([0, 0, 0, 1, rng.randint(0, 23)])  # most clips are under an hour
+        last_frame = src - 1 if rng.random() < 0.9 else src  # sometimes one frame too many
+        parts = [hours, rng.choice([0, rng.randint(0, 59)]), rng.randint(0, 59), rng.randint(0, last_frame)]
         cases.append([":".join("%02d" % p for p in parts), src, dst])
     return cases[:n]

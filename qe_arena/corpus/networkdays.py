@@ -8,21 +8,13 @@ META = {
 }
 
 
-def weekday(day):
-    """Day of the week for a day number counted from 1970-01-01 (a Thursday): Monday 0 .. Sunday 6."""
-    return (day + 3) % 7
-
-
 def networkdays(start, end, holidays):
-    """Count working days from start to end, both inclusive, like a spreadsheet NETWORKDAYS.
+    """Count working days from start to end inclusive, like a spreadsheet NETWORKDAYS.
 
-    Dates are integer day numbers counted from 1970-01-01 = 0 (may be negative). Monday to
-    Friday are working days; Saturday and Sunday are not. holidays is a list of day numbers:
-    each distinct one that falls on a working day within the range is subtracted once;
-    weekend holidays, holidays outside the range and duplicates change nothing.
-    When start is after end the count runs from end to start and the result is negated, so
-    networkdays(a, b, h) == -networkdays(b, a, h) whenever a != b.
-    Raises TypeError if start, end or any holiday is not an int (bools are rejected).
+    Dates are int day numbers from 1970-01-01 = 0, a Thursday: (day + 3) % 7 is the weekday
+    with Monday 0, and weekdays 0-4 are working days. Each distinct holiday that is a working
+    day in the range is subtracted once. If start > end the range is end..start and the count
+    is negated. Raises TypeError if start, end or a holiday is not an int (bools rejected).
     """
     for value in [start, end] + list(holidays):
         if isinstance(value, bool) or not isinstance(value, int):
@@ -32,11 +24,10 @@ def networkdays(start, end, holidays):
         start, end, sign = end, start, -1
     weeks, extra = divmod(end - start + 1, 7)
     count = weeks * 5
-    first = weekday(start)
     for offset in range(extra):
-        if (first + offset) % 7 < 5:
+        if (start + offset + 3) % 7 < 5:
             count += 1
-    off = {h for h in holidays if start <= h <= end and weekday(h) < 5}
+    off = {h for h in holidays if start <= h <= end and (h + 3) % 7 < 5}
     return sign * (count - len(off))
 
 
@@ -63,6 +54,6 @@ def gen_inputs(rng, n):
         start = rng.randint(19700, 20500)
         end = start + rng.randint(-20, 120)
         lo, hi = min(start, end), max(start, end)
-        holidays = [rng.randint(lo - 5, hi + 5) for _ in range(rng.randint(0, 5))]
+        holidays = [rng.randint(lo - 5, hi + 5) for _ in range(rng.randint(0, 3))]
         cases.append([start, end, holidays])
     return cases[:n]

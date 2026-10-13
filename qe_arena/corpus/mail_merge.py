@@ -9,24 +9,21 @@ META = {
 
 
 def mail_merge(template, record):
-    """Fill the {{field}} placeholders of template from record (a dict of str keys).
+    """Fill the {{field}} placeholders of template from record; return [text, missing].
 
-    Every "{{" opens a placeholder that must be closed by a "}}" before the next "{{" (or the
-    end of the template); text after that "}}" is copied unchanged, as is the text before the
-    first "{{". A placeholder body is "field" or "field|default"; the field name has
-    surrounding spaces removed ("{{ name }}" is field "name") and must be 1 to 32 characters.
-    A field whose value is missing, None or "" is blank: it is replaced by its default (""
-    when there is no "|"), and a blank field with no "|" is also reported as missing. Other
-    values are inserted with str(), so 7 becomes "7".
-    Returns {"text": the filled text, "missing": sorted list of distinct missing fields}.
-    Raises ValueError for an unclosed placeholder or a field name of 0 or more than 32 characters.
+    Each "{{" opens a placeholder closed by the next "}}", which must come before any later
+    "{{"; other text is copied. A body is "field" or "field|default"; the field is stripped
+    of spaces and must be 1 to 32 characters. A missing, None or "" value is replaced by the
+    default ("" without "|"), and without "|" the field is also missing. Other values go in
+    as str(value). missing is sorted and distinct. Raises ValueError for an unclosed
+    placeholder or a bad field length.
     """
     pieces = template.split("{{")
     out, missing = [pieces[0]], set()
     for piece in pieces[1:]:
         body, closed, rest = piece.partition("}}")
         if not closed:
-            raise ValueError("unclosed placeholder: {{" + piece)
+            raise ValueError("unclosed placeholder")
         field, bar, default = body.partition("|")
         field = field.strip(" ")
         if len(field) < 1 or len(field) > 32:
@@ -37,35 +34,33 @@ def mail_merge(template, record):
                 missing.add(field)
             value = default
         out.append(str(value) + rest)
-    return {"text": "".join(out), "missing": sorted(missing)}
+    return ["".join(out), sorted(missing)]
 
 
 def gen_inputs(rng, n):
     """Return exactly n argument lists: boundary cases first, then rng-driven cases."""
-    person = {"first": "Ana", "last": "Ilic", "city": "", "id": 42, "title": None}
     cases = [
-        ["Dear {{first}} {{last}},", person],
-        ["Dear {{ title |Customer}},", person],
-        ["Ref {{id}} from {{city|our office}}.", person],
-        ["Hi {{city}}{{title}}!", person],
-        ["{{first}}", person],
-        ["no fields here", person],
-        ["", person],
-        ["{{first}}{{first}}}}", person],
-        ["{{ last|}} and {{zip}} {{zip}}", person],
-        ["a {first} {{first}", person],
-        ["{{ |x}} y", person],
-        ["{{}} {{first}}", {}],
+        ["Dear {{name}},", {"name": "Ana"}],
+        ["Dear {{ title |Sir}},", {"title": None}],
+        ["Ref {{id}} at {{city|HQ}}", {"id": 42, "city": ""}],
+        ["{{city}}{{title}}!", {"city": "", "title": None}],
+        ["no fields", {}],
+        ["", {"a": 1}],
+        ["{{a}}{{a}}}}", {"a": "x"}],
+        ["{{ a|}} {{zip}} {{zip}}", {}],
+        ["a {b} {{b}", {"b": 2}],
+        ["{{ |x}} y", {}],
+        ["{{}} {{a}}", {}],
         ["{{ abcdefghijklmnopqrstuvwxyz012345 }}!", {"abcdefghijklmnopqrstuvwxyz012345": "ok"}],
         ["{{abcdefghijklmnopqrstuvwxyz0123456}}", {}],
         ["{{a|{{b}}", {"a": "A"}],
-        ["x {{a}} {{b|B}} {{c}}", {"a": 0, "b": "", "c": "C"}],
+        ["{{a}} {{b|B}} {{c}}", {"a": 0, "b": "", "c": "C"}],
     ]
-    words = ["Dear", "Hello", "Order", "for", "-", "your", ",", "{", "}"]
-    fields = ["first", "last", "city", "id", "title", "zip", " first ", "last|n/a", "zip|", "city|HQ", "x"]
+    words = ["Hi", "Re:", "-", ",", "{", "}"]
+    fields = ["name", "zip", "id", " name ", "zip|00", "id|", "city|HQ"]
+    records = [{}, {"name": "Ana"}, {"name": "", "id": 7}, {"zip": None, "id": 0}, {"city": "Rome"}]
     while len(cases) < n:
-        parts = []
-        for _ in range(rng.randint(1, 6)):
-            parts.append(rng.choice(words) if rng.random() < 0.5 else "{{" + rng.choice(fields) + "}}")
-        cases.append([" ".join(parts) if rng.random() < 0.7 else "".join(parts), person])
+        parts = [rng.choice(words) if rng.random() < 0.4 else "{{" + rng.choice(fields) + "}}"
+                 for _ in range(rng.randint(1, 3))]
+        cases.append([rng.choice([" ", ""]).join(parts), rng.choice(records)])
     return cases[:n]

@@ -9,21 +9,13 @@ META = {
 
 
 def loudness_gain(measured_cdb, peak_cdb, target_cdb, ceiling_cdb, max_boost_cdb):
-    """Return the playback gain that normalises a track to a loudness target, in centi-dB.
+    """Loudness-normalisation gain in integer centi-dB (1 dB = 100); return [gain, limited_by].
 
-    All values are integers in centi-dB (1 dB = 100): measured_cdb is the track's integrated
-    loudness (LUFS * 100, so -2340 is -23.4 LUFS), peak_cdb its true peak (dBTP * 100),
-    target_cdb the target loudness, ceiling_cdb the highest true peak allowed after gain,
-    max_boost_cdb the largest positive gain allowed. Steps, in order:
-    1. measured_cdb below -7000 (quieter than -70 LUFS) is treated as silence: gain 0,
-       limited_by "silence";
-    2. gain = target_cdb - measured_cdb, limited_by "target";
-    3. if gain > max_boost_cdb: gain = max_boost_cdb, limited_by "max_boost";
-    4. if peak_cdb + gain > ceiling_cdb: gain = ceiling_cdb - peak_cdb, limited_by "peak"
-       (this may turn a boost into a cut).
-    Returns {"gain_cdb": gain, "loudness_cdb": measured_cdb + gain, "peak_cdb": peak_cdb + gain,
-    "limited_by": the label}. Raises ValueError if max_boost_cdb is negative or ceiling_cdb
-    is above 0 (checked before anything else).
+    measured_cdb is integrated loudness (LUFS * 100), peak_cdb the true peak (dBTP * 100).
+    Below -7000 measured is silence: [0, "silence"]. Otherwise gain = target_cdb -
+    measured_cdb ("target"); if gain > max_boost_cdb it becomes max_boost_cdb ("max_boost");
+    then if peak_cdb + gain > ceiling_cdb it becomes ceiling_cdb - peak_cdb ("peak"), which
+    may be a cut. Raises ValueError first if max_boost_cdb < 0 or ceiling_cdb > 0.
     """
     if max_boost_cdb < 0 or ceiling_cdb > 0:
         raise ValueError("need max_boost_cdb >= 0 and ceiling_cdb <= 0")
@@ -35,8 +27,7 @@ def loudness_gain(measured_cdb, peak_cdb, target_cdb, ceiling_cdb, max_boost_cdb
             gain, limited_by = max_boost_cdb, "max_boost"
         if peak_cdb + gain > ceiling_cdb:
             gain, limited_by = ceiling_cdb - peak_cdb, "peak"
-    return {"gain_cdb": gain, "loudness_cdb": measured_cdb + gain, "peak_cdb": peak_cdb + gain,
-            "limited_by": limited_by}
+    return [gain, limited_by]
 
 
 def gen_inputs(rng, n):
@@ -62,6 +53,7 @@ def gen_inputs(rng, n):
     while len(cases) < n:
         measured = rng.choice([rng.randint(-3500, -400), rng.randint(-8000, -6000)])
         peak = rng.randint(measured + 300, max(measured + 400, 300))
-        cases.append([measured, peak, rng.choice(targets), rng.choice([-100, -100, -200, 0]),
-                      rng.choice([0, 300, 600, 1200, rng.randint(0, 2000)])])
+        ceiling = rng.choice([-100, -100, -200, -150, 0, 0, -100, 100])  # 100 is an invalid ceiling
+        boost = rng.choice([0, 300, 600, 1200, rng.randint(0, 2000), rng.randint(0, 2000), rng.randint(0, 2000), -300])
+        cases.append([measured, peak, rng.choice(targets), ceiling, boost])
     return cases[:n]
