@@ -142,17 +142,19 @@ def _truth(test: ast.AST, bound: frozenset = frozenset()) -> bool | str | None:
     token allowance bounds the rest. Caught: literals and displays (`{0}`, `()`, f-strings),
     anything with no variable in it, a bare builtin such as `zip` (when no name in the file shadows
     it), `x OP x`, `x or not x`, `x in (x,)`, `x or <truthy>` / `x and <falsy>`,
-    `isinstance(_, object)` and `len(...) >= 0`. ``bound`` is every name the file binds.
+    `isinstance(_, object)` and `len(...) >= 0`. ``bound`` is from _bound_names: every name the file
+    binds as a variable, plus OBJECT + name for a name bound only by def, class or import.
     """
-    if isinstance(test, ast.Name) and test.id in _BUILTINS and test.id not in bound:
-        return True  # a builtin function object is always truthy
+    if isinstance(test, ast.Name) and (OBJECT + test.id in bound or (test.id in _BUILTINS and test.id not in bound)):
+        return True  # a function, class, module or builtin object is always truthy
     if isinstance(test, (ast.Set, ast.List, ast.Tuple, ast.Dict)):
         return bool(test.keys if isinstance(test, ast.Dict) else test.elts)
     if isinstance(test, ast.JoinedStr):
         if any(isinstance(v, ast.Constant) and v.value for v in test.values):
             return True
         return None if any(isinstance(v, ast.FormattedValue) for v in test.values) else False
-    if not any(isinstance(n, ast.Name) and (n.id not in _CONSTANT_NAMES or n.id in bound) for n in ast.walk(test)):
+    if not any(isinstance(n, ast.Name) and (n.id in bound or (n.id not in _CONSTANT_NAMES and OBJECT + n.id not in bound))
+               for n in ast.walk(test)):
         try:
             return bool(ast.literal_eval(test))
         except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
@@ -219,18 +221,33 @@ def _constant_test(test: ast.AST, bound: frozenset = frozenset()) -> bool:
     return _truth(test, bound) is not None
 
 
+OBJECT = "object:"  # prefix in _bound_names for a name that only def, class or import binds
+
+
 def _bound_names(tree: ast.AST) -> frozenset:
-    names = set()
+    """Names the file binds as variables, plus OBJECT + name for each name bound only by def, class or
+    import: always a truthy object, so `if tokenize:` or `if re:` is as constant as `if {0}:`. A name
+    that is also assigned, a parameter, a loop or with/except target, deleted, or declared global or
+    nonlocal anywhere stays a variable."""
+    variables, objects = set(), set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
-            names.add(node.id)
+            variables.add(node.id)  # assignment, augmented, walrus, for/with/comprehension target, del
         elif isinstance(node, ast.arg):
-            names.add(node.arg)
+            variables.add(node.arg)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            variables.update(node.names)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            variables.add(node.name)
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+            variables.add(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            variables.add(node.rest)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.add(node.name)
+            objects.add(node.name)
         elif isinstance(node, ast.alias):
-            names.add((node.asname or node.name).split(".")[0])
-    return frozenset(names)
+            objects.add((node.asname or node.name).split(".")[0])
+    return frozenset(variables | {OBJECT + name for name in objects - variables})
 
 
 _RUNS = ("range", "zip", "sorted", "reversed", "list", "tuple", "enumerate", "str", "set", "map", "filter")
@@ -241,7 +258,7 @@ def _must_iterate(node: ast.AST, bound: frozenset) -> bool:
     if _nonempty_literal(node):
         return True
     if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in _RUNS
-            and node.func.id not in bound and not node.keywords):
+            and node.func.id not in bound and OBJECT + node.func.id not in bound and not node.keywords):
         try:
             args = [ast.literal_eval(a) for a in node.args]
         except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
@@ -322,15 +339,19 @@ def _stmt_ends(stmt: ast.stmt, jumps: bool, bound: frozenset = frozenset()) -> b
     return False
 
 
-def _dead_code(tree: ast.AST) -> list[tuple[str, str, str]]:
+def _dead_code(tree: ast.AST, objects: frozenset = frozenset()) -> list[tuple[str, str, str]]:
     """Constant or tautological tests (a wrapper such as `if True:`), then unreachable statements.
+
+    ``objects`` are names the buggy file binds only by def, class or import. They stay objects here
+    even if the candidate also assigns them, so adding `tokenize = 0` somewhere cannot turn
+    `if tokenize:` back into a variable test.
 
     Each finding is (key, location, message). The key identifies the code itself, not its line,
     so findings the buggy file already has (a fault can create `x > x`) can be told apart from
     new ones.
     """
     found = []
-    bound = _bound_names(tree)
+    bound = (_bound_names(tree) - objects) | {OBJECT + name for name in objects}
     for node in ast.walk(tree):
         if isinstance(node, (ast.If, ast.While, ast.IfExp)) and _constant_test(node.test, bound):
             found.append((f"const:{ast.dump(node.test)}", str(node.lineno), f"a constant condition at line {node.lineno}"))
@@ -363,8 +384,9 @@ def structure_violation(buggy: str, candidate: str) -> str | None:
         return "function definitions, arguments and decorators must stay as they are"
     if sum(isinstance(n, ast.Lambda) for n in ast.walk(tree)) > sum(isinstance(n, ast.Lambda) for n in ast.walk(base)):
         return "no new lambda functions"
+    objects = frozenset(n[len(OBJECT):] for n in _bound_names(base) if n.startswith(OBJECT))
     already = Counter(key for key, _, _ in _dead_code(base))
-    for key, _, message in _dead_code(tree):
+    for key, _, message in _dead_code(tree, objects):
         if already[key] > 0:
             already[key] -= 1  # the buggy file has this one too; a fault may have made it
             continue
