@@ -4,6 +4,7 @@ META = {
     "entry": "integer_edge_values",
     "origin": "proffesor-for-testing/sentinel-api-testing@704f47fbc4d2d75ed9261f9a602d76aea930d01b:sentinel_backend/orchestration_service/agents/data_mocking_agent.py",
     "tags": ["test-data", "boundary-values"],
+    "domain": "software-engineering",
 }
 
 

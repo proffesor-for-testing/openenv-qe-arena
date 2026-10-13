@@ -4,6 +4,7 @@ META = {
     "entry": "artifact_retention_keep",
     "origin": "proffesor-for-testing/lionagi-qe-fleet@ce1d58750a240a16c3c53abcb8a7c73864e98c99:src/lionagi_qe/storage/utils/retention.py",
     "tags": ["storage", "time-window", "policy"],
+    "domain": "software-engineering",
 }
 
 

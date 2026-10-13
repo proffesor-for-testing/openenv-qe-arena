@@ -4,6 +4,7 @@ META = {
     "entry": "api_complexity_level",
     "origin": "proffesor-for-testing/sentinel-api-testing@704f47fbc4d2d75ed9261f9a602d76aea930d01b:sentinel_backend/orchestration_service/agents/performance_planner_agent.py",
     "tags": ["performance", "planning", "thresholds"],
+    "domain": "software-engineering",
 }
 
 

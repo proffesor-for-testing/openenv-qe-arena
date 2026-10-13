@@ -5,6 +5,7 @@ META = {
     "entry": "find_stop",
     "origin": "ruvnet/RuVector@32033a8bc0d4d92e0ea644fce98eef4bb5c6bfef:crates/ruvllm/src/backends/gguf_arch/mod.rs",
     "tags": ["llm", "strings", "streaming"],
+    "domain": "software-engineering",
     "real_faults": [
         {"id": "find_stop/first-listed", "kind": "first-match-vs-best", "origin": PRE_FIX,
          "summary": "cuts at the first stop sequence in list order that occurs, not at the earliest offset",

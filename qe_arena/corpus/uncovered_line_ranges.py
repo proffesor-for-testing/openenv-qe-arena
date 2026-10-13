@@ -4,6 +4,7 @@ META = {
     "entry": "uncovered_line_ranges",
     "origin": "proffesor-for-testing/agentic-qe@214a5bc881fe4ad6324e243c9d9c2c24baae5295:src/domains/coverage-analysis/services/coverage-parser.ts",
     "tags": ["coverage", "ranges"],
+    "domain": "software-engineering",
 }
 
 

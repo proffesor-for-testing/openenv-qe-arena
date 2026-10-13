@@ -4,6 +4,7 @@ META = {
     "entry": "parse_signature_header",
     "origin": "proffesor-for-testing/agentic-qe@214a5bc881fe4ad6324e243c9d9c2c24baae5295:src/adapters/a2a/notifications/signature.ts",
     "tags": ["parsing", "security", "webhooks"],
+    "domain": "software-engineering",
 }
 
 

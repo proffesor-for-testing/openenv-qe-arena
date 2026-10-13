@@ -4,6 +4,7 @@ META = {
     "entry": "claim_steal_priority",
     "origin": "proffesor-for-testing/agentic-qe@214a5bc881fe4ad6324e243c9d9c2c24baae5295:src/coordination/claims/work-stealing.ts",
     "tags": ["scheduling", "scoring"],
+    "domain": "software-engineering",
 }
 
 

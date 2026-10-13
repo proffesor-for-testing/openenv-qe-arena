@@ -6,7 +6,7 @@ import copy
 
 import numpy as np
 
-from .stats import TRAIN_GROUP, expected_all_equal
+from .stats import TRAIN_GROUP, base_cell, expected_all_equal
 
 OBJECTIVES = {
     "projected": "p_mix@G: chance that G fresh instances do not all get the same reward (partial credit "
@@ -79,3 +79,26 @@ def select_cells(stats: dict, template: list[dict], max_cells: int, seed: int, m
     chosen_ids = {r["task_id"] for r in ranked[:max_cells]}
     tasks = [copy.deepcopy(e) for e in template if e["task_id"] in chosen_ids]
     return tasks, reasons
+
+
+def extend_template(template: list[dict], cells: list[str]) -> tuple[list[dict], list[str], list[str]]:
+    """``template`` plus an entry for each of ``cells`` it lacks, with the limits of the cell's software-
+    engineering base cell (same family and level): a domain cell runs the same episode shape on other code.
+    Returns (the extended template, the cells added, the cells skipped because their base cell has no entry
+    to copy limits from)."""
+    by_id = {}
+    for entry in template:
+        if entry["task_id"] in by_id:
+            raise ValueError(f"template lists {entry['task_id']} twice")
+        by_id[entry["task_id"]] = entry
+    out, added, skipped = [copy.deepcopy(e) for e in template], [], []
+    for cell in cells:
+        if cell in by_id:
+            continue
+        base = by_id.get(base_cell(cell))
+        if base is None:
+            skipped.append(cell)
+            continue
+        out.append(copy.deepcopy(base) | {"task_id": cell})
+        added.append(cell)
+    return out, added, skipped

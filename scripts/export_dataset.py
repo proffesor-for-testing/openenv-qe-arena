@@ -3,8 +3,9 @@
 
     python scripts/export_dataset.py OUT_DIR --seeds 64
 
-Writes tasks.jsonl, manifest.json and README.md (the dataset card). Rows are
-reproducible: the environment rebuilds the same task from (task_id, seed).
+Writes tasks.jsonl (the software-engineering cells, byte-identical to earlier exports),
+domain_tasks.jsonl (the cells scoped to other arena domains), manifest.json and README.md (the
+dataset card). Rows are reproducible: the environment rebuilds the same task from (task_id, seed).
 """
 
 from __future__ import annotations
@@ -20,23 +21,27 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from qe_arena import corpus  # noqa: E402
-from qe_arena.tasks import DOMAIN, TASK_IDS, make_task  # noqa: E402
+from qe_arena.tasks import DOMAIN_TASK_IDS, TASK_IDS, make_task, task_domain  # noqa: E402
 
 CARD = """---
 license: mit
 language: [en]
 task_categories: [text-generation]
-tags: [openenv, openenv-arena, reinforcement-learning, software-engineering, quality-engineering, mutation-testing, flaky-tests]
+tags: [openenv, openenv-arena, reinforcement-learning, software-engineering, quality-engineering, mutation-testing, flaky-tests{domain_tags}]
 pretty_name: OpenEnv QE Arena tasks
 configs:
   - config_name: default
     data_files: tasks.jsonl
+  - config_name: domains
+    data_files: domain_tasks.jsonl
 ---
 
 # OpenEnv QE Arena tasks
 
 Public task instances for the [openenv-qe-arena](https://github.com/proffesor-for-testing/openenv-qe-arena)
-training environment (OpenEnv Arena, software-engineering domain).
+training environment (OpenEnv Arena). The same quality-engineering skills are applied to code from several
+arena domains: the `default` config holds the software-engineering cells, and the `domains` config holds the
+cells whose corpus is code from another domain ({domain_list}).
 
 | Family | What the model does | Reward |
 |---|---|---|
@@ -47,11 +52,17 @@ training environment (OpenEnv Arena, software-engineering domain).
 
 Each row is what the model sees at reset: `prompt` and the virtual `files`. Hidden inputs, reference outputs,
 mutant sources and flaky-test ground truth are generated inside the environment from `(task_id, seed)` and are not in this dataset.
-`qe_bugfix-d4` rows also carry `edit_budget` (the budget the prompt states); other rows have no such key.
+`qe_bugfix-d4` rows (and their domain variants) also carry `edit_budget` (the budget the prompt states); other
+rows have no such key.
 
-- Rows: {rows} ({seeds} seeds x {cells} task cells)
-- Corpus: {entries} small Python functions, most adapted from MIT-licensed QE projects; origins are in
-  `manifest.json`.
+A task ID names its domain between the family and the level: `qe_mutant_kill-d2` is the software-engineering
+cell, and `qe_mutant_kill-finance-d2` draws only finance-economics code. Every row's `domain` is the arena
+domain with spaces for hyphens.
+
+- Rows: {rows} ({seeds} seeds x {cells} task cells) in `tasks.jsonl`; {domain_rows} ({seeds} seeds x
+  {domain_cells} task cells) in `domain_tasks.jsonl`
+- Corpus: {entries} small Python functions, {adapted} of them adapted from MIT-licensed QE projects and the rest
+  original; origins and domains are in `manifest.json`.
 - Source commit: `{commit}`
 """
 
@@ -64,30 +75,51 @@ def main() -> int:
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     commit = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    seeds = range(args.seed_base, args.seed_base + args.seeds)
+    rows, domain_rows = export_rows(TASK_IDS, seeds), export_rows(DOMAIN_TASK_IDS, seeds)
+    data = "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows)
+    domain_data = "".join(json.dumps(r, sort_keys=True) + "\n" for r in domain_rows)
+    (args.out / "tasks.jsonl").write_text(data)
+    (args.out / "domain_tasks.jsonl").write_text(domain_data)
+    manifest = {
+        "rows": len(rows), "task_ids": TASK_IDS, "seeds": [args.seed_base, args.seed_base + args.seeds - 1],
+        "tasks_sha256": hashlib.sha256(data.encode()).hexdigest(), "source_commit": commit,
+        "domain_rows": len(domain_rows), "domain_task_ids": DOMAIN_TASK_IDS,
+        "domain_tasks_sha256": hashlib.sha256(domain_data.encode()).hexdigest(),
+        "corpus": {name: {"entry": e.entry, "origin": e.origin, "domain": e.domain}
+                   for name, e in sorted(corpus.ENTRIES.items())},
+    }
+    (args.out / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    domains = sorted({task_domain(t) for t in DOMAIN_TASK_IDS})
+    (args.out / "README.md").write_text(CARD.format(
+        rows=len(rows), seeds=args.seeds, cells=len(TASK_IDS), domain_rows=len(domain_rows),
+        domain_cells=len(DOMAIN_TASK_IDS), domain_list=", ".join(domains) or "none yet",
+        domain_tags="".join(f", {d}" for d in domains), entries=len(corpus.ENTRIES),
+        adapted=sum(e.origin != "Original." for e in corpus.ENTRIES.values()), commit=commit))
+    print(f"wrote {len(rows)} rows to {args.out}/tasks.jsonl (sha256 {manifest['tasks_sha256'][:16]}) and "
+          f"{len(domain_rows)} to domain_tasks.jsonl (sha256 {manifest['domain_tasks_sha256'][:16]})")
+    return 0
+
+
+def domain_label(task_id: str) -> str:
+    """The row's `domain`: the arena domain with spaces, which keeps "software engineering" as it was."""
+    return task_domain(task_id).replace("-", " ")
+
+
+def export_rows(task_ids: list[str], seeds: range) -> list[dict]:
     rows = []
-    for task_id in TASK_IDS:
-        for seed in range(args.seed_base, args.seed_base + args.seeds):
+    for task_id in task_ids:
+        for seed in seeds:
             task = make_task(task_id, seed)
             row = {
-                "task_id": task_id, "seed": seed, "split": "train", "domain": DOMAIN,
+                "task_id": task_id, "seed": seed, "split": "train", "domain": domain_label(task_id),
                 "family": task.family, "difficulty": task.difficulty,
                 "prompt": task.prompt, "files": json.dumps(task.files, sort_keys=True),
             }
             if task.private.get("edit_budget") is not None:  # d4 only, so other rows stay byte-identical
                 row["edit_budget"] = task.private["edit_budget"]
             rows.append(row)
-    data = "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows)
-    (args.out / "tasks.jsonl").write_text(data)
-    manifest = {
-        "rows": len(rows), "task_ids": TASK_IDS, "seeds": [args.seed_base, args.seed_base + args.seeds - 1],
-        "tasks_sha256": hashlib.sha256(data.encode()).hexdigest(), "source_commit": commit,
-        "corpus": {name: {"entry": e.entry, "origin": e.origin} for name, e in sorted(corpus.ENTRIES.items())},
-    }
-    (args.out / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
-    (args.out / "README.md").write_text(CARD.format(rows=len(rows), seeds=args.seeds, cells=len(TASK_IDS),
-                                                     entries=len(corpus.ENTRIES), commit=commit))
-    print(f"wrote {len(rows)} rows to {args.out} (sha256 {manifest['tasks_sha256'][:16]})")
-    return 0
+    return rows
 
 
 if __name__ == "__main__":

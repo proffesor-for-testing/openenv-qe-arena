@@ -25,6 +25,7 @@ P_SAME = 0.95                       # a decoy reuses the flaky test's facility .
 N_SAME = {1: 2, 2: 2, 3: 2}          # at most this many such decoys
 P_FILLER = 0.15                      # a decoy uses a safe-only form
 MAX_FUNCTION_BYTES = 1800
+PASSES = 4  # passes over the pool before giving up
 MAX_LITERAL = 48
 TELLTALE = ("flak", "random", "cache", "memo", "leak", "shared", "unorder", "float", "clock", "boundary",
             "order", "victim", "pollut", "culprit", "race", "time")
@@ -97,15 +98,18 @@ def build_task(task_id: str, level: int, seed: int, rng: random.Random, pool: tu
     low = FACILITY[cause] in ("draw", "now", "frac") and not clean and rng.random() < LOW_RATE
     eligible = [n for n in sorted(pool) if len(corpus.ENTRIES[n].function_source) <= MAX_FUNCTION_BYTES
                 and "flak" not in corpus.ENTRIES[n].function_source.lower()]
-    for name in rng.sample(eligible, len(eligible)):
-        item = corpus.ENTRIES[name]
-        function = mutation.rename_locals(item.function_source, random.Random(rng.random()))
-        rows = _rows(name, function, item.entry, rng)
-        if len(rows) < 12 or len({repr(o) for _, o in rows}) < 4:
-            continue
-        task = _build(task_id, level, seed, rng, name, item.entry, function, rows, cause, clean, low)
-        if task is not None:
-            return task
+    # A pass that builds nothing is followed by another with fresh draws, which a small domain pool needs.
+    # The first pass is the original single pass, so every task it built is unchanged.
+    for _ in range(PASSES):
+        for name in rng.sample(eligible, len(eligible)):
+            item = corpus.ENTRIES[name]
+            function = mutation.rename_locals(item.function_source, random.Random(rng.random()))
+            rows = _rows(name, function, item.entry, rng)
+            if len(rows) < 12 or len({repr(o) for _, o in rows}) < 4:
+                continue
+            task = _build(task_id, level, seed, rng, name, item.entry, function, rows, cause, clean, low)
+            if task is not None:
+                return task
     raise RuntimeError(f"no usable flaky task for {task_id} seed {seed}")
 
 

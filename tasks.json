@@ -39,6 +39,86 @@
     {
       "task_id": "qe_bugfix-d4",
       "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-industrial-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-industrial-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-industrial-d3",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-industrial-d4",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-industrial-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-industrial-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-industrial-d3",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-industrial-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-industrial-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-industrial-d3",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-finance-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-finance-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-finance-d3",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-finance-d4",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-finance-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-finance-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-finance-d3",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-finance-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-finance-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-finance-d3",
+      "split": "train"
     }
   ]
 }

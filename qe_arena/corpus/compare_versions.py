@@ -4,6 +4,7 @@ META = {
     "entry": "compare_versions",
     "origin": "proffesor-for-testing/agentic-qe@214a5bc881fe4ad6324e243c9d9c2c24baae5295:src/mcp/tools/security-compliance/scan.ts",
     "tags": ["versions", "parsing"],
+    "domain": "software-engineering",
 }
 
 

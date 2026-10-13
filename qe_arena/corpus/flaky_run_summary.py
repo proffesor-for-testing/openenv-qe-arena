@@ -4,6 +4,7 @@ META = {
     "entry": "flaky_run_summary",
     "origin": "proffesor-for-testing/lionagi-qe-fleet@ce1d58750a240a16c3c53abcb8a7c73864e98c99:src/lionagi_qe/agents/flaky_test_hunter.py",
     "tags": ["flaky-tests", "statistics"],
+    "domain": "software-engineering",
 }
 
 

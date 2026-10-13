@@ -4,6 +4,7 @@ META = {
     "entry": "aggregate_risk_factors",
     "origin": "proffesor-for-testing/agentic-qe@214a5bc881fe4ad6324e243c9d9c2c24baae5295:src/mcp/tools/defect-intelligence/predict.ts",
     "tags": ["defect-prediction", "grouping", "sorting"],
+    "domain": "software-engineering",
 }
 
 

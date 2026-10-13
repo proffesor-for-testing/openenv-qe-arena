@@ -4,6 +4,7 @@ META = {
     "entry": "vuln_priority_bucket",
     "origin": "proffesor-for-testing/agentic-qe@214a5bc881fe4ad6324e243c9d9c2c24baae5295:src/domains/security-compliance/services/security-auditor-reports.ts",
     "tags": ["security", "triage"],
+    "domain": "software-engineering",
 }
 
 

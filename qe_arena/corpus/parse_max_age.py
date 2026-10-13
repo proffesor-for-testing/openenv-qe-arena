@@ -6,6 +6,7 @@ META = {
     "entry": "parse_max_age",
     "origin": "proffesor-for-testing/agentic-qe@214a5bc881fe4ad6324e243c9d9c2c24baae5295:src/mcp/handlers/cross-phase-handlers.ts",
     "tags": ["parsing", "durations"],
+    "domain": "software-engineering",
 }
 
 

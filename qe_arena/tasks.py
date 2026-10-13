@@ -16,12 +16,39 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from . import corpus, edit_budget, mutation, sandbox
+from .domains import BY_SLUG, DOMAINS, SLUGS, SOFTWARE
 
 FAMILIES = ("qe_bugfix", "qe_mutant_kill", "qe_flaky")
-DOMAIN = "software engineering"
 LEVELS = {"qe_bugfix": (1, 2, 3, 4), "qe_mutant_kill": (1, 2, 3), "qe_flaky": (1, 2, 3)}
-# d4 is appended so the order of the original six cells (and exports) is unchanged.
+# The software-engineering cells, IDs and order frozen. d4 is appended so the original six (and exports) keep
+# their order.
 TASK_IDS = [f"{family}-d{level}" for family in FAMILIES for level in (1, 2, 3)] + ["qe_bugfix-d4"]
+# Injected entries a domain needs before any of its cells is listed or served. With fewer, one function
+# dominates a cell, and a function that cannot serve a seed (no subtle mutant, no fault that fits the d4
+# budget, too few short rows for a flaky suite) leaves too few others to fall back on.
+MIN_DOMAIN_ENTRIES = {"qe_bugfix": 4, "qe_mutant_kill": 4, "qe_flaky": 4}
+
+
+def _domain_cells() -> dict[str, tuple[str, str, int]]:
+    """Every servable task ID -> (family, domain, level). Domain cells come after the frozen ones."""
+    cells = {}
+    for task_id in TASK_IDS:
+        family, level = task_id.rsplit("-d", 1)
+        cells[task_id] = (family, SOFTWARE, int(level))
+    for domain in DOMAINS:
+        if domain == SOFTWARE:
+            continue
+        pool = len(corpus.domain_names(domain))
+        for family in FAMILIES:
+            if pool >= MIN_DOMAIN_ENTRIES[family]:
+                for level in LEVELS[family]:
+                    cells[f"{family}-{SLUGS[domain]}-d{level}"] = (family, domain, level)
+    return cells
+
+
+CELLS = _domain_cells()
+DOMAIN_TASK_IDS = [task_id for task_id in CELLS if task_id not in TASK_IDS]
+ALL_TASK_IDS = TASK_IDS + DOMAIN_TASK_IDS
 BUDGETED = 4  # qe_bugfix-d4: d3's faults plus a total edit budget, so a full rewrite does not fit
 
 HIDDEN_INPUTS = 48
@@ -50,21 +77,44 @@ class Task:
     private: dict[str, Any] = field(repr=False)
 
 
-def format_task_id(family: str, difficulty: int) -> str:
+def format_task_id(family: str, difficulty: int, domain: str = SOFTWARE) -> str:
     if family not in FAMILIES:
         raise ValueError(f"unknown family: {family!r}")
     if type(difficulty) is not int or difficulty not in LEVELS[family]:
         raise ValueError(f"difficulty must be one of {LEVELS[family]} for {family}")
-    return f"{family}-d{difficulty}"
+    if domain not in DOMAINS:
+        raise ValueError(f"unknown domain: {domain!r}")
+    task_id = f"{family}-d{difficulty}" if domain == SOFTWARE else f"{family}-{SLUGS[domain]}-d{difficulty}"
+    if task_id not in CELLS:
+        raise ValueError(f"{domain} has fewer than {MIN_DOMAIN_ENTRIES[family]} corpus entries, so no {family} cells")
+    return task_id
+
+
+def _parse(task_id: str) -> tuple[str, str, int]:
+    if type(task_id) is not str or len(task_id) > 64:
+        raise ValueError("task_id must be a short string")
+    match = re.fullmatch(r"(qe_[a-z_]+)(?:-([a-z]+))?-d([1-4])", task_id)
+    if match is None or task_id not in CELLS:
+        if match is not None and match.group(2) in BY_SLUG:
+            raise ValueError(f"invalid task_id: {task_id!r} (domain cells served: {DOMAIN_TASK_IDS})")
+        raise ValueError(f"invalid task_id: {task_id!r}")
+    return CELLS[task_id]
 
 
 def parse_task_id(task_id: str) -> tuple[str, int]:
-    if type(task_id) is not str or len(task_id) > 64:
-        raise ValueError("task_id must be a short string")
-    match = re.fullmatch(r"(qe_[a-z_]+)-d([1-4])", task_id)
-    if match is None or match.group(1) not in FAMILIES or int(match.group(2)) not in LEVELS[match.group(1)]:
-        raise ValueError(f"invalid task_id: {task_id!r}")
-    return match.group(1), int(match.group(2))
+    """(family, level) of a served task ID; the domain is ``task_domain``."""
+    family, _, level = _parse(task_id)
+    return family, level
+
+
+def task_domain(task_id: str) -> str:
+    """The arena domain whose corpus entries a served task ID draws."""
+    return _parse(task_id)[1]
+
+
+def cell_names(task_id: str) -> tuple[str, ...]:
+    """Every corpus entry (injected and real-bug) of the task ID's domain, for per-function calibration."""
+    return corpus.domain_names(task_domain(task_id), tuple(corpus.ENTRIES))
 
 
 def _show(value: Any) -> str:
@@ -391,22 +441,27 @@ def make_task(task_id: str, seed: int, *, pool: tuple[str, ...] | None = None,
               fault_kind: str | None = None) -> Task:
     """Build the task for (task_id, seed).
 
-    ``pool`` restricts which corpus functions may be drawn, and ``fault_kind`` ("injected" or
+    The task ID's domain decides the corpus: a software-engineering ID draws exactly the entries it
+    always drew, and a domain cell draws only that domain's injected entries. ``pool`` restricts which
+    corpus functions may be drawn (all of the cell's domain), and ``fault_kind`` ("injected" or
     "real") forces the qe_bugfix fault source. Both exist for per-function and per-tier
     calibration and are never reachable from an episode: the server constructs environments
     without them. By default a qe_bugfix task carries a real upstream fault with probability
     REAL_SHARE (from a real-bug entry) and injected faults otherwise; qe_mutant_kill and the
     injected tier never draw real-bug entries.
     """
-    family, level = parse_task_id(task_id)
+    family, domain, level = _parse(task_id)
     if type(seed) is not int or not 0 <= seed < 2**64:
         raise ValueError("seed must be an unsigned 64 bit integer")
     if pool is not None and (not pool or any(name not in corpus.ENTRIES for name in pool)):
         raise ValueError("pool must name corpus entries")
+    if pool is not None and any(corpus.ENTRIES[name].domain != domain for name in pool):
+        raise ValueError(f"pool must name {domain} entries for {task_id}")
     if fault_kind is not None and (family != "qe_bugfix" or fault_kind not in FAULT_KINDS):
         raise ValueError(f"fault_kind must be one of {FAULT_KINDS} for qe_bugfix")
-    injected = tuple(pool) if pool is not None else corpus.INJECTED_NAMES
-    real = tuple(n for n in (pool if pool is not None else corpus.REAL_NAMES) if corpus.ENTRIES[n].real_faults)
+    injected = tuple(pool) if pool is not None else corpus.domain_names(domain)
+    real = tuple(n for n in (pool if pool is not None else corpus.domain_names(domain, corpus.REAL_NAMES))
+                 if corpus.ENTRIES[n].real_faults)
     rng = random.Random(f"{task_id}:{seed}")
     if family == "qe_mutant_kill":
         return _make_mutant_kill(task_id, level, seed, rng, injected)

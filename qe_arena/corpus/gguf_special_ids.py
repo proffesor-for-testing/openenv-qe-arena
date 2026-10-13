@@ -5,6 +5,7 @@ META = {
     "entry": "gguf_special_ids",
     "origin": "ruvnet/RuVector@32033a8bc0d4d92e0ea644fce98eef4bb5c6bfef:crates/ruvllm/src/backends/gguf_arch/mod.rs; ruvnet/RuVector@32033a8bc0d4d92e0ea644fce98eef4bb5c6bfef:crates/ruvllm/src/backends/candle_backend.rs",
     "tags": ["llm", "tokenizer", "lookup"],
+    "domain": "software-engineering",
     "real_faults": [
         {"id": "gguf_special_ids/eos-from-vocab-guess", "kind": "wrong-sibling-constant", "origin": PRE_FIX,
          "summary": "the declared EOS id is ignored: a Qwen instruct model gets its end-of-text token, not end-of-turn",

@@ -4,6 +4,7 @@ META = {
     "entry": "flaky_hunter_reward",
     "origin": "proffesor-for-testing/lionagi-qe-fleet@ce1d58750a240a16c3c53abcb8a7c73864e98c99:src/lionagi_qe/learning/reward_calculator.py",
     "tags": ["flaky-tests", "metrics", "reward"],
+    "domain": "software-engineering",
 }
 
 

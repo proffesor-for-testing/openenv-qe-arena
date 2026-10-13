@@ -4,6 +4,7 @@ META = {
     "entry": "trace_sampling_decision",
     "origin": "proffesor-for-testing/sentinel-api-testing@704f47fbc4d2d75ed9261f9a602d76aea930d01b:sentinel_backend/config/enhanced_tracing_config.py",
     "tags": ["observability", "sampling"],
+    "domain": "software-engineering",
 }
 
 

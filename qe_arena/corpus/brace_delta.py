@@ -4,6 +4,7 @@ META = {
     "entry": "brace_delta",
     "origin": "proffesor-for-testing/agentic-qe@214a5bc881fe4ad6324e243c9d9c2c24baae5295:src/shared/parsers/multi-language-parser.ts",
     "tags": ["parsing", "strings"],
+    "domain": "software-engineering",
 }
 
 

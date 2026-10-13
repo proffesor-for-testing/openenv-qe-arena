@@ -37,7 +37,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from qe_arena.environment import QEAction, QEEnvironment  # noqa: E402
-from qe_arena.tasks import TASK_IDS, parse_task_id  # noqa: E402
+from qe_arena.tasks import DOMAIN_TASK_IDS, TASK_IDS, cell_names, parse_task_id  # noqa: E402
 
 SYSTEM = ("Solve the task with the available tools. Each reply must be exactly one JSON action object, "
           "with no markdown. Action schema: ")
@@ -208,7 +208,10 @@ def main(argv=None) -> int:
     parser.add_argument("--max-steps", type=int, default=12)
     parser.add_argument("--episode-completion-tokens", type=int, default=4096)
     parser.add_argument("--episode-context-tokens", type=int, default=8192)
-    parser.add_argument("--task-id", action="append", help="repeatable; default all")
+    parser.add_argument("--task-id", action="append",
+                        help="repeatable; default the software-engineering cells (plus --domain-cells)")
+    parser.add_argument("--domain-cells", action="store_true",
+                        help="add every domain-scoped cell (e.g. qe_mutant_kill-finance-d2) to the task list")
     parser.add_argument("--seeds", type=int, default=2, help="distinct seeds per task")
     parser.add_argument("--seed-base", type=int, default=500_000)
     parser.add_argument("--attempts", type=int, default=4, help="episodes per seed (GRPO group size)")
@@ -217,21 +220,24 @@ def main(argv=None) -> int:
     parser.add_argument("--max-total-tokens", type=int, required=True, help="hard global token ceiling")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--each-corpus", action="store_true",
-                        help="pin every episode group to one corpus function, for all functions (difficulty table)")
+                        help="pin every episode group to one corpus function, for every function of the "
+                             "task's domain (difficulty table)")
     parser.add_argument("--fault-kind", choices=["injected", "real"], default=None,
                         help="force the qe_bugfix fault source (default: the environment's own mix)")
     parser.add_argument("--strict", action="store_true",
                         help="score as the arena: a reply that is not exactly one JSON object ends the episode, reward 0")
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args(argv)
-    tasks = args.task_id or TASK_IDS
+    tasks = (args.task_id or TASK_IDS) + (DOMAIN_TASK_IDS if args.domain_cells else [])
     for task_id in tasks:
         parse_task_id(task_id)
-    from qe_arena import corpus as corpus_module
-    names = sorted(corpus_module.ENTRIES) if args.each_corpus else [None]
-    jobs = [(t, args.seed_base + s, a, n) for t in tasks for n in names
+    if len(set(tasks)) != len(tasks):
+        parser.error("a task is listed twice")
+    names = {t: list(cell_names(t)) if args.each_corpus else [None] for t in tasks}  # a pool must match the cell
+    jobs = [(t, args.seed_base + s, a, n) for t in tasks for n in names[t]
             for s in range(args.seeds) for a in range(args.attempts)]
-    print(f"{len(jobs)} episodes: {len(tasks)} tasks x {len(names)} pools x {args.seeds} seeds x {args.attempts} attempts; "
+    pools = sum(len(v) for v in names.values())
+    print(f"{len(jobs)} episodes: {len(tasks)} tasks, {pools} task pools, {args.seeds} seeds x {args.attempts} attempts; "
           f"model {args.model}, thinking {args.thinking}, token ceiling {args.max_total_tokens}, "
           f"{'strict' if args.strict else 'lenient'} replies")
     if not args.execute:
@@ -257,7 +263,7 @@ def main(argv=None) -> int:
     if args.each_corpus:
         print(f"{'task':<16}{'corpus':<28} solved  mean")
         for task_id in tasks:
-            for name in names:
+            for name in names[task_id]:
                 cell = [r["reward"] for r in results if r["task_id"] == task_id and r.get("corpus") == name
                         and r["reward"] is not None]
                 if cell:

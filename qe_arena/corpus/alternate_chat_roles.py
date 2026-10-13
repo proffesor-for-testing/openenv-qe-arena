@@ -4,6 +4,7 @@ META = {
     "entry": "alternate_chat_roles",
     "origin": "proffesor-for-testing/sentinel-api-testing@704f47fbc4d2d75ed9261f9a602d76aea930d01b:sentinel_backend/llm_providers/providers/anthropic_provider.py",
     "tags": ["llm", "normalization", "lists"],
+    "domain": "software-engineering",
 }
 
 

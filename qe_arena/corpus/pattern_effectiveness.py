@@ -4,6 +4,7 @@ META = {
     "entry": "pattern_effectiveness",
     "origin": "proffesor-for-testing/sentinel-api-testing@704f47fbc4d2d75ed9261f9a602d76aea930d01b:sentinel_backend/orchestration_service/services/pattern_analytics.py",
     "tags": ["scoring", "analytics"],
+    "domain": "software-engineering",
 }
 
 

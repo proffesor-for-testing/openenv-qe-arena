@@ -6,6 +6,7 @@ META = {
     "entry": "parse_cron_field",
     "origin": "proffesor-for-testing/agentic-qe@214a5bc881fe4ad6324e243c9d9c2c24baae5295:src/cli/utils/workflow-parser.ts",
     "tags": ["parsing", "cron", "time-window"],
+    "domain": "software-engineering",
 }
 
 

@@ -6,6 +6,7 @@ META = {
     "entry": "wilson_interval",
     "origin": "proffesor-for-testing/agentic-qe@214a5bc881fe4ad6324e243c9d9c2c24baae5295:src/domains/chaos-resilience/diagnosis/scorer.ts",
     "tags": ["statistics", "confidence-interval"],
+    "domain": "software-engineering",
 }
 
 
