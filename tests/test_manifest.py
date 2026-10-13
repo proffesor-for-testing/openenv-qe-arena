@@ -63,6 +63,53 @@ def test_manifest_holds_hashes_and_budgets_never_hidden_values(built):
         assert m["hidden_inputs_count"] == len(task.private["inputs"])
 
 
+FAMILY_TASKS = [("qe_flaky-d1", 0), ("qe_flaky-d3", 1), ("qe_bugfix-d4", 3000005)]
+
+
+@pytest.mark.parametrize("task_id, seed", FAMILY_TASKS)
+def test_flaky_and_d4_manifests_recompute_sign_and_verify(task_id, seed, key):
+    m = manifest.build_manifest(task_id, seed)
+    assert manifest.build_manifest(task_id, seed) == m
+    assert manifest.verify_task(manifest.sign(m, key), key.public_key()) == (True, "ok")
+
+
+def test_a_flaky_manifest_never_holds_the_answer():
+    task = make_task("qe_flaky-d3", 1)
+    p = task.private
+    text = manifest.canonical(manifest.manifest_for(task)).decode()
+    assert p["cause"] not in text and p["repair"]["new"] not in text
+    assert manifest.manifest_for(task)["hidden_inputs_count"] == len(p["graded"])
+
+
+@pytest.mark.parametrize("task_id, seed", FAMILY_TASKS)
+def test_every_private_field_the_grader_reads_is_pinned(task_id, seed):
+    """Changing any private field of the task changes its manifest (the corpus name is pinned by its
+    own field and the corpus file's hash). Bug-fix fault descriptions are derived from buggy and
+    original, which are pinned, and the visible tests are in the observation, so they are not checked here."""
+    task = make_task(task_id, seed)
+    base = manifest.manifest_for(task)
+    derived = {"corpus", "fault_kind", "fault_sites", "faults", "report_args", "sites", "visible"}
+    for name in sorted(set(task.private) - derived):
+        changed = copy.deepcopy(task)
+        value = changed.private[name]
+        if isinstance(value, str):
+            changed.private[name] = value + "#"
+        elif isinstance(value, bool) or value is None:
+            changed.private[name] = not value
+        elif isinstance(value, int):
+            changed.private[name] = value + 1
+        elif isinstance(value, list):
+            if value and hasattr(value[0], "fuel"):
+                changed.private[name] = value[:-1]
+            else:
+                changed.private[name] = value + [copy.deepcopy(value[0]) if value else {"source": "#"} if name == "mutants" else 0]
+        elif isinstance(value, dict):
+            changed.private[name] = {**value, "#": 0}
+        else:
+            raise AssertionError(f"no mutation for {name}: {type(value)}")
+        assert manifest.manifest_for(changed) != base, name
+
+
 def test_signature_round_trip_and_full_verification(built, key):
     m = built[TASKS[0]]
     envelope = manifest.sign(m, key)
