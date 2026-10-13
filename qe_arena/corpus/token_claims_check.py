@@ -9,21 +9,16 @@ META = {
 
 
 def token_claims_check(claims, now, audience, leeway):
-    """Check a decoded token's registered claims; the signature was verified elsewhere.
+    """Check a decoded token's time and audience claims (the signature was checked elsewhere).
 
-    claims is a dict, now and leeway are integer seconds. Returns "ok" or the first failing
-    reason, checked in this order:
-    "malformed"        - "exp" is missing, or one of "exp", "nbf", "iat" is present but is not an
-                         int (a bool is not an int);
-    "expired"          - now >= exp + leeway;
-    "not_yet_valid"    - "nbf" is present and now + leeway < nbf;
-    "issued_in_future" - "iat" is present and iat > now + leeway;
-    "audience"         - "aud" is a string other than audience, a list not containing audience,
-                         missing, or any other type.
-    Raises ValueError if leeway < 0.
+    now and leeway are int seconds. Returns "ok" or the first failing reason in this order:
+    "malformed": "exp" is missing, or "exp", "nbf" or "iat" is present but not an int (a bool
+    is not an int); "expired": now >= exp + leeway; "not_yet_valid": "nbf" is present and
+    now + leeway < nbf; "issued_in_future": "iat" is present and iat > now + leeway; "audience":
+    "aud" is neither audience itself nor a list containing it. Raises ValueError if leeway < 0.
     """
     if leeway < 0:
-        raise ValueError("leeway must not be negative")
+        raise ValueError("leeway < 0")
     if "exp" not in claims:
         return "malformed"
     for key in ("exp", "nbf", "iat"):
@@ -61,12 +56,12 @@ def gen_inputs(rng, n):
         [{"exp": 200, "nbf": 0, "iat": 0, "aud": [api]}, 100, api, 0],
     ]
     while len(cases) < n:
-        now = rng.randint(1000, 1100)
+        now = rng.randint(100, 199)
         claims = {"exp": now + rng.randint(-30, 60)}
-        for key in ("nbf", "iat"):
-            if rng.random() < 0.5:
+        for key in rng.sample(["nbf", "iat", "aud", "aud"], rng.randint(1, 3)):
+            if key == "aud":
+                claims[key] = rng.choice([api, "web", [api], ["web", api], ["web"], []])
+            else:
                 claims[key] = now + rng.randint(-30, 30)
-        if rng.random() < 0.85:
-            claims["aud"] = rng.choice([api, "web", [api], ["web", api], ["web"], []])
         cases.append([claims, now, api, rng.choice([0, 0, 5, 30])])
     return cases[:n]
