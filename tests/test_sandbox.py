@@ -35,7 +35,13 @@ CORPUS = ROOT / "qe_arena" / "corpus"
 
 # Cross-host golden: identical on arm64 macOS, amd64 Linux and the amd64 arena image. Regenerate only
 # when the runtime, guest harness, budgets, SAFE_EXPORTS or corpus change, and say why in the commit.
+# CORPUS_FINGERPRINT covers the software-engineering entries; each other domain has its own pin, so a
+# domain's new entries move only its own line (`python scripts/fingerprint.py` prints them all).
 CORPUS_FINGERPRINT = ("f50dbb1dd3917498", 1_732_616_699, 2880)
+DOMAIN_FINGERPRINTS = {
+    "finance-economics": ("7046fade88fc5037", 179_580_773, 256),
+    "industrial-physical-systems": ("5b764def6559613a", 167_521_565, 256),
+}
 
 
 def ok(value):
@@ -230,6 +236,13 @@ def test_outcomes_and_fuel_are_identical_across_runs_and_under_load():
 
 def test_corpus_fingerprint_is_pinned_across_hosts():
     assert fingerprint.corpus_fingerprint() == CORPUS_FINGERPRINT
+
+
+def test_every_domain_corpus_fingerprint_is_pinned_across_hosts():
+    domains = fingerprint.domains_with_entries()
+    assert domains[0] == "software-engineering" and set(domains[1:]) == set(DOMAIN_FINGERPRINTS)
+    for domain in domains[1:]:
+        assert fingerprint.corpus_fingerprint(domain) == DOMAIN_FINGERPRINTS[domain], domain
 
 
 def test_runtime_is_the_pinned_reproducible_build():

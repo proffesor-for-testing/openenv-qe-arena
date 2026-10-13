@@ -392,10 +392,11 @@ The oracle never runs in the same process as model-influenced code, and no code 
      `qe_arena/runtime_pins.json` (`python.wasm` d24bd98d…, `python314.zip` 959c807f…), which the worker also
      checks at startup. The Docker builder stage runs it. Both base images are pinned by digest, and wasmtime
      installs with `--require-hashes` (`requirements-wasmtime.lock`).
-   - `scripts/fingerprint.py` hashes kind, value and fuel for every corpus function on 64 inputs.
-     `tests/test_sandbox.py` pins the result, currently `f50dbb1dd3917498` with 1,732,616,699 total fuel over 45
-     functions (2,880 calls), identical on arm64 macOS, an amd64 Linux host and the amd64 image run with the
-     arena flags. The commit that changes the pin says why.
+   - `scripts/fingerprint.py` hashes kind, value and fuel for every corpus function of a domain on 64 inputs.
+     `tests/test_sandbox.py` pins the software-engineering result, currently `f50dbb1dd3917498` with
+     1,732,616,699 total fuel over 45 functions (2,880 calls), identical on arm64 macOS, an amd64 Linux host and
+     the amd64 image run with the arena flags, and one pin per other domain (`DOMAIN_FINGERPRINTS`), so a
+     domain's new entries move only its own line. The commit that changes a pin says why.
    - Regenerate the pin only when the runtime, the guest harness, the budgets, `SAFE_EXPORTS` or the corpus
      change, and say why in the commit.
 9. **Signed task manifests.** Because grading is deterministic, `qe_arena/manifest.py` describes a task by
