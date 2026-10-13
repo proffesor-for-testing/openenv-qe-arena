@@ -318,10 +318,14 @@ def _oracle_reward(seed):
     return seed, obs.reward, errors
 
 
-def test_oracle_earns_one_on_1000_natural_seeds():
-    """No false refusal of the true minimal fix on 1000 seeds outside every other test's range."""
-    with ProcessPoolExecutor(4) as pool:
-        results = list(pool.map(_oracle_reward, range(3_000_000, 3_001_000), chunksize=8))
+@pytest.mark.parametrize("chunk", range(10))
+def test_oracle_earns_one_on_1000_natural_seeds(chunk):
+    """No false refusal of the true minimal fix on 1000 seeds outside every other test's range.
+
+    Ten chunks of 100 seeds, run serially in each case, so xdist and the CI shards spread them; one
+    1000-seed case with its own process pool was the critical path of a slow shard (99 of 120 min)."""
+    start = 3_000_000 + 100 * chunk
+    results = [_oracle_reward(seed) for seed in range(start, start + 100)]
     failed = [(seed, reward, errors[:1]) for seed, reward, errors in results if reward != 1.0 or errors]
     assert not failed, failed[:10]
 
