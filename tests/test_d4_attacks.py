@@ -230,14 +230,16 @@ def test_compact_reimplementation_behind_a_display_guard_is_refused(seed):
                                    "{module}.__name__"])
 def test_guarded_rewrites_behind_any_fixed_test_never_pay(d4_tasks, guard):
     played = 0
-    for task in d4_tasks[:100]:
+    needs_object = "{helper}" in guard or "{module}" in guard  # only some files have a helper or an import
+    for task in d4_tasks if needs_object else d4_tasks[:100]:
         p = task.private
         fn = _entry(ast.parse(p["original"]), p["entry"])
         names = {"fn_arg": fn.args.args[0].arg if fn.args.args else "0", "entry": p["entry"]}
         names.update(_object_names(p["buggy"], p["entry"]))
-        try:
-            test = guard.format(**names)
-        except KeyError:
+        test = guard
+        for key, value in names.items():
+            test = test.replace("{" + key + "}", value)
+        if "{helper}" in test or "{module}" in test:
             continue  # no helper function or import in this file
         played += 1
         lineno, ind = _first_code_line(p["buggy"], p["entry"])
