@@ -463,3 +463,34 @@ def test_a_builtin_the_file_shadows_or_whose_special_method_it_defines_is_not_tr
     assert truth("__name__", "__name__ = 'x'\n" + plain) is None  # assigned: a variable like any other
     assert truth("eval('v')", plain) is None  # reads a variable through a string
     assert truth("vars()", plain) == edit_budget.FIXED and truth("vars(v)", plain) is None
+
+
+# Review of e983175 (B1): a `**d` key is None in the AST, and the `x in (x,)` check dumped it, so an edit with
+# `a in {**{}}` raised TypeError out of the gate and out of env.step (HTTP 500).
+@pytest.mark.parametrize("guard", ["a in {**{}}", "a in {**{}, 'k': 1}", "a not in {**b}", "a in [*b]"])
+def test_unpacking_inside_an_in_test_never_crashes_the_gate_or_the_step(guard):
+    task = make_task(D4, 3_000_076)
+    buggy = task.private["buggy"]
+    anchor = "    seen, group = tokenize(a), tokenize(b)\n"
+    assert anchor in buggy
+    guarded = buggy.replace(anchor, f"    if {guard}:\n        pass\n" + anchor, 1)
+    edit_budget.structure_violation(buggy, guarded)  # must return, not raise
+    env = QEEnvironment()
+    env.reset(seed=3_000_076, task_id=D4)
+    obs = env.step(QEAction(op="edit", path=MODULE, old=anchor, new=f"    if {guard}:\n        pass\n" + anchor))
+    assert isinstance(obs.error, str)  # an answer, accepted or refused, never an exception
+
+
+def test_a_display_that_unpacks_a_non_empty_display_is_true_and_one_that_unpacks_a_variable_is_not():
+    """Review of e983175 (F2): `[*[a]]` and `{**{a: 0}}` are always non-empty; `[*a]` is as empty as a."""
+    from qe_arena.edit_budget import _bound_names, _truth  # noqa: PLC0415
+
+    source = "def f(a):\n    return a\n"
+
+    def truth(expr):
+        return _truth(ast.parse(expr, mode="eval").body, _bound_names(ast.parse(source)))
+
+    for always in ("[*[a]]", "(*[a],)", "{*[a]}", "{**{a: 0}}", "[*a, *[a]]"):
+        assert truth(always) is True, always
+    for variable in ("[*a]", "{**a}", "(*a,)", "{*a}", "[*a, *b]"):
+        assert truth(variable) is None, variable

@@ -158,6 +158,10 @@ def _truth(test: ast.AST, bound: frozenset = frozenset()) -> bool | str | None:
         items = test.keys if isinstance(test, ast.Dict) else test.elts
         if not items or any(i is not None and not isinstance(i, ast.Starred) for i in items):
             return bool(items)  # `[*x]` and `{**x}` are as empty as x: decided below
+        # Every item unpacks something: non-empty when any unpacked value is (`[*[a]]`, `{**{a: 0}}`).
+        unpacked = test.values if isinstance(test, ast.Dict) else [i.value for i in items]
+        if any(_truth(v, bound) is True for v in unpacked):
+            return True
     if isinstance(test, ast.JoinedStr):
         if any(isinstance(v, ast.Constant) and v.value for v in test.values):
             return True
@@ -196,7 +200,7 @@ def _truth(test: ast.AST, bound: frozenset = frozenset()) -> bool | str | None:
             items = right.keys if isinstance(right, ast.Dict) else right.elts
             if not items:
                 return isinstance(op, ast.NotIn)  # nothing is in an empty display
-            if any(ast.dump(e) == ast.dump(left) for e in items):
+            if any(e is not None and ast.dump(e) == ast.dump(left) for e in items):  # None: a `**d` key
                 return isinstance(op, ast.In)  # x in (x,) is always true
         if _is_len(left) and _int_value(right) is not None:
             limit = _int_value(right)
