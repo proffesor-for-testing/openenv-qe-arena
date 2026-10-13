@@ -131,31 +131,37 @@ def _definitions(tree: ast.AST) -> list[tuple]:
             for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
 
 
-def _truth(test: ast.AST, bound: frozenset = frozenset()) -> bool | None:
-    """The truth value of ``test`` when it cannot depend on the input, else None.
+FIXED = "fixed"  # a test whose value cannot depend on the input, but which we do not evaluate
+
+
+def _truth(test: ast.AST, bound: frozenset = frozenset()) -> bool | str | None:
+    """The truth value of ``test`` when it cannot depend on the input, FIXED when it cannot depend on
+    the input but its value is not computed here, else None.
 
     Tautologies are open-ended: this catches the shapes a rewrite needs to hide behind, and the
     token allowance bounds the rest. Caught: literals and displays (`{0}`, `()`, f-strings),
     anything with no variable in it, a bare builtin such as `zip` (when no name in the file shadows
     it), `x OP x`, `x or not x`, `x in (x,)`, `x or <truthy>` / `x and <falsy>`,
-    `isinstance(_, object)` and `len(...) >= 0`. ``bound`` is every name the file binds.
+    `isinstance(_, object)` and `len(...) >= 0`. ``bound`` is from _bound_names: every name the file
+    binds as a variable, plus OBJECT + name for a name bound only by def, class or import.
     """
-    if isinstance(test, ast.Name) and test.id in _BUILTINS and test.id not in bound:
-        return True  # a builtin function object is always truthy
+    if isinstance(test, ast.Name) and (OBJECT + test.id in bound or (test.id in _BUILTINS and test.id not in bound)):
+        return True  # a function, class, module or builtin object is always truthy
     if isinstance(test, (ast.Set, ast.List, ast.Tuple, ast.Dict)):
         return bool(test.keys if isinstance(test, ast.Dict) else test.elts)
     if isinstance(test, ast.JoinedStr):
         if any(isinstance(v, ast.Constant) and v.value for v in test.values):
             return True
         return None if any(isinstance(v, ast.FormattedValue) for v in test.values) else False
-    if not any(isinstance(n, ast.Name) and (n.id not in _CONSTANT_NAMES or n.id in bound) for n in ast.walk(test)):
+    if not any(isinstance(n, ast.Name) and (n.id in bound or (n.id not in _CONSTANT_NAMES and OBJECT + n.id not in bound))
+               for n in ast.walk(test)):
         try:
             return bool(ast.literal_eval(test))
         except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
-            return True  # no variable in it, so its value is fixed even if we cannot compute it here
+            return FIXED  # no variable in it: fixed, but not evaluated here (never run model code)
     if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
         inner = _truth(test.operand, bound)
-        return None if inner is None else not inner
+        return inner if inner is None or inner == FIXED else not inner
     if isinstance(test, ast.BoolOp):
         values = [_truth(v, bound) for v in test.values]
         decisive = True if isinstance(test.op, ast.Or) else False
@@ -165,7 +171,11 @@ def _truth(test: ast.AST, bound: frozenset = frozenset()) -> bool | None:
         negated = {ast.dump(v.operand) for v in test.values if isinstance(v, ast.UnaryOp) and isinstance(v.op, ast.Not)}
         if negated & set(dumps):
             return decisive  # x or not x is always true; x and not x is always false
-        return None if None in values else not decisive
+        if decisive is True and FIXED in values:
+            return FIXED  # x or <fixed>: still refused as constant, as when <fixed> counted as true
+        if None in values:
+            return None
+        return FIXED if FIXED in values else not decisive
     if isinstance(test, ast.Compare) and len(test.ops) == 1:
         left, op, right = test.left, test.ops[0], test.comparators[0]
         if ast.dump(left) == ast.dump(right):
@@ -176,12 +186,12 @@ def _truth(test: ast.AST, bound: frozenset = frozenset()) -> bool | None:
                 and any(ast.dump(e) == ast.dump(left) for e in right.elts):
             return isinstance(op, ast.In)  # x in (x,) is always true
         if _is_len(left) and _int_value(right) is not None:
-            bound = _int_value(right)
-            if (isinstance(op, ast.GtE) and bound <= 0) or (isinstance(op, ast.Gt) and bound < 0):
+            limit = _int_value(right)
+            if (isinstance(op, ast.GtE) and limit <= 0) or (isinstance(op, ast.Gt) and limit < 0):
                 return True
         if _is_len(right) and _int_value(left) is not None:
-            bound = _int_value(left)
-            if (isinstance(op, ast.LtE) and bound <= 0) or (isinstance(op, ast.Lt) and bound < 0):
+            limit = _int_value(left)
+            if (isinstance(op, ast.LtE) and limit <= 0) or (isinstance(op, ast.Lt) and limit < 0):
                 return True
     if (isinstance(test, ast.Call) and isinstance(test.func, ast.Name) and test.func.id == "isinstance"
             and len(test.args) == 2 and isinstance(test.args[1], ast.Name) and test.args[1].id == "object"):
@@ -211,18 +221,33 @@ def _constant_test(test: ast.AST, bound: frozenset = frozenset()) -> bool:
     return _truth(test, bound) is not None
 
 
+OBJECT = "object:"  # prefix in _bound_names for a name that only def, class or import binds
+
+
 def _bound_names(tree: ast.AST) -> frozenset:
-    names = set()
+    """Names the file binds as variables, plus OBJECT + name for each name bound only by def, class or
+    import: always a truthy object, so `if tokenize:` or `if re:` is as constant as `if {0}:`. A name
+    that is also assigned, a parameter, a loop or with/except target, deleted, or declared global or
+    nonlocal anywhere stays a variable."""
+    variables, objects = set(), set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
-            names.add(node.id)
+            variables.add(node.id)  # assignment, augmented, walrus, for/with/comprehension target, del
         elif isinstance(node, ast.arg):
-            names.add(node.arg)
+            variables.add(node.arg)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            variables.update(node.names)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            variables.add(node.name)
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+            variables.add(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            variables.add(node.rest)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.add(node.name)
+            objects.add(node.name)
         elif isinstance(node, ast.alias):
-            names.add((node.asname or node.name).split(".")[0])
-    return frozenset(names)
+            objects.add((node.asname or node.name).split(".")[0])
+    return frozenset(variables | {OBJECT + name for name in objects - variables})
 
 
 _RUNS = ("range", "zip", "sorted", "reversed", "list", "tuple", "enumerate", "str", "set", "map", "filter")
@@ -233,7 +258,7 @@ def _must_iterate(node: ast.AST, bound: frozenset) -> bool:
     if _nonempty_literal(node):
         return True
     if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in _RUNS
-            and node.func.id not in bound and not node.keywords):
+            and node.func.id not in bound and OBJECT + node.func.id not in bound and not node.keywords):
         try:
             args = [ast.literal_eval(a) for a in node.args]
         except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
@@ -290,7 +315,12 @@ def _stmt_ends(stmt: ast.stmt, jumps: bool, bound: frozenset = frozenset()) -> b
     if isinstance(stmt, (ast.Break, ast.Continue)):
         return jumps
     if isinstance(stmt, ast.If):
-        if _constant_test(stmt.test, bound):
+        value = _truth(stmt.test, bound)
+        if value is True:
+            return _ends(stmt.body, jumps, bound)
+        if value is False:
+            return _ends(stmt.orelse, jumps, bound)  # the body never runs: `if x > x:` cannot end the block
+        if value == FIXED:
             return _ends(stmt.body, jumps, bound) or _ends(stmt.orelse, jumps, bound)  # either may be live
         return bool(stmt.orelse) and _ends(stmt.body, jumps, bound) and _ends(stmt.orelse, jumps, bound)
     if isinstance(stmt, (ast.With, ast.AsyncWith)):
@@ -301,22 +331,27 @@ def _stmt_ends(stmt: ast.stmt, jumps: bool, bound: frozenset = frozenset()) -> b
         # rewrite hides behind it; the d4 prompt says so.
         return _ends(stmt.body, jumps, bound) or _ends(stmt.finalbody, jumps, bound)
     if isinstance(stmt, ast.While):
-        return _constant_test(stmt.test, bound) and not _loop_body_jumps_out(stmt.body)
+        value = _truth(stmt.test, bound)
+        return value in (True, FIXED) and not _loop_body_jumps_out(stmt.body)  # a false while never runs
     if isinstance(stmt, (ast.For, ast.AsyncFor)):
         return (_must_iterate(stmt.iter, bound) and _ends(stmt.body, False, bound)
                 and not _loop_body_jumps_out(stmt.body))
     return False
 
 
-def _dead_code(tree: ast.AST) -> list[tuple[str, str, str]]:
+def _dead_code(tree: ast.AST, objects: frozenset = frozenset()) -> list[tuple[str, str, str]]:
     """Constant or tautological tests (a wrapper such as `if True:`), then unreachable statements.
+
+    ``objects`` are names the buggy file binds only by def, class or import. They stay objects here
+    even if the candidate also assigns them, so adding `tokenize = 0` somewhere cannot turn
+    `if tokenize:` back into a variable test.
 
     Each finding is (key, location, message). The key identifies the code itself, not its line,
     so findings the buggy file already has (a fault can create `x > x`) can be told apart from
     new ones.
     """
     found = []
-    bound = _bound_names(tree)
+    bound = (_bound_names(tree) - objects) | {OBJECT + name for name in objects}
     for node in ast.walk(tree):
         if isinstance(node, (ast.If, ast.While, ast.IfExp)) and _constant_test(node.test, bound):
             found.append((f"const:{ast.dump(node.test)}", str(node.lineno), f"a constant condition at line {node.lineno}"))
@@ -328,7 +363,10 @@ def _dead_code(tree: ast.AST) -> list[tuple[str, str, str]]:
                 continue
             for stmt, nxt in zip(block, block[1:]):
                 if _stmt_ends(stmt, True, bound):
-                    found.append((f"dead:{ast.dump(nxt)}", str(nxt.lineno),
+                    # Keyed by the statement that ends the block, not by what follows it: the buggy file
+                    # may already end a block early (a fault can make `x <= x`), and repairing the code
+                    # after that statement must not read as new dead code.
+                    found.append((f"dead-after:{ast.dump(stmt)}", str(nxt.lineno),
                                   f"line {nxt.lineno} can never run (after line {stmt.lineno})"))
     return found
 
@@ -346,8 +384,9 @@ def structure_violation(buggy: str, candidate: str) -> str | None:
         return "function definitions, arguments and decorators must stay as they are"
     if sum(isinstance(n, ast.Lambda) for n in ast.walk(tree)) > sum(isinstance(n, ast.Lambda) for n in ast.walk(base)):
         return "no new lambda functions"
+    objects = frozenset(n[len(OBJECT):] for n in _bound_names(base) if n.startswith(OBJECT))
     already = Counter(key for key, _, _ in _dead_code(base))
-    for key, _, message in _dead_code(tree):
+    for key, _, message in _dead_code(tree, objects):
         if already[key] > 0:
             already[key] -= 1  # the buggy file has this one too; a fault may have made it
             continue
@@ -366,4 +405,9 @@ def plan(buggy: str, original: str) -> tuple[int, list[dict]] | None:
         return None
     if structure_violation(buggy, original) is not None:
         return None
+    current = buggy  # the oracle applies the fix edit by edit, and every step must pass the gate too
+    for edit in fix:
+        current = current.replace(edit["old"], edit["new"], 1)
+        if structure_violation(buggy, current) is not None:
+            return None
     return budget, fix

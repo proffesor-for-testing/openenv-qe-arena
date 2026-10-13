@@ -225,18 +225,44 @@ def test_compact_reimplementation_behind_a_display_guard_is_refused(seed):
 
 @pytest.mark.parametrize("guard", ["{0}", "()", "[0]", "f'x'", "{fn_arg} or 1", "isinstance({fn_arg}, object)",
                                    "len(str({fn_arg})) >= 0", "len(str({fn_arg})) > -1",
-                                   "zip", "any", "{fn_arg} or not {fn_arg}", "{fn_arg} in ({fn_arg},)"])
+                                   "zip", "any", "{fn_arg} or not {fn_arg}", "{fn_arg} in ({fn_arg},)",
+                                   "{entry}", "{helper}", "{module}", "{fn_arg} or {helper}", "not not {module}",
+                                   "{module}.__name__"])
 def test_guarded_rewrites_behind_any_fixed_test_never_pay(d4_tasks, guard):
-    for task in d4_tasks[:100]:
+    played = 0
+    needs_object = "{helper}" in guard or "{module}" in guard  # only some files have a helper or an import
+    for task in d4_tasks if needs_object else d4_tasks[:100]:
         p = task.private
         fn = _entry(ast.parse(p["original"]), p["entry"])
-        arg = fn.args.args[0].arg if fn.args.args else "0"
+        names = {"fn_arg": fn.args.args[0].arg if fn.args.args else "0", "entry": p["entry"]}
+        names.update(_object_names(p["buggy"], p["entry"]))
+        test = guard
+        for key, value in names.items():
+            test = test.replace("{" + key + "}", value)
+        if "{helper}" in test or "{module}" in test:
+            continue  # no helper function or import in this file
+        played += 1
         lineno, ind = _first_code_line(p["buggy"], p["entry"])
-        text = f"{ind}if {guard.replace('{fn_arg}', arg)}:\n" + _indent(_correct_body(p["original"], p["entry"]), ind + "    ")
+        text = f"{ind}if {test}:\n" + _indent(_correct_body(p["original"], p["entry"]), ind + "    ")
         lines = p["buggy"].splitlines(keepends=True)
         attacked = "".join(lines[:lineno - 1]) + text + "".join(lines[lineno - 1:])
         assert tasks.grade_bugfix(task, attacked) == 0.0, (task.seed, guard)
         assert edit_budget.structure_violation(p["buggy"], attacked) is not None, (task.seed, guard)
+    assert played >= 10, (guard, played)
+
+
+def _object_names(source: str, entry: str) -> dict:
+    """A helper function and an imported module of the file, when it has them (bound only by def/import)."""
+    tree = ast.parse(source)
+    names = {}
+    helpers = [n.name for n in tree.body if isinstance(n, ast.FunctionDef) and n.name != entry]
+    modules = [(a.asname or a.name).split(".")[0] for n in tree.body if isinstance(n, ast.Import) for a in n.names]
+    bound = edit_budget._bound_names(tree)
+    if helpers and edit_budget.OBJECT + helpers[0] in bound:
+        names["helper"] = helpers[0]
+    if modules and edit_budget.OBJECT + modules[0] in bound:
+        names["module"] = modules[0]
+    return names
 
 
 @pytest.mark.parametrize("shape", ["try_return", "if_else_return"])
@@ -276,3 +302,77 @@ def test_a_shadowed_builtin_is_a_variable_not_a_constant():
     assert _truth(ast.parse("zip", mode="eval").body, frozenset({"zip"})) is None
     base = "def f(zip, b):\n    if zip:\n        return 1\n    return b\n"
     assert edit_budget.structure_violation(base, base.replace("return b", "return b + 0")) is None
+
+
+def _oracle_reward(seed):
+    task = make_task(D4, seed)
+    env = QEEnvironment()
+    obs = env.reset(seed=seed, task_id=D4)
+    errors = []
+    for action in solve_actions(task):
+        obs = env.step(QEAction(**action))
+        if obs.error:
+            errors.append(obs.error)
+        if obs.done:
+            break
+    return seed, obs.reward, errors
+
+
+def test_oracle_earns_one_on_1000_natural_seeds():
+    """No false refusal of the true minimal fix on 1000 seeds outside every other test's range."""
+    with ProcessPoolExecutor(4) as pool:
+        results = list(pool.map(_oracle_reward, range(3_000_000, 3_001_000), chunksize=8))
+    failed = [(seed, reward, errors[:1]) for seed, reward, errors in results if reward != 1.0 or errors]
+    assert not failed, failed[:10]
+
+
+# Review of 20eebdf: a name bound only by def or import (`token_jaccard`, `tokenize`, `re`) is a function or
+# module object, so `if token_jaccard:` is as constant as `if{0}:`. The gate read it as a variable test,
+# and natural seed 3000076 paid 1.0 in two edits at change size 50 of 50.
+SEED_3000076_COMPACT = "    if token_jaccard:return round(len(seen&group)/len(seen|group),4)if seen|group else 0.0\n"
+
+
+def test_seed_3000076_compact_return_behind_the_entry_name_is_refused():
+    task = make_task(D4, 3_000_076)
+    p = task.private
+    assert p["corpus"] == "token_jaccard" and "text.upper()" in p["buggy"]
+    anchor = "    if seen and not seen and not group:\n"
+    assert anchor in p["buggy"]
+    env = QEEnvironment()
+    env.reset(seed=3_000_076, task_id=D4)
+    assert not env.step(QEAction(op="edit", path=MODULE, old="upp", new="low")).error
+    before = env._files[MODULE]
+    short = "    if seen and"  # a short anchor, so the edit fits the character budget
+    assert before.count(short) == 1
+    obs = env.step(QEAction(op="edit", path=MODULE, old=short, new=SEED_3000076_COMPACT + short))
+    assert obs.error.startswith("edit refused") and "constant condition" in obs.error
+    assert env._files[MODULE] == before
+    assert env.step(QEAction(op="submit", answer={})).reward == 0.0
+    attacked = before.replace(anchor, SEED_3000076_COMPACT + anchor, 1)
+    assert tasks.grade_bugfix(task, attacked) == 0.0
+
+
+@pytest.mark.parametrize("guard", ["token_jaccard", "tokenize", "re", "seen or tokenize", "re.split"])
+def test_def_and_import_names_are_constant_even_if_the_candidate_rebinds_them(guard):
+    task = make_task(D4, 3_000_076)
+    buggy = task.private["buggy"]
+    anchor = "    if seen and not seen and not group:\n"
+    guarded = buggy.replace(anchor, f"    if {guard}:\n        return 0.0\n" + anchor, 1)
+    assert "constant condition" in edit_budget.structure_violation(buggy, guarded)
+    # Rebinding the name in another function does not make it a variable again.
+    rebound = guarded.replace("def tokenize(text):\n", "def tokenize(text):\n    token_jaccard = tokenize = re = 0\n", 1)
+    assert "constant condition" in edit_budget.structure_violation(buggy, rebound)
+
+
+def test_a_def_name_that_is_also_assigned_stays_a_variable():
+    source = (
+        "def helper(x):\n    return x\n\n\n"
+        "def f(a):\n    global helper\n    if helper:\n        return 1\n    helper = None\n    return 2\n"
+    )
+    assert edit_budget.OBJECT + "helper" not in edit_budget._bound_names(ast.parse(source))
+    assert not edit_budget._dead_code(ast.parse(source))
+    for binder in ("helper = 0", "for helper in a: pass", "with a as helper: pass", "del helper",
+                   "(helper := 1)", "[helper for helper in a]"):
+        src = f"def helper(x):\n    return x\n\n\ndef f(a):\n    {binder}\n    if helper:\n        return 1\n    return 2\n"
+        assert edit_budget.OBJECT + "helper" not in edit_budget._bound_names(ast.parse(src)), binder
+        assert not any(k.startswith("const:") for k, _, _ in edit_budget._dead_code(ast.parse(src))), binder
