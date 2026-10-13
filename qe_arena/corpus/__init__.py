@@ -20,7 +20,7 @@ import random
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..domains import DOMAINS
+from ..domains import DOMAINS, SOFTWARE
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
 
@@ -47,7 +47,7 @@ class CorpusEntry:
     source: str
     function_source: str
     summary: str
-    domain: str
+    domain: str = SOFTWARE
     real_faults: tuple[RealFault, ...] = ()
 
 
