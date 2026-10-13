@@ -64,6 +64,10 @@ BUGFIX_CANDIDATES = 24  # fault candidates tried per corpus function
 REAL_SHARE = 0.15  # share of qe_bugfix tasks that carry a real upstream fault (when real entries exist)
 FILLER_KEEP = 0.5  # a real task keeps each filler candidate with this chance, so no filler site dominates
 FAULT_KINDS = ("injected", "real")
+# Passes over the pool before a generator gives up. A pass that builds nothing is followed by one with fresh
+# draws (renaming, inputs, site order), which a small domain pool needs. The first pass is the original single
+# pass, so every task it built is unchanged.
+PASSES = 4
 
 
 @dataclass
@@ -298,90 +302,92 @@ def _real_sites(item: corpus.CorpusEntry, original: str, renaming: dict[str, str
 
 def _make_bugfix(task_id: str, level: int, seed: int, rng: random.Random, pool: tuple[str, ...],
                  kind: str = "injected") -> Task:
-    for name in rng.sample(sorted(pool), len(pool)):
-        item = corpus.ENTRIES[name]
-        renaming = mutation.local_renaming(item.function_source, random.Random(rng.random()))
-        original = mutation.rename_with(item.function_source, renaming)
-        inputs = corpus.gen_inputs(name, rng.randrange(2**31), HIDDEN_INPUTS)
-        graded = {json.dumps(a, sort_keys=True) for a in inputs}
-        display = [a for a in corpus.gen_inputs(name, rng.randrange(2**31), HIDDEN_INPUTS)
-                   if json.dumps(a, sort_keys=True) not in graded]  # shown, never graded
-        reference = _outputs(original, item.entry, inputs)
-        if not _usable(reference) or not display:
-            continue
-        real = _real_sites(item, original, renaming) if kind == "real" else {}
-        if kind == "real" and not real:
-            continue
-        real_first = list(real)
-        rng.shuffle(real_first)
-        chosen, buggy, killed, subtle = [], original, [], 0
-        if kind == "real":  # a small function has few fillers: sample them so one site cannot dominate
-            filler = [s for s in _bugfix_sites(original, rng, 2 * BUGFIX_CANDIDATES) if rng.random() < FILLER_KEEP]
-        else:
-            filler = _bugfix_sites(original, rng)
-        for site in real_first + filler:
-            try:
-                trial = mutation.apply(original, [site] + chosen)
-            except ValueError:
-                continue  # overlaps an already chosen fault
-            alone = _outputs(mutation.apply(original, [site]), item.entry, inputs)
-            single = _killing(reference, alone)
-            if not _usable(alone) or not single:
-                continue  # loops, crashes, or is equivalent on the hidden inputs: never a fault
-            is_subtle = len(single) <= SUBTLE_RATE * len(inputs)
-            if level == 1 and len({json.dumps(inputs[i], sort_keys=True) for i in single}) < MIN_REVEALING_D1:
-                continue  # special-casing the one reported input must not pass every hidden test
-            if not is_subtle and MIN_SUBTLE[level] - subtle >= FAULTS[level] - len(chosen):
-                continue  # the remaining slots are reserved for subtle faults
-            combined = _outputs(trial, item.entry, inputs)
-            kills = _killing(reference, combined)
-            if not _usable(combined) or not kills:
+    # One pass for a real fault: when it fails, make_task falls back to injected faults on this same rng.
+    for _ in range(PASSES if kind == "injected" else 1):
+        for name in rng.sample(sorted(pool), len(pool)):
+            item = corpus.ENTRIES[name]
+            renaming = mutation.local_renaming(item.function_source, random.Random(rng.random()))
+            original = mutation.rename_with(item.function_source, renaming)
+            inputs = corpus.gen_inputs(name, rng.randrange(2**31), HIDDEN_INPUTS)
+            graded = {json.dumps(a, sort_keys=True) for a in inputs}
+            display = [a for a in corpus.gen_inputs(name, rng.randrange(2**31), HIDDEN_INPUTS)
+                       if json.dumps(a, sort_keys=True) not in graded]  # shown, never graded
+            reference = _outputs(original, item.entry, inputs)
+            if not _usable(reference) or not display:
                 continue
-            if chosen and not _subsets_all_fail(original, chosen + [site], item.entry, inputs, reference):
-                continue  # some faults cancel out: a partial fix would pass
-            if level == BUDGETED and edit_budget.plan(trial, original) is None:
-                continue  # try another fault rather than another function: the fix must fit budget and gate
-            chosen, buggy, killed, subtle = chosen + [site], trial, kills, subtle + is_subtle
-            if len(chosen) == FAULTS[level]:
-                break
-        if len(chosen) != FAULTS[level] or (kind == "real" and not any(s in real for s in chosen)):
-            continue
-        budget = None
-        if level == BUDGETED:
-            planned = edit_budget.plan(buggy, original)
-            if planned is None:
-                continue  # the minimal fix must fit the budget and the gate, and a full rewrite must not
-            budget = planned[0]
-        shown_ref = _outputs(original, item.entry, display)
-        shown_bug = _outputs(buggy, item.entry, display)
-        if not (_usable(shown_ref) and _usable(shown_bug)):
-            continue
-        revealing = _killing(shown_ref, shown_bug)
-        passing = [i for i in range(len(display)) if i not in revealing]
-        if not passing or (level == 1 and not revealing):
-            continue
-        visible_idx = rng.sample(passing, min(3, len(passing)))
-        if level == 1:
-            report = (f"A user reports a wrong result for {_call_text(item.entry, display[revealing[0]])} "
-                      "(the correct value is not given; derive it from the docstring). The visible tests all pass.")
-        else:
-            report = ("Hidden tests fail but the visible tests all pass, so no failing input is known. "
-                      "Compare the code with the docstring line by line to find every fault.")
-        visible = [{"args": display[i], "expected": shown_ref[i]} for i in visible_idx]
-        shown = [f"  {_call_text(item.entry, v['args'])} == {_result_text(v['expected'])}" for v in visible]
-        return Task(
-            task_id=task_id, family="qe_bugfix", difficulty=level, seed=seed,
-            prompt=_bugfix_prompt(item.entry, shown, report, budget,
-                                  edit_budget.change_allowance(buggy) if budget is not None else None),
-            files={MODULE: buggy},
-            private={
-                "corpus": name, "entry": item.entry, "original": original, "buggy": buggy,
-                "sites": [s.description for s in chosen], "inputs": inputs, "reference": reference,
-                "visible": visible, "report_args": display[revealing[0]] if level == 1 else None,
-                "fault_kind": kind, "fault_sites": chosen, "edit_budget": budget,
-                "faults": [_fault_record(s, real.get(s)) for s in chosen],
-            },
-        )
+            real = _real_sites(item, original, renaming) if kind == "real" else {}
+            if kind == "real" and not real:
+                continue
+            real_first = list(real)
+            rng.shuffle(real_first)
+            chosen, buggy, killed, subtle = [], original, [], 0
+            if kind == "real":  # a small function has few fillers: sample them so one site cannot dominate
+                filler = [s for s in _bugfix_sites(original, rng, 2 * BUGFIX_CANDIDATES) if rng.random() < FILLER_KEEP]
+            else:
+                filler = _bugfix_sites(original, rng)
+            for site in real_first + filler:
+                try:
+                    trial = mutation.apply(original, [site] + chosen)
+                except ValueError:
+                    continue  # overlaps an already chosen fault
+                alone = _outputs(mutation.apply(original, [site]), item.entry, inputs)
+                single = _killing(reference, alone)
+                if not _usable(alone) or not single:
+                    continue  # loops, crashes, or is equivalent on the hidden inputs: never a fault
+                is_subtle = len(single) <= SUBTLE_RATE * len(inputs)
+                if level == 1 and len({json.dumps(inputs[i], sort_keys=True) for i in single}) < MIN_REVEALING_D1:
+                    continue  # special-casing the one reported input must not pass every hidden test
+                if not is_subtle and MIN_SUBTLE[level] - subtle >= FAULTS[level] - len(chosen):
+                    continue  # the remaining slots are reserved for subtle faults
+                combined = _outputs(trial, item.entry, inputs)
+                kills = _killing(reference, combined)
+                if not _usable(combined) or not kills:
+                    continue
+                if chosen and not _subsets_all_fail(original, chosen + [site], item.entry, inputs, reference):
+                    continue  # some faults cancel out: a partial fix would pass
+                if level == BUDGETED and edit_budget.plan(trial, original) is None:
+                    continue  # try another fault rather than another function: the fix must fit budget and gate
+                chosen, buggy, killed, subtle = chosen + [site], trial, kills, subtle + is_subtle
+                if len(chosen) == FAULTS[level]:
+                    break
+            if len(chosen) != FAULTS[level] or (kind == "real" and not any(s in real for s in chosen)):
+                continue
+            budget = None
+            if level == BUDGETED:
+                planned = edit_budget.plan(buggy, original)
+                if planned is None:
+                    continue  # the minimal fix must fit the budget and the gate, and a full rewrite must not
+                budget = planned[0]
+            shown_ref = _outputs(original, item.entry, display)
+            shown_bug = _outputs(buggy, item.entry, display)
+            if not (_usable(shown_ref) and _usable(shown_bug)):
+                continue
+            revealing = _killing(shown_ref, shown_bug)
+            passing = [i for i in range(len(display)) if i not in revealing]
+            if not passing or (level == 1 and not revealing):
+                continue
+            visible_idx = rng.sample(passing, min(3, len(passing)))
+            if level == 1:
+                report = (f"A user reports a wrong result for {_call_text(item.entry, display[revealing[0]])} "
+                          "(the correct value is not given; derive it from the docstring). The visible tests all pass.")
+            else:
+                report = ("Hidden tests fail but the visible tests all pass, so no failing input is known. "
+                          "Compare the code with the docstring line by line to find every fault.")
+            visible = [{"args": display[i], "expected": shown_ref[i]} for i in visible_idx]
+            shown = [f"  {_call_text(item.entry, v['args'])} == {_result_text(v['expected'])}" for v in visible]
+            return Task(
+                task_id=task_id, family="qe_bugfix", difficulty=level, seed=seed,
+                prompt=_bugfix_prompt(item.entry, shown, report, budget,
+                                      edit_budget.change_allowance(buggy) if budget is not None else None),
+                files={MODULE: buggy},
+                private={
+                    "corpus": name, "entry": item.entry, "original": original, "buggy": buggy,
+                    "sites": [s.description for s in chosen], "inputs": inputs, "reference": reference,
+                    "visible": visible, "report_args": display[revealing[0]] if level == 1 else None,
+                    "fault_kind": kind, "fault_sites": chosen, "edit_budget": budget,
+                    "faults": [_fault_record(s, real.get(s)) for s in chosen],
+                },
+            )
     raise RuntimeError(f"no usable {kind} bugfix task for {task_id} seed {seed}")
 
 
@@ -398,42 +404,43 @@ def _kill_rate(reference: list, outputs: list) -> float:
 
 def _make_mutant_kill(task_id: str, level: int, seed: int, rng: random.Random, pool: tuple[str, ...]) -> Task:
     wanted = 3 if level == 3 else 1
-    for name in rng.sample(sorted(pool), len(pool)):
-        item = corpus.ENTRIES[name]
-        original = mutation.rename_locals(item.function_source, random.Random(rng.random()))
-        inputs = corpus.gen_inputs(name, rng.randrange(2**31), HIDDEN_INPUTS)
-        reference = _outputs(original, item.entry, inputs)
-        if not _usable(reference):
-            continue
-        mutants = []
-        for site in _candidate_sites(original, rng)[:24]:
-            mutant = mutation.apply(original, [site])
-            outputs = _outputs(mutant, item.entry, inputs)
-            if not _usable(outputs):
-                continue  # loops or crashes: its kill rate cannot be measured reliably
-            rate = _kill_rate(reference, outputs)
-            if rate == 0:
-                continue  # possibly equivalent: never shown
-            if level == 1 and rate < 0.25:
+    for _ in range(PASSES):
+        for name in rng.sample(sorted(pool), len(pool)):
+            item = corpus.ENTRIES[name]
+            original = mutation.rename_locals(item.function_source, random.Random(rng.random()))
+            inputs = corpus.gen_inputs(name, rng.randrange(2**31), HIDDEN_INPUTS)
+            reference = _outputs(original, item.entry, inputs)
+            if not _usable(reference):
                 continue
-            if level in (2, 3) and rate > SUBTLE_RATE:
+            mutants = []
+            for site in _candidate_sites(original, rng)[:24]:
+                mutant = mutation.apply(original, [site])
+                outputs = _outputs(mutant, item.entry, inputs)
+                if not _usable(outputs):
+                    continue  # loops or crashes: its kill rate cannot be measured reliably
+                rate = _kill_rate(reference, outputs)
+                if rate == 0:
+                    continue  # possibly equivalent: never shown
+                if level == 1 and rate < 0.25:
+                    continue
+                if level in (2, 3) and rate > SUBTLE_RATE:
+                    continue
+                mutants.append({"source": mutant, "site": site.description, "random_kill_rate": rate})
+                if len(mutants) == wanted:
+                    break
+            if len(mutants) < wanted:
                 continue
-            mutants.append({"source": mutant, "site": site.description, "random_kill_rate": rate})
-            if len(mutants) == wanted:
-                break
-        if len(mutants) < wanted:
-            continue
-        files = {"original.py": original}
-        names = ["mutant.diff"] if wanted == 1 else [f"mutant_{i + 1}.diff" for i in range(wanted)]
-        for fname, m in zip(names, mutants):
-            files[fname] = mutation.unified_diff(original, m["source"], "original.py")
-        return Task(
-            task_id=task_id, family="qe_mutant_kill", difficulty=level, seed=seed,
-            prompt=_kill_prompt(item.entry, level, names),
-            files=files,
-            private={"corpus": name, "entry": item.entry, "original": original, "mutants": mutants,
-                     "inputs": inputs, "reference": reference},
-        )
+            files = {"original.py": original}
+            names = ["mutant.diff"] if wanted == 1 else [f"mutant_{i + 1}.diff" for i in range(wanted)]
+            for fname, m in zip(names, mutants):
+                files[fname] = mutation.unified_diff(original, m["source"], "original.py")
+            return Task(
+                task_id=task_id, family="qe_mutant_kill", difficulty=level, seed=seed,
+                prompt=_kill_prompt(item.entry, level, names),
+                files=files,
+                private={"corpus": name, "entry": item.entry, "original": original, "mutants": mutants,
+                         "inputs": inputs, "reference": reference},
+            )
     raise RuntimeError(f"no usable mutant_kill task for {task_id} seed {seed}")
 
 

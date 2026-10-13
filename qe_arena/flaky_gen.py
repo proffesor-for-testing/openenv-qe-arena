@@ -13,7 +13,7 @@ from .flaky import (CAUSES, FACILITY, SEED_SPLIT, MAX_GRADED_BYTES, attribute, c
                     graded_source, prompt, repair_ok, run, shown_harness, sweep_calls, top_names, victim_block)
 from .flaky_templates import (KEY_NAMES, SINGLE, Plan, choose_store_key, decoy_unit, key_text,
                               single_check, state_unit, store_unit)
-from .tasks import MODULE, Task, _outputs
+from .tasks import MODULE, PASSES, Task, _outputs
 
 CLEAN_RATE = 0.15
 LOW_RATE = 0.25     # share of draw/now/frac flakes that fail only 2-10% of runs
@@ -25,7 +25,6 @@ P_SAME = 0.95                       # a decoy reuses the flaky test's facility .
 N_SAME = {1: 2, 2: 2, 3: 2}          # at most this many such decoys
 P_FILLER = 0.15                      # a decoy uses a safe-only form
 MAX_FUNCTION_BYTES = 1800
-PASSES = 4  # passes over the pool before giving up
 MAX_LITERAL = 48
 TELLTALE = ("flak", "random", "cache", "memo", "leak", "shared", "unorder", "float", "clock", "boundary",
             "order", "victim", "pollut", "culprit", "race", "time")
@@ -98,9 +97,7 @@ def build_task(task_id: str, level: int, seed: int, rng: random.Random, pool: tu
     low = FACILITY[cause] in ("draw", "now", "frac") and not clean and rng.random() < LOW_RATE
     eligible = [n for n in sorted(pool) if len(corpus.ENTRIES[n].function_source) <= MAX_FUNCTION_BYTES
                 and "flak" not in corpus.ENTRIES[n].function_source.lower()]
-    # A pass that builds nothing is followed by another with fresh draws, which a small domain pool needs.
-    # The first pass is the original single pass, so every task it built is unchanged.
-    for _ in range(PASSES):
+    for _ in range(PASSES):  # tasks.PASSES: the first pass is the original one
         for name in rng.sample(eligible, len(eligible)):
             item = corpus.ENTRIES[name]
             function = mutation.rename_locals(item.function_source, random.Random(rng.random()))

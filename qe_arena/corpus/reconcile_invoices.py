@@ -9,14 +9,14 @@ META = {
 
 
 def reconcile_invoices(invoices, payments, tolerance_cents):
-    """Reconcile payments against invoices; amounts are integer cents.
+    """Reconcile payments against invoices in integer cents.
 
-    invoices and payments are lists of [invoice_id, amount_cents]. A payment counts toward the
-    invoice with its id; one for an id with no invoice is unmatched. Per invoice, with paid = the
-    sum of its payments and diff = paid - amount_cents, the label is "unpaid" if paid == 0, else
-    "settled" if abs(diff) <= tolerance_cents, else "short" if diff < 0, else "over".
-    Returns [labels, open_cents, unmatched_cents]: labels in invoice order, open_cents the sum of
-    -diff over unpaid and short invoices, unmatched_cents the total of unmatched payments.
+    invoices and payments list [invoice_id, amount_cents]; a payment for an id with no invoice is
+    unmatched. Per invoice, with paid = the sum of its payments and diff = paid - amount_cents:
+    "unpaid" if paid == 0, else "settled" if abs(diff) <= tolerance_cents, else "short" if
+    diff < 0, else "over".
+    Returns [labels in invoice order, open_cents = sum of -diff over unpaid and short invoices,
+    unmatched_cents].
     Raises ValueError if tolerance_cents < 0, an invoice id repeats, or any amount is below 1.
     """
     if tolerance_cents < 0:
@@ -40,10 +40,8 @@ def reconcile_invoices(invoices, payments, tolerance_cents):
             label = "unpaid"
         elif abs(diff) <= tolerance_cents:
             label = "settled"
-        elif diff < 0:
-            label = "short"
         else:
-            label = "over"
+            label = "short" if diff < 0 else "over"
         if label in ("unpaid", "short"):
             open_cents -= diff
         labels.append(label)

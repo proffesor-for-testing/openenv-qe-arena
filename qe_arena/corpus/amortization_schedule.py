@@ -12,20 +12,18 @@ META = {
 
 
 def amortization_schedule(principal_cents, annual_rate_bp, months):
-    """Summarise a fixed-rate level-payment loan; amounts are integer cents.
+    """Summarise a fixed-rate level-payment loan in integer cents.
 
-    Monthly rate r = annual_rate_bp / 120000, exact. payment = ceil(principal_cents / months) if
-    annual_rate_bp == 0, else ceil(principal_cents * r / (1 - (1 + r) ** -months)).
-    From balance = principal_cents, each month: interest = balance * r rounded half up to a cent.
-    If balance + interest <= payment, or it is month `months`, the loan closes that month with a
-    final payment of balance + interest; otherwise balance becomes balance + interest - payment.
+    r = annual_rate_bp / 120000 per month, exact. payment = ceil(principal_cents / months) if the
+    rate is 0, else ceil(principal_cents * r / (1 - (1 + r) ** -months)). From balance =
+    principal_cents, each month's interest is balance * r rounded half up to a cent. The loan closes
+    in the first month where balance + interest <= payment, or in month `months`, by paying
+    balance + interest; otherwise balance becomes balance + interest - payment.
     Returns [payment, final_payment, total_interest, months_paid].
     Raises ValueError if principal_cents < 1, months < 1 or annual_rate_bp is outside 0..5000.
     """
-    if principal_cents < 1 or months < 1:
-        raise ValueError("invalid loan")
-    if annual_rate_bp < 0 or annual_rate_bp > 5000:
-        raise ValueError("invalid rate")
+    if principal_cents < 1 or months < 1 or not 0 <= annual_rate_bp <= 5000:
+        raise ValueError
     if annual_rate_bp == 0:
         payment = math.ceil(Fraction(principal_cents, months))
     else:

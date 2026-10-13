@@ -49,9 +49,11 @@ only once it has at least `MIN_DOMAIN_ENTRIES` (4) injected entries: with fewer,
 and a function that cannot serve a seed (no subtle mutant, no fault inside the d4 budget, too few short rows
 for a flaky suite) leaves too few others to fall back on. `tests/test_domains.py` checks the rule both ways.
 Real-bug entries are software engineering, so a domain cell's `qe_bugfix` faults are always injected. A
-calibration `pool` must name entries of the cell's domain. `qe_flaky` makes up to `PASSES` (4) passes over its
-pool before giving up, because a 4-entry pool often has no function that fits a suite on the first pass; the
-first pass is the original single pass, so no task it built changed.
+calibration `pool` must name entries of the cell's domain. Each generator makes up to `PASSES` (4) passes over its
+pool before giving up, because a 4-entry pool sometimes has no function that serves a seed on the first pass
+(for `qe_flaky`, often). Later passes redraw renaming, inputs and site order. The first pass is the original
+single pass, so no task it built changed; the real-fault tier keeps one pass, because its fallback to injected
+faults continues on the same random stream.
 
 The dataset export keeps the software-engineering rows in `tasks.jsonl` (byte-identical) and writes the domain
 rows to `domain_tasks.jsonl` (the card's `domains` config). A row's `domain` is the arena domain with spaces
