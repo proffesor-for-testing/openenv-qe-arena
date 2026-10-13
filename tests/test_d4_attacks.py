@@ -490,7 +490,23 @@ def test_a_display_that_unpacks_a_non_empty_display_is_true_and_one_that_unpacks
     def truth(expr):
         return _truth(ast.parse(expr, mode="eval").body, _bound_names(ast.parse(source)))
 
-    for always in ("[*[a]]", "(*[a],)", "{*[a]}", "{**{a: 0}}", "[*a, *[a]]"):
+    for always in ("[*[a]]", "(*[a],)", "{*[a]}", "{**{a: 0}}", "[*a, *[a]]", "[*'ab']", "[*(a,)]"):
         assert truth(always) is True, always
-    for variable in ("[*a]", "{**a}", "(*a,)", "{*a}", "[*a, *b]"):
+    # Review of 29707a1 (N1): an iterator, generator, zip, map or filter object is truthy but may yield nothing,
+    # so unpacking one says nothing about the display's truth.
+    for variable in ("[*a]", "{**a}", "(*a,)", "{*a}", "[*a, *b]", "[*zip(a)]", "[*map(str, a)]",
+                     "[*filter(None, a)]", "[*enumerate(a)]", "[*reversed(a)]", "[*iter(a)]",
+                     "[*(g for g in a)]", "{*map(str, a)}", "(*filter(None, a),)"):
         assert truth(variable) is None, variable
+    assert truth("[*(x for x in ())]") is not True  # always empty: never read as non-empty
+
+
+def test_an_equivalent_fix_that_unpacks_a_filter_is_not_a_constant_condition():
+    """Review of 29707a1 (N1): on seed 3000012 the fault deleted `if has_error:`; restoring it as
+    `if [*filter(None, [has_error])]:` is a correct fix and must not be refused as constant."""
+    task = make_task(D4, 3_000_012)
+    p = task.private
+    assert p["original"].count("    if has_error:\n") == 1
+    candidate = p["original"].replace("    if has_error:\n", "    if [*filter(None, [has_error])]:\n", 1)
+    violation = edit_budget.structure_violation(p["buggy"], candidate)
+    assert violation is None or "constant condition" not in violation, violation

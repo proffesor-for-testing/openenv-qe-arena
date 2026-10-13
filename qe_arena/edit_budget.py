@@ -158,9 +158,11 @@ def _truth(test: ast.AST, bound: frozenset = frozenset()) -> bool | str | None:
         items = test.keys if isinstance(test, ast.Dict) else test.elts
         if not items or any(i is not None and not isinstance(i, ast.Starred) for i in items):
             return bool(items)  # `[*x]` and `{**x}` are as empty as x: decided below
-        # Every item unpacks something: non-empty when any unpacked value is (`[*[a]]`, `{**{a: 0}}`).
+        # Every item unpacks something: non-empty when an unpacked value is a literal known to have items
+        # (`[*[a]]`, `{**{a: 0}}`, `[*'ab']`). Never because the value is truthy: an iterator, generator,
+        # zip, map or filter object is always truthy and may yield nothing.
         unpacked = test.values if isinstance(test, ast.Dict) else [i.value for i in items]
-        if any(_truth(v, bound) is True for v in unpacked):
+        if any(_has_items(v, bound) for v in unpacked):
             return True
     if isinstance(test, ast.JoinedStr):
         if any(isinstance(v, ast.Constant) and v.value for v in test.values):
@@ -308,6 +310,17 @@ def _builtin(name: str, bound: frozenset) -> bool:
 def _trusted(name: str, bound: frozenset) -> bool:
     """No function in the file defines a special method that could make ``name``'s result falsy."""
     return not any(m in bound or OBJECT + m in bound for m in _DELEGATES.get(name, ()))
+
+
+def _has_items(node: ast.AST, bound: frozenset) -> bool:
+    """A literal that yields at least one item when unpacked: a non-empty display, str or bytes."""
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set, ast.Dict)):
+        return _truth(node, bound) is True
+    if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)):
+        return bool(node.value)
+    if isinstance(node, ast.JoinedStr):
+        return any(isinstance(v, ast.Constant) and v.value for v in node.values)
+    return False
 
 
 def _is_len(node: ast.AST) -> bool:
