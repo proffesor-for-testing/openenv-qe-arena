@@ -177,3 +177,18 @@ def test_domain_template_copies_base_limits_and_skips_uncovered_cells():
                                                  "split": "train"}
     with pytest.raises(ValueError):
         sel.extend_template(template + template, cells)
+
+
+def test_software_cells_keep_one_generator_pass_and_domain_cells_retry():
+    assert all(tasks.passes(t) == 1 for t in TASK_IDS)
+    assert all(tasks.passes(t) == tasks.DOMAIN_PASSES >= 16 for t in DOMAIN_TASK_IDS)
+
+
+# Seeds a 4-pass domain generator could not build (flaky domain sweep and the v4 export, 2026-10-14).
+HARD_SEEDS = [("qe_flaky-science-d2", 22), ("qe_flaky-science-d2", 1_000_027), ("qe_flaky-finance-d2", 5_000_008),
+              ("qe_flaky-finance-d2", 5_000_217), ("qe_flaky-math-d3", 5_000_025), ("qe_flaky-science-d3", 5_000_094)]
+
+
+@pytest.mark.parametrize("task_id,seed", HARD_SEEDS)
+def test_domain_cells_build_on_seeds_that_needed_more_passes(task_id, seed):
+    assert corpus.ENTRIES[make_task(task_id, seed).private["corpus"]].domain == task_domain(task_id)

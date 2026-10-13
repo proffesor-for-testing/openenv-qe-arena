@@ -65,9 +65,15 @@ REAL_SHARE = 0.15  # share of qe_bugfix tasks that carry a real upstream fault (
 FILLER_KEEP = 0.5  # a real task keeps each filler candidate with this chance, so no filler site dominates
 FAULT_KINDS = ("injected", "real")
 # Passes over the pool before a generator gives up. A pass that builds nothing is followed by one with fresh
-# draws (renaming, inputs, site order), which a small domain pool needs. The first pass is the original single
-# pass, so every task it built is unchanged.
-PASSES = 4
+# draws (renaming, inputs, site order), which a small domain pool needs: at 4 passes 4 of 6,300 flaky domain
+# builds still failed (seeds 5,000,000-5,000,299), at 16 none did. Software cells keep the original single
+# pass, so their generation is unchanged in every case, and a domain cell's first pass is that same pass.
+PASSES = {SOFTWARE: 1}
+DOMAIN_PASSES = 16
+
+
+def passes(task_id: str) -> int:
+    return PASSES.get(CELLS[task_id][1], DOMAIN_PASSES)
 
 
 @dataclass
@@ -303,7 +309,7 @@ def _real_sites(item: corpus.CorpusEntry, original: str, renaming: dict[str, str
 def _make_bugfix(task_id: str, level: int, seed: int, rng: random.Random, pool: tuple[str, ...],
                  kind: str = "injected") -> Task:
     # One pass for a real fault: when it fails, make_task falls back to injected faults on this same rng.
-    for _ in range(PASSES if kind == "injected" else 1):
+    for _ in range(passes(task_id) if kind == "injected" else 1):
         for name in rng.sample(sorted(pool), len(pool)):
             item = corpus.ENTRIES[name]
             renaming = mutation.local_renaming(item.function_source, random.Random(rng.random()))
@@ -404,7 +410,7 @@ def _kill_rate(reference: list, outputs: list) -> float:
 
 def _make_mutant_kill(task_id: str, level: int, seed: int, rng: random.Random, pool: tuple[str, ...]) -> Task:
     wanted = 3 if level == 3 else 1
-    for _ in range(PASSES):
+    for _ in range(passes(task_id)):
         for name in rng.sample(sorted(pool), len(pool)):
             item = corpus.ENTRIES[name]
             original = mutation.rename_locals(item.function_source, random.Random(rng.random()))

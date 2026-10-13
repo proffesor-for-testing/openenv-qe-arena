@@ -50,11 +50,12 @@ and a function that cannot serve a seed (no subtle mutant, no fault inside the d
 for a flaky suite) leaves too few others to fall back on. `tests/test_domains.py` checks the rule both ways.
 Since v4 every domain is served: 4 or 5 original entries each, 70 domain cells beside the 10 software ones.
 Real-bug entries are software engineering, so a domain cell's `qe_bugfix` faults are always injected. A
-calibration `pool` must name entries of the cell's domain. Each generator makes up to `PASSES` (4) passes over its
-pool before giving up, because a 4-entry pool sometimes has no function that serves a seed on the first pass
-(for `qe_flaky`, often). Later passes redraw renaming, inputs and site order. The first pass is the original
-single pass, so no task it built changed; the real-fault tier keeps one pass, because its fallback to injected
-faults continues on the same random stream.
+calibration `pool` must name entries of the cell's domain. A domain cell's generator makes up to `DOMAIN_PASSES` (16) passes over its
+pool before giving up, because a 4-entry pool sometimes has no function that serves a seed on one pass (for
+`qe_flaky` most often: a clean shared-state suite needs two inputs with equal results). Later passes redraw
+renaming, inputs and site order; over seeds 5,000,000-5,000,299, 4 of 6,300 flaky domain builds failed at 4
+passes and none at 16. Software cells keep the original single pass, so their generation is unchanged, and the
+real-fault tier keeps one pass because its fallback to injected faults continues on the same random stream.
 
 The dataset export keeps the software-engineering rows in `tasks.jsonl` (byte-identical) and writes the domain
 rows to `domain_tasks.jsonl` (the card's `domains` config). A row's `domain` is the arena domain with spaces
