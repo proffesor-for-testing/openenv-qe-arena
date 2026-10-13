@@ -49,14 +49,31 @@ def _grading_sources(task: Task) -> list[str]:
     p = task.private
     if task.family == "qe_bugfix":
         return [p["original"], p["buggy"]]
+    if task.family == "qe_flaky":
+        return [p["original"], p["harness"]] + [m["source"] for m in p["mutants"]]
     return [p["original"]] + [m["source"] for m in p["mutants"]]
+
+
+def _hidden(task: Task) -> tuple[int, object, object]:
+    """(count, hidden inputs, reference outputs) for the family's grader.
+
+    A flaky task has no input list: its grader replays the graded runs and the sweep, and compares
+    the answer with the flaky test, its cause and the reference repair."""
+    p = task.private
+    if task.family == "qe_flaky":
+        inputs = {"graded": p["graded"], "shown": p["shown"], "sweep": p["sweep"], "band": p["band"],
+                  "boxes": p["boxes"], "region": p["region"], "prefix": p["prefix"],
+                  "protected": p["protected"], "tests": p["tests"]}
+        return len(p["graded"]), inputs, {"victim": p["victim"], "cause": p["cause"], "repair": p["repair"]}
+    return len(p["inputs"]), p["inputs"], [[r.kind, r.value, r.fuel] for r in p["reference"]]
 
 
 def manifest_for(task: Task) -> dict:
     p = task.private
     root = sandbox.runtime_root()
-    reference = [[r.kind, r.value, r.fuel] for r in p["reference"]]
-    return {
+    count, inputs, reference = _hidden(task)
+    extra = {"edit_budget": p["edit_budget"]} if "edit_budget" in p else {}
+    return extra | {
         "schema": SCHEMA,
         "task_id": task.task_id,
         "seed": task.seed,
@@ -71,8 +88,8 @@ def manifest_for(task: Task) -> dict:
             "wasmtime": importlib.metadata.version("wasmtime"),
         },
         "corpus_file_sha256": _file_sha(PACKAGE / "corpus" / f"{p['corpus']}.py"),
-        "hidden_inputs_count": len(p["inputs"]),
-        "hidden_inputs_sha256": _sha(canonical(p["inputs"])),
+        "hidden_inputs_count": count,
+        "hidden_inputs_sha256": _sha(canonical(inputs)),
         "reference_outputs_sha256": _sha(canonical(reference)),
         "grading_sources_sha256": _sha(canonical(_grading_sources(task))),
         "observation_sha256": _sha(canonical([task.prompt, task.files])),
