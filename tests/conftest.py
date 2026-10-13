@@ -25,6 +25,7 @@ SLOW = frozenset({
     "test_d4_attacks.py::test_exits_that_end_the_block_make_the_old_body_dead",
     "test_d4_attacks.py::test_guarded_rewrites_behind_any_fixed_test_never_pay",
     "test_d4_attacks.py::test_oracle_earns_one_on_300_seeds_within_budget_gate_and_steps",
+    "test_d4_attacks.py::test_oracle_earns_one_on_1000_natural_seeds",
     "test_environment.py::test_bugfix_leaving_any_single_fault_unfixed_earns_zero",
     "test_environment.py::test_oracle_solution_earns_exactly_one",
     "test_environment.py::test_prompt_states_the_reply_format_with_concrete_actions",

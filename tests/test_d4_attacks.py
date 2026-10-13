@@ -276,3 +276,25 @@ def test_a_shadowed_builtin_is_a_variable_not_a_constant():
     assert _truth(ast.parse("zip", mode="eval").body, frozenset({"zip"})) is None
     base = "def f(zip, b):\n    if zip:\n        return 1\n    return b\n"
     assert edit_budget.structure_violation(base, base.replace("return b", "return b + 0")) is None
+
+
+def _oracle_reward(seed):
+    task = make_task(D4, seed)
+    env = QEEnvironment()
+    obs = env.reset(seed=seed, task_id=D4)
+    errors = []
+    for action in solve_actions(task):
+        obs = env.step(QEAction(**action))
+        if obs.error:
+            errors.append(obs.error)
+        if obs.done:
+            break
+    return seed, obs.reward, errors
+
+
+def test_oracle_earns_one_on_1000_natural_seeds():
+    """No false refusal of the true minimal fix on 1000 seeds outside every other test's range."""
+    with ProcessPoolExecutor(4) as pool:
+        results = list(pool.map(_oracle_reward, range(3_000_000, 3_001_000), chunksize=8))
+    failed = [(seed, reward, errors[:1]) for seed, reward, errors in results if reward != 1.0 or errors]
+    assert not failed, failed[:10]

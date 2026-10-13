@@ -131,8 +131,12 @@ def _definitions(tree: ast.AST) -> list[tuple]:
             for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
 
 
-def _truth(test: ast.AST, bound: frozenset = frozenset()) -> bool | None:
-    """The truth value of ``test`` when it cannot depend on the input, else None.
+FIXED = "fixed"  # a test whose value cannot depend on the input, but which we do not evaluate
+
+
+def _truth(test: ast.AST, bound: frozenset = frozenset()) -> bool | str | None:
+    """The truth value of ``test`` when it cannot depend on the input, FIXED when it cannot depend on
+    the input but its value is not computed here, else None.
 
     Tautologies are open-ended: this catches the shapes a rewrite needs to hide behind, and the
     token allowance bounds the rest. Caught: literals and displays (`{0}`, `()`, f-strings),
@@ -152,10 +156,10 @@ def _truth(test: ast.AST, bound: frozenset = frozenset()) -> bool | None:
         try:
             return bool(ast.literal_eval(test))
         except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
-            return True  # no variable in it, so its value is fixed even if we cannot compute it here
+            return FIXED  # no variable in it: fixed, but not evaluated here (never run model code)
     if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
         inner = _truth(test.operand, bound)
-        return None if inner is None else not inner
+        return inner if inner is None or inner == FIXED else not inner
     if isinstance(test, ast.BoolOp):
         values = [_truth(v, bound) for v in test.values]
         decisive = True if isinstance(test.op, ast.Or) else False
@@ -165,7 +169,9 @@ def _truth(test: ast.AST, bound: frozenset = frozenset()) -> bool | None:
         negated = {ast.dump(v.operand) for v in test.values if isinstance(v, ast.UnaryOp) and isinstance(v.op, ast.Not)}
         if negated & set(dumps):
             return decisive  # x or not x is always true; x and not x is always false
-        return None if None in values else not decisive
+        if None in values:
+            return None
+        return FIXED if FIXED in values else not decisive
     if isinstance(test, ast.Compare) and len(test.ops) == 1:
         left, op, right = test.left, test.ops[0], test.comparators[0]
         if ast.dump(left) == ast.dump(right):
@@ -176,12 +182,12 @@ def _truth(test: ast.AST, bound: frozenset = frozenset()) -> bool | None:
                 and any(ast.dump(e) == ast.dump(left) for e in right.elts):
             return isinstance(op, ast.In)  # x in (x,) is always true
         if _is_len(left) and _int_value(right) is not None:
-            bound = _int_value(right)
-            if (isinstance(op, ast.GtE) and bound <= 0) or (isinstance(op, ast.Gt) and bound < 0):
+            limit = _int_value(right)
+            if (isinstance(op, ast.GtE) and limit <= 0) or (isinstance(op, ast.Gt) and limit < 0):
                 return True
         if _is_len(right) and _int_value(left) is not None:
-            bound = _int_value(left)
-            if (isinstance(op, ast.LtE) and bound <= 0) or (isinstance(op, ast.Lt) and bound < 0):
+            limit = _int_value(left)
+            if (isinstance(op, ast.LtE) and limit <= 0) or (isinstance(op, ast.Lt) and limit < 0):
                 return True
     if (isinstance(test, ast.Call) and isinstance(test.func, ast.Name) and test.func.id == "isinstance"
             and len(test.args) == 2 and isinstance(test.args[1], ast.Name) and test.args[1].id == "object"):
@@ -290,7 +296,12 @@ def _stmt_ends(stmt: ast.stmt, jumps: bool, bound: frozenset = frozenset()) -> b
     if isinstance(stmt, (ast.Break, ast.Continue)):
         return jumps
     if isinstance(stmt, ast.If):
-        if _constant_test(stmt.test, bound):
+        value = _truth(stmt.test, bound)
+        if value is True:
+            return _ends(stmt.body, jumps, bound)
+        if value is False:
+            return _ends(stmt.orelse, jumps, bound)  # the body never runs: `if x > x:` cannot end the block
+        if value == FIXED:
             return _ends(stmt.body, jumps, bound) or _ends(stmt.orelse, jumps, bound)  # either may be live
         return bool(stmt.orelse) and _ends(stmt.body, jumps, bound) and _ends(stmt.orelse, jumps, bound)
     if isinstance(stmt, (ast.With, ast.AsyncWith)):
@@ -301,7 +312,8 @@ def _stmt_ends(stmt: ast.stmt, jumps: bool, bound: frozenset = frozenset()) -> b
         # rewrite hides behind it; the d4 prompt says so.
         return _ends(stmt.body, jumps, bound) or _ends(stmt.finalbody, jumps, bound)
     if isinstance(stmt, ast.While):
-        return _constant_test(stmt.test, bound) and not _loop_body_jumps_out(stmt.body)
+        value = _truth(stmt.test, bound)
+        return value in (True, FIXED) and not _loop_body_jumps_out(stmt.body)  # a false while never runs
     if isinstance(stmt, (ast.For, ast.AsyncFor)):
         return (_must_iterate(stmt.iter, bound) and _ends(stmt.body, False, bound)
                 and not _loop_body_jumps_out(stmt.body))
@@ -328,7 +340,10 @@ def _dead_code(tree: ast.AST) -> list[tuple[str, str, str]]:
                 continue
             for stmt, nxt in zip(block, block[1:]):
                 if _stmt_ends(stmt, True, bound):
-                    found.append((f"dead:{ast.dump(nxt)}", str(nxt.lineno),
+                    # Keyed by the statement that ends the block, not by what follows it: the buggy file
+                    # may already end a block early (a fault can make `x <= x`), and repairing the code
+                    # after that statement must not read as new dead code.
+                    found.append((f"dead-after:{ast.dump(stmt)}", str(nxt.lineno),
                                   f"line {nxt.lineno} can never run (after line {stmt.lineno})"))
     return found
 
@@ -366,4 +381,9 @@ def plan(buggy: str, original: str) -> tuple[int, list[dict]] | None:
         return None
     if structure_violation(buggy, original) is not None:
         return None
+    current = buggy  # the oracle applies the fix edit by edit, and every step must pass the gate too
+    for edit in fix:
+        current = current.replace(edit["old"], edit["new"], 1)
+        if structure_violation(buggy, current) is not None:
+            return None
     return budget, fix

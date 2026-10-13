@@ -207,3 +207,52 @@ def test_export_rows_keep_the_base_cells_byte_identical(tmp_path):
     assert {r["task_id"] for r in rows} == set(tasks.TASK_IDS)
     for row in rows:
         assert ("edit_budget" in row) == (row["task_id"] == D4)
+
+
+# --------------------------------------------------------------------------- false refusals of the true fix
+
+# qe_bugfix-d4 seed 3000005 (baseline_verdict): var_swap made `if current_success > current_success:`
+# (always false), and the oracle's first edit repaired the statement after it. The gate read the
+# never-firing `if` as ending the block, and keyed the "dead" finding by the edited statement, so the
+# true fix was refused as new dead code.
+FALSE_TEST = (
+    "def f(a, b):\n"
+    "    if a > a:\n        return 1\n"
+    "    if b and a >= b:\n        return 2\n"
+    "    return 3\n"
+)
+
+
+def test_a_never_true_test_does_not_end_the_block():
+    repaired = FALSE_TEST.replace("if b and a >= b:", "if a >= b:")
+    assert edit_budget.structure_violation(FALSE_TEST, repaired) is None
+    fully = repaired.replace("if a > a:", "if a > b:")
+    assert edit_budget.structure_violation(FALSE_TEST, fully) is None
+
+
+def test_repairing_code_after_a_fault_made_early_exit_is_not_new_dead_code():
+    always = FALSE_TEST.replace("if a > a:", "if a <= a:")  # always true: what follows is dead in the buggy file
+    assert edit_budget.structure_violation(always, always.replace("if b and a >= b:", "if a >= b:")) is None
+    # A new early exit is still refused, before or after the existing one.
+    inserted = always.replace("    return 3\n", "    return 4\n    return 3\n")
+    assert edit_budget.structure_violation(always, inserted) is not None
+    guard = always.replace("    if a <= a:", "    if {0}:\n        return 9\n    if a <= a:")
+    assert edit_budget.structure_violation(always, guard) is not None
+
+
+@pytest.mark.parametrize("seed", [3000005, 3000000, 3000001, 3000007, 3000011])
+def test_oracle_passes_the_gate_on_a_fixed_sample_including_seed_3000005(seed):
+    task = make_task(D4, seed)
+    p = task.private
+    current = p["buggy"]
+    for edit in edit_budget.minimal_fix(p["buggy"], p["original"]):  # every intermediate file passes
+        current = current.replace(edit["old"], edit["new"], 1)
+        assert edit_budget.structure_violation(p["buggy"], current) is None, (seed, edit)
+    env = QEEnvironment()
+    obs = env.reset(seed=seed, task_id=D4)
+    for action in solve_actions(task):
+        obs = env.step(QEAction(**action))
+        assert not obs.error, (seed, obs.error)
+        if obs.done:
+            break
+    assert obs.done and obs.reward == 1.0
