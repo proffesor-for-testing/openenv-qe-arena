@@ -100,8 +100,12 @@ existing pin are byte-identical. Code: `qe_arena/edit_budget.py`.
   - every statement stays reachable. A static check proves exits through return, raise, if/else,
     try (when its body or finally ends), with, and loops that must run their body. No branch or loop may
     test something whose value cannot depend on the input: a literal or display (`{0}`, `()`, `[x]`, an
-    f-string with text), anything with no variable in it, `x OP x`, `x or <truthy>`,
-    `isinstance(_, object)`, or `len(...) >= 0`. So no wrapper (`if True:`, `while 1:`, `for _ in [0]:`,
+    f-string with text), anything with no variable in it (builtins and module dunders such as
+    `__name__` are not variables), a name bound only by def, class or import, a walrus by its value,
+    `x OP x`, `x or <truthy>`, `x in ()`, `x is []`, `isinstance(_, object)`, `len(...) >= 0`, a call
+    to a builtin whose result is truthy for every argument (`type(x)`, `repr(x)`, `id(x)`,
+    `ValueError(x)`) or always None (`print(x)`), a special method (`x.__class__`), and a generator
+    expression. So no wrapper (`if True:`, `while 1:`, `for _ in [0]:`,
     try/finally) can bypass the old body. Tautologies are open-ended; the token allowance bounds what a
     tautology the check misses can hide;
   - a total change of at most `min(50, 0.35 × code tokens)` preorder AST tokens. The code tokens are

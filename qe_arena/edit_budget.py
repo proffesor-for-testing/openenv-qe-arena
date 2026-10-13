@@ -23,6 +23,7 @@ dd32587). Every edit, and the graded file, must keep the buggy file's structure:
 from __future__ import annotations
 
 import ast
+import builtins
 import difflib
 import math
 from collections import Counter
@@ -140,21 +141,28 @@ def _truth(test: ast.AST, bound: frozenset = frozenset()) -> bool | str | None:
 
     Tautologies are open-ended: this catches the shapes a rewrite needs to hide behind, and the
     token allowance bounds the rest. Caught: literals and displays (`{0}`, `()`, f-strings),
-    anything with no variable in it, a bare builtin such as `zip` (when no name in the file shadows
-    it), `x OP x`, `x or not x`, `x in (x,)`, `x or <truthy>` / `x and <falsy>`,
-    `isinstance(_, object)` and `len(...) >= 0`. ``bound`` is from _bound_names: every name the file
-    binds as a variable, plus OBJECT + name for a name bound only by def, class or import.
+    anything with no variable in it (builtins and module dunders such as `__name__` are not
+    variables), a bare builtin such as `zip` (when no name in the file shadows it), a walrus by its
+    value, `x OP x`, `x or not x`, `x in (x,)`, `x in ()`, `x is []`, `x or <truthy>` /
+    `x and <falsy>`, `isinstance(_, object)`, `len(...) >= 0`, a call to a builtin whose result is
+    truthy whatever the argument (`type(x)`, `repr(x)`, `ValueError(x)`, see _TRUTHY_CALLS) or always
+    None (`print(x)`), a special method such as `x.__eq__`, a generator expression, and
+    `a if x else b` with a and b of the same truth. ``bound`` is from _bound_names: every name the
+    file binds as a variable, plus OBJECT + name for a name bound only by def, class or import.
     """
+    if isinstance(test, ast.NamedExpr):
+        return _truth(test.value, bound)  # (q := re) is as true as re
     if isinstance(test, ast.Name) and (OBJECT + test.id in bound or (test.id in _BUILTINS and test.id not in bound)):
         return True  # a function, class, module or builtin object is always truthy
     if isinstance(test, (ast.Set, ast.List, ast.Tuple, ast.Dict)):
-        return bool(test.keys if isinstance(test, ast.Dict) else test.elts)
+        items = test.keys if isinstance(test, ast.Dict) else test.elts
+        if not items or any(i is not None and not isinstance(i, ast.Starred) for i in items):
+            return bool(items)  # `[*x]` and `{**x}` are as empty as x: decided below
     if isinstance(test, ast.JoinedStr):
         if any(isinstance(v, ast.Constant) and v.value for v in test.values):
             return True
         return None if any(isinstance(v, ast.FormattedValue) for v in test.values) else False
-    if not any(isinstance(n, ast.Name) and (n.id in bound or (n.id not in _CONSTANT_NAMES and OBJECT + n.id not in bound))
-               for n in ast.walk(test)):
+    if not _reads_input(test, bound):
         try:
             return bool(ast.literal_eval(test))
         except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
@@ -178,13 +186,18 @@ def _truth(test: ast.AST, bound: frozenset = frozenset()) -> bool | str | None:
         return FIXED if FIXED in values else not decisive
     if isinstance(test, ast.Compare) and len(test.ops) == 1:
         left, op, right = test.left, test.ops[0], test.comparators[0]
+        if isinstance(op, (ast.Is, ast.IsNot)) and (isinstance(left, _FRESH) or isinstance(right, _FRESH)):
+            return isinstance(op, ast.IsNot)  # a new list, dict, set or generator is nothing else
         if ast.dump(left) == ast.dump(right):
             if isinstance(op, (ast.In, ast.NotIn)):
                 return None  # x in x is not fixed for lists
             return isinstance(op, (ast.Eq, ast.Is, ast.LtE, ast.GtE))
-        if isinstance(op, (ast.In, ast.NotIn)) and isinstance(right, (ast.Tuple, ast.List, ast.Set)) \
-                and any(ast.dump(e) == ast.dump(left) for e in right.elts):
-            return isinstance(op, ast.In)  # x in (x,) is always true
+        if isinstance(op, (ast.In, ast.NotIn)) and isinstance(right, (ast.Tuple, ast.List, ast.Set, ast.Dict)):
+            items = right.keys if isinstance(right, ast.Dict) else right.elts
+            if not items:
+                return isinstance(op, ast.NotIn)  # nothing is in an empty display
+            if any(ast.dump(e) == ast.dump(left) for e in items):
+                return isinstance(op, ast.In)  # x in (x,) is always true
         if _is_len(left) and _int_value(right) is not None:
             limit = _int_value(right)
             if (isinstance(op, ast.GtE) and limit <= 0) or (isinstance(op, ast.Gt) and limit < 0):
@@ -193,15 +206,104 @@ def _truth(test: ast.AST, bound: frozenset = frozenset()) -> bool | str | None:
             limit = _int_value(left)
             if (isinstance(op, ast.LtE) and limit <= 0) or (isinstance(op, ast.Lt) and limit < 0):
                 return True
-    if (isinstance(test, ast.Call) and isinstance(test.func, ast.Name) and test.func.id == "isinstance"
-            and len(test.args) == 2 and isinstance(test.args[1], ast.Name) and test.args[1].id == "object"):
-        return True
+    if (isinstance(test, ast.Call) and isinstance(test.func, ast.Name) and test.func.id in ("isinstance", "issubclass")
+            and len(test.args) == 2 and _is_object(test.args[1])):
+        return True  # everything is an object
+    if isinstance(test, ast.Call) and isinstance(test.func, ast.Name) and _builtin(test.func.id, bound):
+        name, args = test.func.id, test.args
+        if name in _NONE_CALLS:
+            return False
+        if name in _TRUTHY_CALLS and not (name in _SCOPE_READERS and not args) and _trusted(name, bound):
+            return True
+        if name in _SCOPE_READERS and not args and not test.keywords:
+            return FIXED  # the names bound in this scope: never what a repair tests
+        if name == "bool" and len(args) == 1:
+            return _truth(args[0], bound)
+        if name in ("getattr", "hasattr") and len(args) == 2 and isinstance(args[1], ast.Constant) \
+                and args[1].value in (_SPECIAL_METHODS if name == "getattr" else _OBJECT_ATTRIBUTES) \
+                and _trusted(args[1].value, bound):
+            return True  # getattr(x, "__class__") is x.__class__; every object has what object has
+    if isinstance(test, ast.Attribute) and test.attr in _SPECIAL_METHODS and _trusted(test.attr, bound):
+        return True  # x.__class__ is a class and x.__eq__ a bound method, whatever x is
+    if isinstance(test, ast.GeneratorExp):
+        return True  # a generator object is always truthy
+    if isinstance(test, ast.IfExp):
+        body, orelse = _truth(test.body, bound), _truth(test.orelse, bound)
+        if isinstance(body, bool) and body is orelse:
+            return body
     return None
 
 
-_BUILTINS = frozenset(n for n in dir(__import__("builtins")) if not n.startswith("_"))
-_CONSTANT_NAMES = frozenset({"True", "False", "None", "object", "len", "int", "str", "bool", "float", "abs",
-                             "min", "max", "sum", "round", "isinstance", "ord", "chr"})
+_BUILTINS = frozenset(n for n in dir(builtins) if not n.startswith("_"))
+_FRAME_READERS = frozenset({"eval", "exec"})  # read any variable named in a string
+_SCOPE_READERS = frozenset({"globals", "locals", "vars", "dir"})  # read the variables in scope when called bare
+_OBJECT_ATTRIBUTES = frozenset(dir(object))
+_FRESH = (ast.List, ast.Dict, ast.Set, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+# Builtin calls whose result is truthy for every argument they accept: a builtin class whose instances
+# define neither __bool__ nor __len__ (type, object, zip, ValueError, ...), a positive id, a repr or
+# ascii (never empty), an iterator, a non-empty dir(x), and the module globals (never empty).
+_TRUTHY_CALLS = frozenset(name for name, value in vars(builtins).items() if isinstance(value, type)
+                          and not hasattr(value, "__bool__") and not hasattr(value, "__len__")) \
+    | {"id", "repr", "ascii", "iter", "dir", "globals"}
+_NONE_CALLS = frozenset({"print", "setattr", "delattr", "exec"})  # always return None
+# Special methods a class in the file could define so that the builtin above returns a falsy value.
+_DELEGATES = {"type": ("__bool__", "__len__"), "__class__": ("__bool__", "__len__"),
+              "repr": ("__repr__",), "ascii": ("__repr__",), "dir": ("__dir__",),
+              "iter": ("__iter__", "__bool__", "__len__"), "reversed": ("__reversed__", "__bool__", "__len__")}
+
+
+def _special_methods() -> frozenset:
+    """Special methods callable on every builtin type that has them: looked up on any object, each is a
+    bound method or (__class__) a class, so always truthy. __hash__ is None on unhashable types, and
+    data attributes such as __doc__ or __name__ vary, so neither is here."""
+    kinds = [v for v in vars(builtins).values() if isinstance(v, type)] + [type(None), type(len), type(_special_methods)]
+    names = {n for kind in kinds for n in dir(kind) if n.startswith("__") and n.endswith("__")}
+    owners = {n: [kind for kind in kinds if hasattr(kind, n)] for n in names}
+    return frozenset(n for n in names if owners[n] and all(callable(getattr(kind, n)) for kind in owners[n]))
+
+
+_SPECIAL_METHODS = _special_methods()
+
+
+def _is_dunder(name: str) -> bool:
+    return len(name) > 4 and name.startswith("__") and name.endswith("__")
+
+
+def _fixed_name(name: str, bound: frozenset) -> bool:
+    """A name that cannot carry the input: a def, class or import object, a builtin no name in the file
+    shadows (except those that read variables by name), or a module dunder such as __name__."""
+    if name in bound:
+        return False
+    if OBJECT + name in bound:
+        return True
+    return (name in vars(builtins) and name not in _FRAME_READERS) or _is_dunder(name)
+
+
+def _reads_input(test: ast.AST, bound: frozenset) -> bool:
+    """Whether ``test`` can see the input: a name that is not fixed, or a bare `locals()` or `vars()`."""
+    for node in ast.walk(test):
+        if isinstance(node, ast.Name) and not _fixed_name(node.id, bound):
+            return True
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in _SCOPE_READERS \
+                and not node.args and not node.keywords and _builtin(node.func.id, bound):
+            return True
+    return False
+
+
+def _is_object(node: ast.AST) -> bool:
+    """`object`, or a tuple display that names it (isinstance(x, (int, object)))."""
+    if isinstance(node, ast.Tuple):
+        return any(_is_object(e) for e in node.elts)
+    return isinstance(node, ast.Name) and node.id == "object"
+
+
+def _builtin(name: str, bound: frozenset) -> bool:
+    return name in vars(builtins) and name not in bound and OBJECT + name not in bound
+
+
+def _trusted(name: str, bound: frozenset) -> bool:
+    """No function in the file defines a special method that could make ``name``'s result falsy."""
+    return not any(m in bound or OBJECT + m in bound for m in _DELEGATES.get(name, ()))
 
 
 def _is_len(node: ast.AST) -> bool:
@@ -270,7 +372,7 @@ def _must_iterate(node: ast.AST, bound: frozenset) -> bool:
                 return False  # needs a function; never a plain wrapper
             if any(not isinstance(a, (str, bytes, list, tuple, set, dict)) for a in args) or len(str(args)) > 1000:
                 return False
-            return len(list(getattr(__import__("builtins"), node.func.id)(*args))) > 0
+            return len(list(getattr(builtins, node.func.id)(*args))) > 0
         except Exception:  # noqa: BLE001 - a call that fails on literals is not a wrapper we can prove
             return False
     return False
