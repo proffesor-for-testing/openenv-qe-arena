@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import math
 import random
 import sys
@@ -256,3 +257,12 @@ def test_oracle_passes_the_gate_on_a_fixed_sample_including_seed_3000005(seed):
         if obs.done:
             break
     assert obs.done and obs.reward == 1.0
+
+
+@pytest.mark.parametrize("test", [
+    "x or ().__len__()", "not ().__len__()", "x or (1).__class__", "a > a", "a <= a", "x or not x",
+    "{0}", "zip", "x in (x,)", "len(x) >= 0", "x or {0}", "not (x > x)", "f'a{x}'",
+])
+def test_reading_values_keeps_every_constant_test_refused(test):
+    """Knowing that `a > a` is false must not stop it being refused as a constant condition."""
+    assert edit_budget._constant_test(ast.parse(test, mode="eval").body)

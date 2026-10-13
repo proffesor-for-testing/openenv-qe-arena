@@ -169,6 +169,8 @@ def _truth(test: ast.AST, bound: frozenset = frozenset()) -> bool | str | None:
         negated = {ast.dump(v.operand) for v in test.values if isinstance(v, ast.UnaryOp) and isinstance(v.op, ast.Not)}
         if negated & set(dumps):
             return decisive  # x or not x is always true; x and not x is always false
+        if decisive is True and FIXED in values:
+            return FIXED  # x or <fixed>: still refused as constant, as when <fixed> counted as true
         if None in values:
             return None
         return FIXED if FIXED in values else not decisive
