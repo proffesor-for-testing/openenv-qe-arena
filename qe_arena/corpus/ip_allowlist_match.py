@@ -9,31 +9,29 @@ META = {
 
 
 def parse_ipv4(text):
-    """Return a dotted-quad IPv4 address as a 32-bit integer."""
+    """Return a dotted-quad IPv4 address as an int."""
     parts = text.split(".")
     if len(parts) != 4:
-        raise ValueError("an IPv4 address has four parts")
+        raise ValueError("bad address")
     for part in parts:
         if not part.isdigit() or (len(part) > 1 and part[0] == "0") or int(part) > 255:
-            raise ValueError("bad IPv4 octet: " + part)
+            raise ValueError("bad octet")
     return sum(int(part) << (24 - 8 * i) for i, part in enumerate(parts))
 
 
 def ip_allowlist_match(ip, allowlist):
     """Return the first allowlist entry whose network contains ip, or None.
 
-    Addresses are dotted-quad IPv4: exactly four parts, each a decimal number 0..255 written
-    without a sign and without leading zeros ("0" itself is fine, "01" is not). An entry is
-    "a.b.c.d/len" with 0 <= len <= 32, or a bare address meaning "/32". Host bits set in an
-    entry's address are ignored, so "10.1.2.3/8" covers all of 10.0.0.0/8. Entries are checked
-    in order and the search stops at the first match, so entries after it are not validated.
-    Raises ValueError if ip is malformed or a checked entry is malformed.
+    An address is four "."-separated decimal numbers 0..255 with no sign or leading zero ("0" is
+    fine, "01" is not). An entry is "a.b.c.d/len" with 0 <= len <= 32, or a bare address (/32);
+    host bits are ignored ("10.1.2.3/8" is 10.0.0.0/8). Entries after the first match are not
+    checked. Raises ValueError if ip or a checked entry is malformed.
     """
     address = parse_ipv4(ip)
     for entry in allowlist:
         network, slash, length = entry.partition("/")
         if slash and (not length.isdigit() or int(length) > 32):
-            raise ValueError("bad prefix length in " + entry)
+            raise ValueError("bad prefix")
         bits = int(length) if slash else 32
         mask = 0xFFFFFFFF ^ (0xFFFFFFFF >> bits)
         if (address & mask) == (parse_ipv4(network) & mask):

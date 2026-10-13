@@ -9,28 +9,25 @@ META = {
 
 
 def safe_join(base, user_path):
-    """Resolve an untrusted relative path under the directory base, refusing to escape it.
+    """Resolve an untrusted relative path under the directory base without escaping it.
 
-    base is an absolute POSIX directory such as "/srv/files"; trailing "/" characters on it are
-    ignored, so "/srv/files/" and "/srv/files" are the same root and "/" is the filesystem root.
-    user_path is split on both "/" and "\\" (a backslash is a separator too); empty segments and
-    "." are skipped, and ".." removes the most recently kept segment. Returns the root, then "/",
-    then the kept segments joined by "/". When no segment is kept it returns the root itself
-    ("/" for the filesystem root).
-    Raises ValueError if base does not start with "/", if user_path starts with "/" or "\\"
-    (an absolute path), if it contains a NUL character, or if a ".." has no kept segment to remove.
+    root is base without trailing "/" characters. user_path is split on "/" and on "\\";
+    empty and "." segments are skipped and ".." drops the last kept segment. Returns
+    root + "/" + the kept segments joined by "/", or root ("/" when root is "") if none is kept.
+    Raises ValueError if base does not start with "/", user_path starts with "/" or "\\",
+    user_path contains a NUL character, or a ".." has no kept segment to drop.
     """
     if not base.startswith("/"):
-        raise ValueError("base must be absolute")
+        raise ValueError("bad base")
     if user_path.startswith("/") or user_path.startswith("\\") or "\x00" in user_path:
-        raise ValueError("absolute path or NUL byte in user path")
+        raise ValueError("bad path")
     kept = []
     for segment in user_path.replace("\\", "/").split("/"):
         if segment in ("", "."):
             continue
         if segment == "..":
             if not kept:
-                raise ValueError("path escapes the base directory")
+                raise ValueError("escapes base")
             kept.pop()
         else:
             kept.append(segment)

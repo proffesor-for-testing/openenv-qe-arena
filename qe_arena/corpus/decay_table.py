@@ -9,14 +9,15 @@ META = {
 
 
 def decay_table(activity, keep_num, keep_den, threshold, max_steps):
-    """Tabulate a first-order decay (radioactive source or drug dose) one time step per row.
+    """Tabulate a first-order decay (radioactive source or drug dose), one level per time step.
 
-    Row 0 is [0, activity]. Each step multiplies the previous activity by keep_num / keep_den,
-    the fraction retained per step, and rounds down to an integer count. Steps continue while
-    the current activity is >= threshold and fewer than max_steps steps have been taken, so the
-    first activity below threshold is the last row and no row has a step above max_steps.
-    Returns {"rows": [[step, activity], ...], "half_life_step": h}, where h is the first step
-    >= 1 whose activity a satisfies 2 * a <= the initial activity, or None if no row reaches it.
+    Each step multiplies the previous activity by keep_num / keep_den, the fraction retained per
+    step, and rounds down to an integer count. Steps continue while the current activity is
+    >= threshold and fewer than max_steps steps have been taken, so the first activity below
+    threshold is the last one listed and at most max_steps steps are listed.
+    Returns [levels, h]: levels[k] is the activity after k steps (levels[0] is the initial
+    activity), and h is the first step k >= 1 with 2 * levels[k] <= levels[0], or None if no
+    listed step reaches it.
     Raises ValueError if activity < 0, threshold < 1, max_steps < 0, or unless
     0 <= keep_num < keep_den.
     """
@@ -24,16 +25,16 @@ def decay_table(activity, keep_num, keep_den, threshold, max_steps):
         raise ValueError("bad table parameters")
     if not 0 <= keep_num < keep_den:
         raise ValueError("the retained fraction must be in [0, 1)")
-    rows = [[0, activity]]
+    levels = [activity]
     half_life_step = None
     current, step = activity, 0
     while current >= threshold and step < max_steps:
         step += 1
         current = current * keep_num // keep_den
-        rows.append([step, current])
+        levels.append(current)
         if half_life_step is None and 2 * current <= activity:
             half_life_step = step
-    return {"rows": rows, "half_life_step": half_life_step}
+    return [levels, half_life_step]
 
 
 def gen_inputs(rng, n):
@@ -47,6 +48,7 @@ def gen_inputs(rng, n):
     ]
     while len(cases) < n:
         den = rng.randint(2, 12)
-        cases.append([rng.randint(0, 5000), rng.randint(0, den - 1), den, rng.randint(1, 300),
-                      rng.randint(0, 25)])
+        steps = rng.randint(0, 5) if rng.random() < 0.6 else rng.randint(6, 25)
+        cases.append([rng.randint(0, rng.choice([200, 5000])), rng.randint(0, den - 1), den,
+                      rng.randint(1, 120), steps])
     return cases[:n]

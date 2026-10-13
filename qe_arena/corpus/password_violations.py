@@ -11,19 +11,15 @@ META = {
 
 
 def password_violations(password, username, min_length, history):
-    """Return the policy rules a new password breaks, as a list of codes in this order:
+    """Return the codes of the policy rules a new password breaks, in this order, each once:
 
-    "length"   - fewer than min_length characters;
-    "classes"  - fewer than 3 of the 4 character classes: ASCII lowercase, ASCII uppercase,
-                 ASCII digit, ASCII punctuation (string.punctuation);
-    "username" - username has at least 3 characters and occurs in the password, ignoring case;
-    "repeat"   - the same character appears 3 or more times in a row;
-    "reused"   - the password equals one of the strings in history exactly.
-    An acceptable password returns []. Each code appears at most once.
-    Raises ValueError if min_length < 8.
+    "length": fewer than min_length characters. "classes": fewer than 3 of ASCII lowercase,
+    ASCII uppercase, ASCII digits and string.punctuation occur. "username": username has 3 or
+    more characters and occurs in password, ignoring case. "repeat": one character 3 or more
+    times in a row. "reused": password is in history. Raises ValueError if min_length < 8.
     """
     if min_length < 8:
-        raise ValueError("the policy minimum length is 8")
+        raise ValueError("min_length < 8")
     found = []
     if len(password) < min_length:
         found.append("length")
