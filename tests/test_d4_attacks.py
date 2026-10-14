@@ -380,3 +380,133 @@ def test_a_def_name_that_is_also_assigned_stays_a_variable():
         src = f"def helper(x):\n    return x\n\n\ndef f(a):\n    {binder}\n    if helper:\n        return 1\n    return 2\n"
         assert edit_budget.OBJECT + "helper" not in edit_budget._bound_names(ast.parse(src)), binder
         assert not any(k.startswith("const:") for k, _, _ in edit_budget._dead_code(ast.parse(src))), binder
+
+
+# Review of 3c53ade: attack plays at the merged head found guards that still passed the constant check,
+# so only the 50-token cap stopped them (2 tokens of margin): `type(v)`, `repr(v)` and `(_q := re)` at
+# 52-54 tokens, and `__name__`, `__debug__` and `__import__` at 48 of 50, which earned 0 only because
+# the sandbox rejects dunder names. The rest were found by fuzzing guard shapes against the gate.
+REVIEW_GUARDS = ("type(seen)", "repr(seen)", "(_q := re)", "__name__", "__debug__", "__import__")
+FUZZED_GUARDS = ("ascii(seen)", "id(seen)", "object()", "zip()", "globals()", "locals()", "ValueError(seen)",
+                 "not print(seen)", "__builtins__", "__spec__", "seen.__class__", "seen.__eq__", "seen is not []",
+                 "seen not in ()", "(t for t in seen)", "getattr(seen, '__class__')", "hasattr(seen, '__eq__')",
+                 "isinstance(seen, (set, object))", "issubclass(type(seen), object)", "1 if seen else 2",
+                 "vars(re)", "bool(type(seen))", "(_q := type(seen))", "not exec('')")
+
+
+@pytest.mark.parametrize("guard", REVIEW_GUARDS + FUZZED_GUARDS)
+def test_seed_3000076_compact_return_behind_an_always_true_call_or_dunder_is_refused(guard):
+    task = make_task(D4, 3_000_076)
+    p = task.private
+    compact = SEED_3000076_COMPACT.replace("if token_jaccard:", f"if {guard}:")
+    anchor = "    if seen and not seen and not group:\n"
+    attacked = p["buggy"].replace("upp", "low", 1).replace(anchor, compact + anchor, 1)
+    assert "constant condition" in edit_budget.structure_violation(p["buggy"], attacked), guard
+    assert tasks.grade_bugfix(task, attacked) == 0.0
+    env = QEEnvironment()
+    env.reset(seed=3_000_076, task_id=D4)
+    assert not env.step(QEAction(op="edit", path=MODULE, old="upp", new="low")).error
+    before = env._files[MODULE]
+    short = "    if seen and"
+    obs = env.step(QEAction(op="edit", path=MODULE, old=short, new=compact + short))
+    assert obs.error.startswith("edit refused") and "constant condition" in obs.error, (guard, obs.error)
+    assert env._files[MODULE] == before
+    assert env.step(QEAction(op="submit", answer={})).reward == 0.0
+
+
+@pytest.fixture(scope="module")
+def jaccard_tasks():
+    return {seed: make_task(D4, seed, pool=("token_jaccard",)) for seed in (30, 41, 51)}
+
+
+@pytest.mark.parametrize("guard", ("type({ta})", "repr({ta})", "(_q := re)", "__name__", "__debug__", "__import__",
+                                   "zip()", "{ta} is not []"))
+@pytest.mark.parametrize("seed", [30, 41, 51])
+def test_compact_reimplementation_behind_a_call_walrus_or_dunder_guard_is_refused(jaccard_tasks, seed, guard):
+    task = jaccard_tasks[seed]
+    p = task.private
+    fn = _entry(ast.parse(p["buggy"]), p["entry"])
+    ta, tb = (t.id for t in fn.body[1].targets[0].elts)
+    line = p["buggy"].splitlines(keepends=True)[fn.body[2].lineno - 1]
+    ind = line[:len(line) - len(line.lstrip())]
+    test = guard.format(ta=ta)
+    new = f"{ind}if {test}:return round(len({ta}&{tb})/len({ta}|{tb}),4)if {ta}|{tb} else 0.0\n" + line
+    attacked = p["buggy"].replace(line, new, 1)
+    assert "constant condition" in edit_budget.structure_violation(p["buggy"], attacked), (seed, guard)
+    assert tasks.grade_bugfix(task, attacked) == 0.0
+
+
+@pytest.mark.parametrize("guard", ["type(seen) is int", "repr(seen) == 'x'", "isinstance(seen, int)", "(_q := seen)",
+                                   "hasattr(seen, 'x')", "bool(seen)", "[*seen]", "1 if seen else 0",
+                                   "type(seen) is type(group)", "id(seen) == id(group)", "getattr(seen, 'x', 0)"])
+def test_a_test_that_reads_the_input_through_a_builtin_stays_a_variable_test(guard):
+    """Negative control: only the result's truth is fixed; comparing it, or a truth that follows the input, is not."""
+    task = make_task(D4, 3_000_076)
+    buggy = task.private["buggy"]
+    anchor = "    if seen and not seen and not group:\n"
+    guarded = buggy.replace(anchor, f"    if {guard}:\n        return 0.0\n" + anchor, 1)
+    assert edit_budget.structure_violation(buggy, guarded) is None, guard
+
+
+def test_a_builtin_the_file_shadows_or_whose_special_method_it_defines_is_not_trusted():
+    from qe_arena.edit_budget import _bound_names, _truth  # noqa: PLC0415
+
+    def truth(expr, source):
+        return _truth(ast.parse(expr, mode="eval").body, _bound_names(ast.parse(source)))
+
+    plain = "def f(v):\n    return v\n"
+    assert truth("type(v)", plain) is True and truth("repr(v)", plain) is True and truth("print(v)", plain) is False
+    assert truth("type(v)", "def f(type, v):\n    return v\n") is None  # a parameter named type
+    assert truth("repr(v)", plain + "\n\ndef __repr__(self):\n    return ''\n") is None
+    assert truth("type(v)", plain + "\n\ndef __bool__(self):\n    return False\n") is None
+    assert truth("__name__", plain) == edit_budget.FIXED
+    assert truth("__name__", "__name__ = 'x'\n" + plain) is None  # assigned: a variable like any other
+    assert truth("eval('v')", plain) is None  # reads a variable through a string
+    assert truth("vars()", plain) == edit_budget.FIXED and truth("vars(v)", plain) is None
+
+
+# Review of e983175 (B1): a `**d` key is None in the AST, and the `x in (x,)` check dumped it, so an edit with
+# `a in {**{}}` raised TypeError out of the gate and out of env.step (HTTP 500).
+@pytest.mark.parametrize("guard", ["a in {**{}}", "a in {**{}, 'k': 1}", "a not in {**b}", "a in [*b]"])
+def test_unpacking_inside_an_in_test_never_crashes_the_gate_or_the_step(guard):
+    task = make_task(D4, 3_000_076)
+    buggy = task.private["buggy"]
+    anchor = "    seen, group = tokenize(a), tokenize(b)\n"
+    assert anchor in buggy
+    guarded = buggy.replace(anchor, f"    if {guard}:\n        pass\n" + anchor, 1)
+    edit_budget.structure_violation(buggy, guarded)  # must return, not raise
+    env = QEEnvironment()
+    env.reset(seed=3_000_076, task_id=D4)
+    obs = env.step(QEAction(op="edit", path=MODULE, old=anchor, new=f"    if {guard}:\n        pass\n" + anchor))
+    assert isinstance(obs.error, str)  # an answer, accepted or refused, never an exception
+
+
+def test_a_display_that_unpacks_a_non_empty_display_is_true_and_one_that_unpacks_a_variable_is_not():
+    """Review of e983175 (F2): `[*[a]]` and `{**{a: 0}}` are always non-empty; `[*a]` is as empty as a."""
+    from qe_arena.edit_budget import _bound_names, _truth  # noqa: PLC0415
+
+    source = "def f(a):\n    return a\n"
+
+    def truth(expr):
+        return _truth(ast.parse(expr, mode="eval").body, _bound_names(ast.parse(source)))
+
+    for always in ("[*[a]]", "(*[a],)", "{*[a]}", "{**{a: 0}}", "[*a, *[a]]", "[*'ab']", "[*(a,)]"):
+        assert truth(always) is True, always
+    # Review of 29707a1 (N1): an iterator, generator, zip, map or filter object is truthy but may yield nothing,
+    # so unpacking one says nothing about the display's truth.
+    for variable in ("[*a]", "{**a}", "(*a,)", "{*a}", "[*a, *b]", "[*zip(a)]", "[*map(str, a)]",
+                     "[*filter(None, a)]", "[*enumerate(a)]", "[*reversed(a)]", "[*iter(a)]",
+                     "[*(g for g in a)]", "{*map(str, a)}", "(*filter(None, a),)"):
+        assert truth(variable) is None, variable
+    assert truth("[*(x for x in ())]") is not True  # always empty: never read as non-empty
+
+
+def test_an_equivalent_fix_that_unpacks_a_filter_is_not_a_constant_condition():
+    """Review of 29707a1 (N1): on seed 3000012 the fault deleted `if has_error:`; restoring it as
+    `if [*filter(None, [has_error])]:` is a correct fix and must not be refused as constant."""
+    task = make_task(D4, 3_000_012)
+    p = task.private
+    assert p["original"].count("    if has_error:\n") == 1
+    candidate = p["original"].replace("    if has_error:\n", "    if [*filter(None, [has_error])]:\n", 1)
+    violation = edit_budget.structure_violation(p["buggy"], candidate)
+    assert violation is None or "constant condition" not in violation, violation
