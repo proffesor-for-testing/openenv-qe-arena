@@ -42,7 +42,7 @@ DOMAIN_FINGERPRINTS = {
     "industrial-physical-systems": ("5b764def6559613a", 167_521_565, 256),
     "natural-science": ("58676c9f21eb5e2d", 194_915_656, 256),
     "office-white-collar": ("8521af17f780cb91", 192_838_657, 320),
-    "finance-economics": ("c1c4e318f60a137f", 179_208_328, 256),
+    "finance-economics": ("c90399d200220797", 179_448_414, 256),
     "mathematics-or-formal-reasoning": ("e978c42184ea8837", 158_640_065, 256),
     "cybersecurity": ("a82dbcfe3ca5c69d", 156_196_326, 256),
     "media-content-production": ("d41c4d6b80e4691e", 199_812_685, 320),
