@@ -4,6 +4,7 @@ META = {
     "entry": "split_generic_params",
     "origin": "proffesor-for-testing/agentic-qe@214a5bc881fe4ad6324e243c9d9c2c24baae5295:src/shared/parsers/multi-language-parser.ts",
     "tags": ["parsing", "brackets"],
+    "domain": "software-engineering",
 }
 
 

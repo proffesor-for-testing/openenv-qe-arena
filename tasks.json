@@ -39,6 +39,286 @@
     {
       "task_id": "qe_bugfix-d4",
       "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-industrial-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-industrial-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-industrial-d3",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-industrial-d4",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-industrial-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-industrial-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-industrial-d3",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-industrial-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-industrial-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-industrial-d3",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-science-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-science-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-science-d3",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-science-d4",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-science-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-science-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-science-d3",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-science-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-science-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-science-d3",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-office-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-office-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-office-d3",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-office-d4",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-office-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-office-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-office-d3",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-office-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-office-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-office-d3",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-finance-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-finance-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-finance-d3",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-finance-d4",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-finance-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-finance-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-finance-d3",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-finance-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-finance-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-finance-d3",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-math-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-math-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-math-d3",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-math-d4",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-math-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-math-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-math-d3",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-math-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-math-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-math-d3",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-security-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-security-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-security-d3",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-security-d4",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-security-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-security-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-security-d3",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-security-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-security-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-security-d3",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-media-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-media-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-media-d3",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_bugfix-media-d4",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-media-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-media-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_mutant_kill-media-d3",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-media-d1",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-media-d2",
+      "split": "train"
+    },
+    {
+      "task_id": "qe_flaky-media-d3",
+      "split": "train"
     }
   ]
 }

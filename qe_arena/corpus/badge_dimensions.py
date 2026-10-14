@@ -4,6 +4,7 @@ META = {
     "entry": "badge_dimensions",
     "origin": "proffesor-for-testing/lionagi-qe-fleet@ce1d58750a240a16c3c53abcb8a7c73864e98c99:src/lionagi_qe/badges/generator.py",
     "tags": ["reporting", "arithmetic"],
+    "domain": "software-engineering",
 }
 
 

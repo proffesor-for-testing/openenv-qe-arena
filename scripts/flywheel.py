@@ -7,6 +7,7 @@ decision here is paired and pre-registered, and every composite is shown next to
 
     flywheel.py stats RUNS.jsonl... [--json OUT]
     flywheel.py select RUNS.jsonl... --max-cells 6 --seed 1 --template submission/tasks-v1.json --out tasks-v2.json
+    flywheel.py domain-template --template submission/tasks-v1.json --out tasks-domains.json [--domain finance]
     flywheel.py ledger fetch --user Profa-QE [--submission-id ID]
     flywheel.py ledger add --receipt submission/receipt-v1.json --result run.json
     flywheel.py ledger show
@@ -18,7 +19,9 @@ decision here is paired and pre-registered, and every composite is shown next to
 
 Inputs are the JSONL files written by scripts/calibrate.py. Rows with ``reward: null`` are
 harness errors: they are counted and excluded, never scored as 0. Stdlib and numpy only; the
-logic lives in scripts/qe_flywheel/ (kept out of qe_arena/, which ships in the image).
+logic lives in scripts/qe_flywheel/ (kept out of qe_arena/, which ships in the image). Only
+``domain-template`` imports the environment (to list the domain cells it serves); the rest reads
+``qe_arena/domains.py``, which has no dependencies.
 """
 
 from __future__ import annotations
@@ -29,9 +32,11 @@ import json
 import sys
 from pathlib import Path
 
-from qe_flywheel import ledger, report, search, select, stats
-
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from qe_flywheel import ledger, report, search, select, stats  # noqa: E402
+
 SUBMISSION = ROOT / "submission"
 
 
@@ -67,6 +72,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="; ".join(f"{k}: {v}" for k, v in select.OBJECTIVES.items()))
     p.add_argument("--group-size", type=int, default=stats.TRAIN_GROUP,
                    help="G for the projected objective (arena trains on 4 of 5 episodes)")
+    p = sub.add_parser("domain-template", help="add domain cells to a task template, limits from their base cells")
+    p.add_argument("--template", type=Path, required=True)
+    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--domain", action="append", help="arena domain or task-ID slug (repeatable); default every "
+                                                      "domain the environment serves cells for")
     p = sub.add_parser("ledger", help="append-only ledger of arena runs")
     lsub = p.add_subparsers(dest="action", required=True)
     for name in ("fetch", "add", "show", "repair-head"):
@@ -143,6 +153,36 @@ def run_select(args) -> int:
     return 0
 
 
+def run_domain_template(args) -> int:
+    from qe_arena.domains import BY_SLUG, DOMAINS  # noqa: PLC0415
+    from qe_arena.tasks import DOMAIN_TASK_IDS, task_domain  # noqa: PLC0415 - imports the sandbox
+
+    wanted = None
+    if args.domain:
+        wanted = {BY_SLUG.get(d, d) for d in args.domain}
+        unknown = sorted(wanted - set(DOMAINS))
+        if unknown:
+            raise SystemExit(f"unknown domain(s): {unknown}")
+    cells = [t for t in DOMAIN_TASK_IDS if wanted is None or task_domain(t) in wanted]
+    if wanted is not None and not {task_domain(t) for t in cells} >= wanted:
+        missing = sorted(wanted - {task_domain(t) for t in cells})
+        raise SystemExit(f"the environment serves no cells for {missing} (too few corpus entries)")
+    try:
+        extended, added, skipped = select.extend_template(json.loads(args.template.read_text()), cells)
+    except ValueError as error:
+        raise SystemExit(str(error)) from None
+    for cell in skipped:
+        print(f"skipped {cell}: its base cell {stats.base_cell(cell)} is not in {args.template}")
+    if not added:
+        print(f"no domain cell added; {args.out} not written", file=sys.stderr)
+        return 4
+    write_json(args.out, extended)
+    print(f"{len(added)} domain cells added ({len(extended)} entries) -> {args.out}")
+    for cell in added:
+        print(f"  {cell}  (limits of {stats.base_cell(cell)})")
+    return 0
+
+
 def run_ledger(args) -> int:
     if args.action == "fetch":
         board = json.loads(args.from_file.read_text()) if args.from_file else ledger.fetch_leaderboard(
@@ -202,6 +242,8 @@ def main(argv=None) -> int:
         return 0
     if args.cmd == "select":
         return run_select(args)
+    if args.cmd == "domain-template":
+        return run_domain_template(args)
     if args.cmd == "ledger":
         return run_ledger(args)
     return run_search(args)

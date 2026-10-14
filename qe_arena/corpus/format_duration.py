@@ -4,6 +4,7 @@ META = {
     "entry": "format_duration",
     "origin": "proffesor-for-testing/agentic-qe@214a5bc881fe4ad6324e243c9d9c2c24baae5295:src/cli/handlers/interfaces.ts",
     "tags": ["formatting", "durations", "thresholds"],
+    "domain": "software-engineering",
 }
 
 

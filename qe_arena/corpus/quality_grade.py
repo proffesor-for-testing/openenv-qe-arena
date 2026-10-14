@@ -4,6 +4,7 @@ META = {
     "entry": "quality_grade",
     "origin": "proffesor-for-testing/agentic-qe@214a5bc881fe4ad6324e243c9d9c2c24baae5295:src/mcp/tools/quality-assessment/evaluate.ts",
     "tags": ["quality-gate", "thresholds"],
+    "domain": "software-engineering",
 }
 
 

@@ -5,6 +5,7 @@ META = {
     "entry": "streamable_len",
     "origin": "ruvnet/RuVector@32033a8bc0d4d92e0ea644fce98eef4bb5c6bfef:crates/ruvllm/src/backends/gguf_arch/mod.rs",
     "tags": ["llm", "streaming", "utf-8"],
+    "domain": "software-engineering",
     "real_faults": [
         {"id": "streamable_len/no-holdback", "kind": "missing-logic", "origin": PRE_FIX,
          "summary": "streams everything settled, so the start of a stop sequence reaches the client",

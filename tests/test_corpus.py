@@ -11,6 +11,7 @@ import pytest
 
 from qe_arena import corpus
 from qe_arena.corpus import ENTRIES, call_reference, gen_inputs
+from qe_arena.domains import DOMAINS, SOFTWARE
 
 ALLOWED_IMPORTS = {
     "math", "re", "itertools", "functools", "collections", "string",
@@ -72,7 +73,10 @@ def test_corpus_size_and_provenance():
 def test_contract_fields(name):
     entry = ENTRIES[name]
     module = corpus._module(name)
-    assert set(module.META) - {"real_faults"} == {"entry", "origin", "tags"}
+    assert set(module.META) - {"real_faults"} == {"entry", "origin", "tags", "domain"}
+    assert entry.domain == module.META["domain"] and entry.domain in DOMAINS
+    if entry.real_faults:
+        assert entry.domain == SOFTWARE, "real-bug entries are served by software-engineering cells only"
     assert entry.entry == module.META["entry"]
     assert callable(getattr(module, entry.entry))
     assert callable(module.gen_inputs)

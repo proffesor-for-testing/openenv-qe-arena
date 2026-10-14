@@ -4,6 +4,7 @@ META = {
     "entry": "latency_percentiles",
     "origin": "proffesor-for-testing/sentinel-api-testing@704f47fbc4d2d75ed9261f9a602d76aea930d01b:scripts/comprehensive_benchmark.py",
     "tags": ["performance", "statistics"],
+    "domain": "software-engineering",
 }
 
 

@@ -2,8 +2,9 @@
 
 A training environment for [OpenEnv Arena](https://openenvarena-arena.hf.space/). The arena trains
 Qwen3.8-27B with GRPO in this environment and then scores it on 40 private tasks in 8 domains.
-This environment targets the software-engineering domain with quality-engineering skills:
-finding and fixing a bug, and reasoning precisely about what code does.
+This environment trains quality-engineering skills: finding and fixing a bug, and reasoning precisely about
+what code does. Those skills do not depend on the domain, so since v4 the same mutation-tested, deterministic
+graders also run on code from other arena domains (see "Domain cells").
 
 ## Constraints that shape everything
 
@@ -28,6 +29,37 @@ finding and fixing a bug, and reasoning precisely about what code does.
 ## Task families
 
 Native task IDs follow `<family>-d<1|2|3>`, for example `qe_bugfix-d2`.
+
+### Domain cells
+
+Every corpus entry names its arena domain in `META["domain"]`, spelled as the leaderboard spells it
+(`qe_arena/domains.py`): `software-engineering`, `industrial-physical-systems`, `natural-science`,
+`office-white-collar`, `finance-economics`, `mathematics-or-formal-reasoning`, `cybersecurity` or
+`media-content-production`. A task ID may name a domain between the family and the level:
+
+| Task ID | Corpus it draws |
+|---|---|
+| `qe_mutant_kill-d2` | software-engineering entries: exactly the pool every v1-v3 ID drew, so those IDs, tasks and exported rows are byte-identical |
+| `qe_mutant_kill-finance-d2` | only `finance-economics` entries |
+
+Slugs: `industrial`, `science`, `office`, `finance`, `math`, `security`, `media`. Software engineering has none.
+`TASK_IDS` stays the ten software-engineering cells in their frozen order; `DOMAIN_TASK_IDS` follows, ordered
+by domain, family and level, and `ALL_TASK_IDS` is both. A domain's cells (every family and level) are served
+only once it has at least `MIN_DOMAIN_ENTRIES` (4) injected entries: with fewer, one function dominates a cell,
+and a function that cannot serve a seed (no subtle mutant, no fault inside the d4 budget, too few short rows
+for a flaky suite) leaves too few others to fall back on. `tests/test_domains.py` checks the rule both ways.
+Since v4 every domain is served: 4 or 5 original entries each, 70 domain cells beside the 10 software ones.
+Real-bug entries are software engineering, so a domain cell's `qe_bugfix` faults are always injected. A
+calibration `pool` must name entries of the cell's domain. A domain cell's generator makes up to `DOMAIN_PASSES` (16) passes over its
+pool before giving up, because a 4-entry pool sometimes has no function that serves a seed on one pass (for
+`qe_flaky` most often: a clean shared-state suite needs two inputs with equal results). Later passes redraw
+renaming, inputs and site order; over seeds 5,000,000-5,000,299, 4 of 6,300 flaky domain builds failed at 4
+passes and none at 16. Software cells keep the original single pass, so their generation is unchanged, and the
+real-fault tier keeps one pass because its fallback to injected faults continues on the same random stream.
+
+The dataset export keeps the software-engineering rows in `tasks.jsonl` (byte-identical) and writes the domain
+rows to `domain_tasks.jsonl` (the card's `domains` config). A row's `domain` is the arena domain with spaces
+for hyphens, which is the `software engineering` the earlier rows already carry.
 
 ### `qe_bugfix`: repair an injected or real bug
 
@@ -368,10 +400,11 @@ The oracle never runs in the same process as model-influenced code, and no code 
      `qe_arena/runtime_pins.json` (`python.wasm` d24bd98d…, `python314.zip` 959c807f…), which the worker also
      checks at startup. The Docker builder stage runs it. Both base images are pinned by digest, and wasmtime
      installs with `--require-hashes` (`requirements-wasmtime.lock`).
-   - `scripts/fingerprint.py` hashes kind, value and fuel for every corpus function on 64 inputs.
-     `tests/test_sandbox.py` pins the result, currently `f50dbb1dd3917498` with 1,732,616,699 total fuel over 45
-     functions (2,880 calls), identical on arm64 macOS, an amd64 Linux host and the amd64 image run with the
-     arena flags. The commit that changes the pin says why.
+   - `scripts/fingerprint.py` hashes kind, value and fuel for every corpus function of a domain on 64 inputs.
+     `tests/test_sandbox.py` pins the software-engineering result, currently `f50dbb1dd3917498` with
+     1,732,616,699 total fuel over 45 functions (2,880 calls), identical on arm64 macOS, an amd64 Linux host and
+     the amd64 image run with the arena flags, and one pin per other domain (`DOMAIN_FINGERPRINTS`), so a
+     domain's new entries move only its own line. The commit that changes a pin says why.
    - Regenerate the pin only when the runtime, the guest harness, the budgets, `SAFE_EXPORTS` or the corpus
      change, and say why in the commit.
 9. **Signed task manifests.** Because grading is deterministic, `qe_arena/manifest.py` describes a task by
@@ -399,7 +432,7 @@ Each corpus entry is one file `qe_arena/corpus/<name>.py`:
 
 ```python
 """One-line summary. Adapted from <owner/repo>@<sha>:<path> (MIT)."""   # or "Original." when not adapted
-META = {"entry": "function_name", "origin": "...", "tags": ["parsing"]}
+META = {"entry": "function_name", "origin": "...", "tags": ["parsing"], "domain": "software-engineering"}
 
 def function_name(a, b):
     """Precise spec, including edge cases and what raises."""
@@ -410,6 +443,8 @@ def gen_inputs(rng, n):
 ```
 
 Rules:
+- `domain` is one of `qe_arena.domains.DOMAINS`. Code for a domain is realistic code of that domain (a loan
+  schedule, a ramp limiter), not a software utility with domain names.
 - Standard library only, and only modules and names the static gate allows (`sandbox.SAFE_EXPORTS`).
 - Pure and deterministic: no I/O, no time, no global state.
 - Cheap over `gen_inputs`: within 5 ms per call natively and far below `FUEL_PER_CALL` in the sandbox (the
@@ -445,7 +480,8 @@ reproduces the pre-fix behaviour rather than copying pre-fix code.
   ignores `chat_template_kwargs`, so with `--thinking off` the script also sends `reasoning_effort: "none"`
   to any non-HF endpoint. A local MLX quantization is not the trainer's serving stack, so local numbers are
   a relative signal, not the calibration of record. `--fault-kind real|injected` forces the bug-fix fault
-  source for per-tier calibration.
+  source for per-tier calibration. The default task list is the software-engineering cells; `--domain-cells`
+  adds every domain cell, and `--each-corpus` pins each cell to each function of its own domain.
 - The submission request is rendered and checked with the same discipline as rUv's MetaHarness entry:
   exact image digest, anonymous pull, `openenv validate`, `/schema` equality, and native replay of
   every task ID.
@@ -474,6 +510,10 @@ package lives under `scripts/`, not `qe_arena/`, so none of it ships in the imag
   credit counts). The arena plays 5 episodes of one task per step and trains on the first 4 with a valid
   reward; its contract has no seed and an unseeded reset here draws a fresh instance, so same-seed groups
   understate mixing. A repeated `(task, seed, corpus, attempt)` key across files is a hard error.
+- **`stats`** also pools each arena domain's cells (each row judged by its own cell's limits), so the
+  domains the arena scores can be compared. **`domain-template`** extends a task template with the domain
+  cells, each copying the limits of its software-engineering base cell (same family and level); a cell
+  whose base cell is not in the template is skipped and named.
 - **`select`** keeps a cell when its posterior-mean `p_mix@4` is at least `--min-mixed` (0.15), then
   Thompson-samples by the default objective `projected` (`p_mix@G`, G = 4; `--objective group` uses the
   same-seed posterior). The gate is a posterior mean, so evidence matters: 0/8 scores 0.18 and stays

@@ -29,7 +29,7 @@ from cryptography.hazmat.primitives import serialization  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: E402
 
 from qe_arena import manifest  # noqa: E402
-from qe_arena.tasks import TASK_IDS  # noqa: E402
+from qe_arena.tasks import ALL_TASK_IDS  # noqa: E402
 
 
 def _passphrase(env: str | None) -> bytes | None:
@@ -65,7 +65,7 @@ def _tasks(args: argparse.Namespace) -> list[tuple[str, int]]:
         task_id, _, seed = item.partition(":")
         pairs.append((task_id, int(seed)))
     if args.task_ids:
-        ids = TASK_IDS if args.task_ids == "all" else args.task_ids.split(",")
+        ids = ALL_TASK_IDS if args.task_ids == "all" else args.task_ids.split(",")
         lo, _, hi = (args.seeds or "0").partition("-")
         seeds = range(int(lo), int(hi or lo) + 1)
         pairs += [(task_id, seed) for task_id in ids for seed in seeds]

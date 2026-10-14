@@ -4,6 +4,7 @@ META = {
     "entry": "spec_readiness_score",
     "origin": "proffesor-for-testing/sentinel-api-testing@704f47fbc4d2d75ed9261f9a602d76aea930d01b:sentinel_backend/spec_service/app_factory.py",
     "tags": ["api", "openapi", "scoring"],
+    "domain": "software-engineering",
 }
 
 

@@ -7,6 +7,9 @@ An entry whose META has ``real_faults`` is a real-bug entry: the function is the
 and each real fault records the pre-fix logic as an exact text replacement in ``function_source``.
 Real-bug entries are served only by the qe_bugfix real tier (``REAL_NAMES``); the injected tiers and
 qe_mutant_kill draw from ``INJECTED_NAMES``.
+
+``META["domain"]`` names the arena domain the code belongs to (``qe_arena.domains.DOMAINS``). A task
+cell draws only entries of its own domain (``domain_names``).
 """
 from __future__ import annotations
 
@@ -16,6 +19,8 @@ import pkgutil
 import random
 from dataclasses import dataclass
 from pathlib import Path
+
+from ..domains import DOMAINS, SOFTWARE
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
 
@@ -42,6 +47,7 @@ class CorpusEntry:
     source: str
     function_source: str
     summary: str
+    domain: str = SOFTWARE
     real_faults: tuple[RealFault, ...] = ()
 
 
@@ -99,6 +105,8 @@ def _load_entries() -> dict[str, CorpusEntry]:
         module = importlib.import_module(f"{__name__}.{name}")
         text = (_PACKAGE_DIR / f"{name}.py").read_text(encoding="utf-8")
         meta = module.META
+        if meta.get("domain") not in DOMAINS:
+            raise ValueError(f"corpus entry {name}: META domain must be one of {DOMAINS}, got {meta.get('domain')!r}")
         entries[name] = CorpusEntry(
             name=name,
             entry=meta["entry"],
@@ -107,6 +115,7 @@ def _load_entries() -> dict[str, CorpusEntry]:
             source=text,
             function_source=extract_function_source(text),
             summary=_summary(text),
+            domain=meta["domain"],
             real_faults=tuple(RealFault(**fault) for fault in meta.get("real_faults", ())),
         )
     return entries
@@ -115,6 +124,13 @@ def _load_entries() -> dict[str, CorpusEntry]:
 ENTRIES: dict[str, CorpusEntry] = _load_entries()
 REAL_NAMES: tuple[str, ...] = tuple(name for name, e in ENTRIES.items() if e.real_faults)
 INJECTED_NAMES: tuple[str, ...] = tuple(name for name, e in ENTRIES.items() if not e.real_faults)
+
+
+def domain_names(domain: str, names: tuple[str, ...] = INJECTED_NAMES) -> tuple[str, ...]:
+    """The entries of ``names`` that belong to ``domain``, in their original (sorted) order."""
+    if domain not in DOMAINS:
+        raise ValueError(f"unknown domain: {domain!r}")
+    return tuple(name for name in names if ENTRIES[name].domain == domain)
 
 
 def _module(name: str):
@@ -135,4 +151,4 @@ def gen_inputs(name: str, seed: int, n: int) -> list[list]:
 
 
 __all__ = ["CorpusEntry", "ENTRIES", "INJECTED_NAMES", "REAL_NAMES", "RealFault", "call_reference",
-           "extract_function_source", "gen_inputs"]
+           "domain_names", "extract_function_source", "gen_inputs"]

@@ -6,6 +6,7 @@ META = {
     "entry": "glob_match",
     "origin": "proffesor-for-testing/agentic-qe@214a5bc881fe4ad6324e243c9d9c2c24baae5295:src/shared/io/file-reader.ts",
     "tags": ["glob", "parsing", "paths"],
+    "domain": "software-engineering",
 }
 
 

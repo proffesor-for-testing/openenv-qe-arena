@@ -5,6 +5,7 @@ META = {
     "entry": "chat_completion_result",
     "origin": "ruvnet/RuVector@32033a8bc0d4d92e0ea644fce98eef4bb5c6bfef:crates/ruvllm-cli/src/commands/serve.rs",
     "tags": ["llm", "api", "accounting"],
+    "domain": "software-engineering",
     "real_faults": [
         {"id": "chat_completion_result/always-stop", "kind": "constant-field", "origin": PRE_FIX,
          "summary": "finish_reason is always stop, even when max_tokens cut the reply or generation failed",

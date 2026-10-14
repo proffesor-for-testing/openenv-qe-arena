@@ -6,6 +6,7 @@ META = {
     "entry": "maintainability_index",
     "origin": "proffesor-for-testing/lionagi-qe-fleet@ce1d58750a240a16c3c53abcb8a7c73864e98c99:docs/reports/analyze_complexity.py",
     "tags": ["code-metrics", "math"],
+    "domain": "software-engineering",
 }
 
 

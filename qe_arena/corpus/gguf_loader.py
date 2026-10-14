@@ -5,6 +5,7 @@ META = {
     "entry": "gguf_loader",
     "origin": "ruvnet/RuVector@32033a8bc0d4d92e0ea644fce98eef4bb5c6bfef:crates/ruvllm/src/backends/gguf_arch/mod.rs",
     "tags": ["llm", "dispatch", "validation"],
+    "domain": "software-engineering",
     "real_faults": [
         {"id": "gguf_loader/no-split-check", "kind": "missing-guard", "origin": PRE_FIX,
          "summary": "a split (multi-part) GGUF is not rejected",

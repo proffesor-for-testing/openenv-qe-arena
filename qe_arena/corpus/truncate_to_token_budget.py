@@ -4,6 +4,7 @@ META = {
     "entry": "truncate_to_token_budget",
     "origin": "proffesor-for-testing/sentinel-api-testing@704f47fbc4d2d75ed9261f9a602d76aea930d01b:sentinel_backend/llm_providers/utils/token_counter.py",
     "tags": ["llm", "strings", "binary-search"],
+    "domain": "software-engineering",
 }
 
 

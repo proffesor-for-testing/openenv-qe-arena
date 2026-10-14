@@ -11,8 +11,11 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import sys
 from collections import Counter, defaultdict
+
+from qe_arena.domains import BY_SLUG, SOFTWARE
 
 PRIOR = 0.5  # Jeffreys: Beta(0.5, 0.5)
 CI = 0.90
@@ -154,6 +157,25 @@ def is_excluded(row: dict, limits: dict | None = None) -> bool:
     return episode_status(row, limits) in ("error", "harness_budget", "under_limit")
 
 
+CELL_RE = re.compile(r"(qe_[a-z_]+)-(?:([a-z]+)-)?(d\d)")
+
+
+def cell_domain(task_id: str) -> str:
+    """The arena domain a cell draws its corpus from: the slug between family and level, none for software."""
+    match = CELL_RE.fullmatch(task_id)
+    if match is None:
+        return "unknown"
+    return SOFTWARE if match.group(2) is None else BY_SLUG.get(match.group(2), "unknown")
+
+
+def base_cell(task_id: str) -> str:
+    """The software-engineering cell with the same family and level (the task ID without its domain slug)."""
+    match = CELL_RE.fullmatch(task_id)
+    if match is None:
+        raise ValueError(f"not a task cell: {task_id!r}")
+    return f"{match.group(1)}-{match.group(3)}"
+
+
 def template_limits(template: list[dict] | None) -> dict:
     return {e["task_id"]: {k: e.get(k) for k in CALIBRATE_LIMITS} for e in (template or [])}
 
@@ -166,11 +188,16 @@ def all_equal(rewards: list[float]) -> bool:
     return len({round(float(r), 9) for r in rewards}) <= 1
 
 
-def summarize(rows: list[dict], by_corpus: bool = True, limits: dict | None = None) -> dict:
-    """Stats for one cell. Same-seed groups are (task_id, seed[, corpus]) across attempts and need two
-    valid episodes; the projection treats every valid episode as one fresh instance."""
-    status = Counter(episode_status(r, limits) for r in rows)
-    valid = [r for r in rows if not is_excluded(r, limits)]
+def summarize(rows: list[dict], by_corpus: bool = True, limits: dict | None = None,
+              limits_by_cell: dict | None = None) -> dict:
+    """Stats for one cell, or for several when ``limits_by_cell`` gives each row its own cell's limits.
+    Same-seed groups are (task_id, seed[, corpus]) across attempts and need two valid episodes; the
+    projection treats every valid episode as one fresh instance."""
+    def row_limits(r: dict) -> dict | None:
+        return limits if limits_by_cell is None else limits_by_cell.get(r["task_id"])
+
+    status = Counter(episode_status(r, row_limits(r)) for r in rows)
+    valid = [r for r in rows if not is_excluded(r, row_limits(r))]
     rewards = [float(r["reward"]) for r in valid]
     groups = defaultdict(list)
     for r in valid:
@@ -195,16 +222,20 @@ def summarize(rows: list[dict], by_corpus: bool = True, limits: dict | None = No
 
 
 def compute_stats(rows: list[dict], template: list[dict] | None = None) -> dict:
-    """Per cell and per (cell, corpus). ``template`` supplies the submitted limits that decide whether a
-    per-episode budget end is a failure or an artefact; without it every such end is an artefact."""
+    """Per cell, per arena domain (all its cells pooled) and per (cell, corpus). ``template`` supplies the
+    submitted limits that decide whether a per-episode budget end is a failure or an artefact; without it
+    every such end is an artefact."""
     limits = template_limits(template)
     cells = defaultdict(list)
+    domains = defaultdict(list)
     per_corpus = defaultdict(list)
     for r in rows:
         cells[r["task_id"]].append(r)
+        domains[cell_domain(r["task_id"])].append(r)
         if r.get("corpus") is not None:
             per_corpus[(r["task_id"], r["corpus"])].append(r)
     out = {"cells": {t: summarize(rs, limits=limits.get(t)) for t, rs in sorted(cells.items())},
+           "domains": {d: summarize(rs, limits_by_cell=limits) for d, rs in sorted(domains.items())},
            "cell_corpus": {f"{t}|{c}": summarize(rs, limits=limits.get(t)) for (t, c), rs in sorted(per_corpus.items())}}
     under = sum(c["under_limit"] for c in out["cells"].values())
     if under:
@@ -231,7 +262,8 @@ def print_stats(stats: dict, out=None) -> None:
     header = (f"{'cell':<42}{'eps':>4}{'err':>4}{'bud':>4} {'mean':>5}  {'solve k/n post [90%]':<26}"
               f"{'same-seed inf k/n post [90%]':<31}{'sizes':<7}"
               + "".join(f"{'p_mix@' + str(g):>8}" for g in PROJECTED_GROUPS) + f"{'inv/step':>9}  ends")
-    for title, table in (("per cell", stats["cells"]), ("per (cell, corpus function)", stats["cell_corpus"])):
+    for title, table in (("per cell", stats["cells"]), ("per arena domain (its cells pooled)", stats.get("domains", {})),
+                         ("per (cell, corpus function)", stats["cell_corpus"])):
         if not table:
             continue
         print(f"\n{title}  (Jeffreys posteriors)\n{LEGEND}", file=out)
