@@ -311,21 +311,51 @@ def test_an_empty_scan_never_counts_when_the_kill_helper_failed(monkeypatch):
     assert shell._kill_uid(shell.UID_POOL[0]) is False
 
 
-def test_a_stopped_kill_helper_times_out_and_fails(monkeypatch):
+
+def test_the_episode_cannot_signal_trace_or_read_the_kill_helper():
+    import subprocess
+
+    ws = shell.Workspace({})
+    killer = ws.uid + shell.KILLER_UID_OFFSET
+    helper_like = subprocess.Popen(  # the helper's credentials, kept alive long enough to probe
+        [sys.executable, "-I", "-S", "-c",
+         f"import os, time; os.setgroups([]); os.setresgid({killer}, {killer}, {killer}); "
+         f"os.setresuid({killer}, {ws.uid}, {killer}); time.sleep(30)"], env={"QE_SECRET": "s3cret"})
+    time.sleep(0.3)
+    pid = helper_like.pid
+    try:
+        result = run(ws, f"kill -STOP {pid}; kill -9 {pid}; cat /proc/{pid}/environ; "
+                         f"grep -q '^State:.*[RS]' /proc/{pid}/status && echo STILL_RUNNING; "
+                         "python3 -c \"import ctypes; print('attach', ctypes.CDLL(None).ptrace(16, " + str(pid)
+                         + ", 0, 0))\"")
+        assert result.output.count("not permitted") >= 2, result.output
+        assert "s3cret" not in result.output and "attach -1" in result.output, result.output
+        assert "STILL_RUNNING" in result.output, result.output  # neither stopped nor killed by the episode
+    finally:
+        helper_like.kill()
+        helper_like.wait()
+        ws.close()
+
+
+def test_a_kill_helper_that_hangs_or_cannot_start_fails_closed(monkeypatch):
     monkeypatch.setattr(shell, "KILL_HELPER_TIMEOUT_S", 0.3)
-    real_fork = os.fork
-
-    def fork_then_stop():
-        pid = real_fork()
-        if pid == 0:
-            os.kill(os.getpid(), __import__("signal").SIGSTOP)
-        return pid
-
-    monkeypatch.setattr(shell.os, "fork", fork_then_stop)
+    monkeypatch.setattr(shell, "_KILL_ALL", "import time; time.sleep(30)")
     started = time.monotonic()
-    assert shell._kill_as(shell.UID_POOL[0]) is False
-    assert time.monotonic() - started < 3
+    assert shell._kill_as(shell.UID_POOL[0]) is False and time.monotonic() - started < 3
+    monkeypatch.undo()
 
+    def no_fork(*args, **kwargs):
+        raise BlockingIOError(11, "Resource temporarily unavailable")
+
+    monkeypatch.setattr(shell.subprocess, "Popen", no_fork)
+    assert shell._kill_uid(shell.UID_POOL[0]) is False
+    monkeypatch.undo()
+
+    def scan_error(uid):
+        raise OSError("proc unreadable")
+
+    monkeypatch.setattr(shell, "_uid_pids", scan_error)
+    assert shell._kill_uid(shell.UID_POOL[0]) is False
 
 def test_a_failed_per_command_cleanup_quarantines_the_uid_at_close(monkeypatch):
     ws = shell.Workspace({})

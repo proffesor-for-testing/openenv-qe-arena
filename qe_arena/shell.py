@@ -38,7 +38,6 @@ import sys
 import tempfile
 import threading
 import time
-import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -46,7 +45,7 @@ log = logging.getLogger(__name__)
 
 EXEC_TIMEOUT_S = 30.0
 IO_TIMEOUT_S = 10.0
-KILL_HELPER_TIMEOUT_S = 2.0
+KILL_HELPER_TIMEOUT_S = 5.0
 EXIT_GRACE_S = 0.5  # after the command exits, how long background holders of its output may keep writing
 MAX_OUTPUT_BYTES = 8192  # about 2-3k tokens: a careless cat still costs budget, as in the eval
 MAX_COMMAND_BYTES = 16384
@@ -254,52 +253,54 @@ def _uid_pids(uid: int) -> list[int]:
     return pids
 
 
-def _kill_as(uid: int) -> bool:
-    """Fork a child that becomes ``uid`` and sends kill(-1, SIGKILL); True only if it exited 0 in time.
+KILLER_UID_OFFSET = 10_000  # each episode uid's kill helper runs with real/saved uid uid + this
+_KILL_ALL = ("import os, signal, sys\n"
+             "killer, uid = int(sys.argv[1]), int(sys.argv[2])\n"
+             "os.setgroups([])\n"
+             "os.setresgid(killer, killer, killer)\n"
+             "os.setresuid(killer, uid, killer)\n"
+             "try:\n"
+             "    os.kill(-1, signal.SIGKILL)\n"
+             "except ProcessLookupError:\n"
+             "    pass\n")
 
-    kill(-1) reaches every process the uid may signal in one pass under the task-list lock, so a fork cannot
-    slip past it, and no pid is ever signalled as root. The child never execs: it changes uid and makes two
-    syscalls, and the kernel marks it non-dumpable when its uid changes, so the episode cannot ptrace it. The
-    episode can still kill or stop it; that is a failed attempt, never a success, and a stopped child is our
-    own unreaped child, which root may kill without any pid-reuse race."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)  # fork with threads: the child only makes syscalls
-        pid = os.fork()
-    if pid == 0:
-        code = 1
-        try:
-            os.setgroups([])
-            os.setresgid(uid, uid, uid)
-            os.setresuid(uid, uid, uid)
-            try:
-                os.kill(-1, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            code = 0
-        finally:
-            os._exit(code)
-    deadline = time.monotonic() + KILL_HELPER_TIMEOUT_S
-    while True:
-        done, status = os.waitpid(pid, os.WNOHANG)
-        if done:
-            return os.waitstatus_to_exitcode(status) == 0
-        if time.monotonic() >= deadline:
-            os.kill(pid, signal.SIGKILL)  # our own child, not yet reaped: its pid cannot have been reused
-            os.waitpid(pid, 0)
-            return False
-        time.sleep(0.005)
+
+def _kill_as(uid: int) -> bool:
+    """Run a helper that sends kill(-1, SIGKILL) for ``uid``; True only if it exited 0 in time.
+
+    The helper starts as root and switches to real and saved uid ``uid + KILLER_UID_OFFSET`` with effective
+    uid ``uid`` (no capabilities remain). kill(-1) then reaches every process whose real or saved uid is
+    ``uid``, in one pass under the task-list lock, so a fork cannot slip past it and no pid is ever signalled
+    as root; root's processes and other episodes' are out of reach. The episode cannot signal, trace or read
+    the helper at any point: before the switch it is root, after it its real and saved uid are not the
+    episode's. A timeout kills our own unreaped child, which has no pid-reuse race."""
+    try:
+        proc = subprocess.Popen([sys.executable, "-I", "-S", "-c", _KILL_ALL, str(uid + KILLER_UID_OFFSET), str(uid)],
+                                env={}, cwd="/", stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, close_fds=True)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    try:
+        return proc.wait(timeout=KILL_HELPER_TIMEOUT_S) == 0
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        return False
 
 
 def _kill_uid(uid: int) -> bool:
-    """SIGKILL every process of ``uid``; True only when a kill(-1) as that uid completed and /proc then shows
-    nothing live. A scan alone never counts: it can miss a child forked while it ran."""
-    for _ in range(20):
-        if _kill_as(uid):
-            for _ in range(20):  # SIGKILL is queued; let the targets finish dying
-                if not _uid_pids(uid):
-                    return True
-                time.sleep(0.01)
-        time.sleep(0.05)
+    """SIGKILL every process of ``uid``; True only when a kill(-1) for that uid completed and /proc then shows
+    nothing live. A scan alone never counts: it can miss a child forked while it ran. Any error is a failure."""
+    try:
+        for _ in range(10):
+            if _kill_as(uid):
+                for _ in range(20):  # SIGKILL is queued; let the targets finish dying
+                    if not _uid_pids(uid):
+                        return True
+                    time.sleep(0.01)
+            time.sleep(0.05)
+    except Exception:  # noqa: BLE001 - an unexpected failure must read as unclean, never as clean
+        log.exception("shell uid %s kill failed", uid)
     return False
 
 

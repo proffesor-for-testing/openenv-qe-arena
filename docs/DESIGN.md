@@ -252,7 +252,7 @@ OpenEnv's `tbench2_env`, which the arena's evaluation probably uses:
   expected values. At 32 actions the episode is graded as it stands (the arena's `finish_action` is `evaluate`).
 - **Isolation is the operating system's.** The server runs as root only to give each episode its own uid
   (20000–20062) and a 0700 workspace; commands, writes and the graded-file read run as that uid, under ulimits,
-  with a scrubbed environment and umask 077, and every process of the uid is killed after each command (kill(-1) sent as that uid by a forked, non-dumpable helper that never execs, so a fork cannot slip past a /proc scan, no recycled pid is signalled as root, and the episode cannot trace the helper; a helper the episode kills or stops counts as a failed cleanup). `/app`
+  with a scrubbed environment and umask 077, and every process of the uid is killed after each command (kill(-1) from a helper whose effective uid is the episode's but whose real and saved uid is a separate killer uid, so a fork cannot slip past a /proc scan, no recycled pid is signalled as root, and the episode can neither signal, trace nor read the helper; only "helper exited 0, then /proc shows nothing live" counts as clean). `/app`
   and the WASI runtime are 0700 root, so the corpus (the reference implementations) is unreadable. The shared
   world-writable directories are locked, so the workspace is the only writable place. An unprivileged seccomp
   filter allows only AF_UNIX sockets (no network, not even loopback to the server) and denies io_uring,
