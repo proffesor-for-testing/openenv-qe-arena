@@ -10,11 +10,17 @@ process; it never appears in argv, output or logs.
     python scripts/calibrate.py --task-id qe_bugfix-d1 --attempts 4 --seeds 2 \
         --output runs/cal.jsonl --max-total-tokens 2000000 --execute
 
---strict scores an episode as the arena does: a reply that is not exactly one JSON object
-(json.loads of the stripped reply must give a dict; prose, fences or a second object fail) ends it with
-reward 0. The episode still plays on under the lenient parser, so each row records both: ``reward`` (strict),
-``lenient_reward``, ``strict_end`` and ``strict_end_step``, plus ``finish_reward``, what the arena's
-finish_action ({"op": "submit", "answer": {}}) would have scored at that point (a bug fix keeps its edits).
+Episodes are scored as the arena's guide says (AGENTS.md, "Replies" and "Budgets"):
+
+- An episode that does not end by itself (step cap, completion or context budget) is still scored, through
+  finish_action ({"op": "submit", "answer": {}}): a bug fix keeps its edits. ``end_finish`` marks those rows.
+- ``completion_tokens`` covers the model's tokens and every observation after the first, so it is measured from
+  the API's usage as (prompt + completion) - first prompt; ``context_tokens`` covers the whole conversation.
+  A reply or observation that pushes either over its budget ends the episode before that reply counts.
+- --strict: a reply that is not exactly one JSON object (json.loads of the stripped reply must give a dict;
+  prose, fences or a second object fail) ends the episode, which is then scored through finish_action at that
+  point. The episode still plays on under the lenient parser, so each row records both: ``reward`` (strict),
+  ``lenient_reward``, ``strict_end``, ``strict_end_step`` and ``finish_reward`` (the strict-end score).
 """
 
 from __future__ import annotations
@@ -145,21 +151,30 @@ def run_episode(args, token: str, budget: Budget, task_id: str, seed: int, attem
               "strict_end": False, "strict_end_step": None, "finish_reward": None,
               "episode_completion_tokens": args.episode_completion_tokens,
               "episode_context_tokens": args.episode_context_tokens, "max_steps": args.max_steps,
-              "completion_tokens": 0, "prompt_tokens_last": 0, "prompt_tokens_max": 0, "end": "", "reward": 0.0}
+              "completion_tokens": 0, "generated_tokens": 0, "first_prompt_tokens": None,
+              "prompt_tokens_last": 0, "prompt_tokens_max": 0, "context_tokens_max": 0,
+              "end": "", "end_finish": False, "reward": 0.0}
     while True:
-        if record["completion_tokens"] >= args.episode_completion_tokens:
-            record["end"] = "completion_budget"
-            break
         reply = chat(args, token, messages)
         usage = reply.get("usage") or {}
-        record["completion_tokens"] += int(usage.get("completion_tokens", 0))
-        record["prompt_tokens_last"] = int(usage.get("prompt_tokens", 0))
-        record["prompt_tokens_max"] = max(record["prompt_tokens_max"], record["prompt_tokens_last"])
+        prompt_tokens, generated = int(usage.get("prompt_tokens", 0)), int(usage.get("completion_tokens", 0))
+        if record["first_prompt_tokens"] is None:
+            record["first_prompt_tokens"] = prompt_tokens
+        record["generated_tokens"] += generated
+        record["prompt_tokens_last"] = prompt_tokens
+        record["prompt_tokens_max"] = max(record["prompt_tokens_max"], prompt_tokens)
         if not budget.charge(int(usage.get("total_tokens", 0))):
-            record["end"] = "global_budget"
+            record["end"], record["reward"] = "global_budget", None  # our own ceiling, not an arena outcome
             break
-        if record["prompt_tokens_last"] > args.episode_context_tokens:
+        conversation = prompt_tokens + generated
+        record["context_tokens_max"] = max(record["context_tokens_max"], conversation)
+        # The arena's completion budget: the model's tokens plus every observation after the first.
+        record["completion_tokens"] = conversation - record["first_prompt_tokens"]
+        if conversation > args.episode_context_tokens:
             record["end"] = "context_budget"
+            break
+        if record["completion_tokens"] > args.episode_completion_tokens:
+            record["end"] = "completion_budget"
             break
         text = (reply["choices"][0]["message"].get("content") or "")
         messages.append({"role": "assistant", "content": text})
@@ -190,9 +205,11 @@ def run_episode(args, token: str, budget: Budget, task_id: str, seed: int, attem
             record["end"] = "step_cap"
             break
         messages.append({"role": "user", "content": obs_text})
+    if record["end"] in ("step_cap", "context_budget", "completion_budget"):
+        record["reward"], record["end_finish"] = finish_reward(env), True  # the arena still scores it
     record["lenient_reward"] = record["reward"]
     if args.strict and record["strict_end"]:
-        record["reward"] = 0.0
+        record["reward"] = record["finish_reward"]  # the episode ended there; finish_action scored it
     record["seconds"] = round(time.time() - started, 1)
     record["messages"] = messages
     return record
@@ -205,7 +222,7 @@ def main(argv=None) -> int:
     parser.add_argument("--thinking", choices=["on", "off"], default="off")
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--max-tokens", type=int, default=1024, help="per reply")
-    parser.add_argument("--max-steps", type=int, default=12)
+    parser.add_argument("--max-steps", type=int, default=16, help="tool calls per episode (tool_calls_total)")
     parser.add_argument("--episode-completion-tokens", type=int, default=4096)
     parser.add_argument("--episode-context-tokens", type=int, default=8192)
     parser.add_argument("--task-id", action="append",
@@ -225,7 +242,8 @@ def main(argv=None) -> int:
     parser.add_argument("--fault-kind", choices=["injected", "real"], default=None,
                         help="force the qe_bugfix fault source (default: the environment's own mix)")
     parser.add_argument("--strict", action="store_true",
-                        help="score as the arena: a reply that is not exactly one JSON object ends the episode, reward 0")
+                        help="score as the arena: a reply that is not exactly one JSON object ends the episode, "
+                             "which finish_action then scores")
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args(argv)
     tasks = (args.task_id or TASK_IDS) + (DOMAIN_TASK_IDS if args.domain_cells else [])
