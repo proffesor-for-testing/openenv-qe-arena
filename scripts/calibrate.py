@@ -10,11 +10,21 @@ process; it never appears in argv, output or logs.
     python scripts/calibrate.py --task-id qe_bugfix-d1 --attempts 4 --seeds 2 \
         --output runs/cal.jsonl --max-total-tokens 2000000 --execute
 
---strict scores an episode as the arena does: a reply that is not exactly one JSON object
-(json.loads of the stripped reply must give a dict; prose, fences or a second object fail) ends it with
-reward 0. The episode still plays on under the lenient parser, so each row records both: ``reward`` (strict),
-``lenient_reward``, ``strict_end`` and ``strict_end_step``, plus ``finish_reward``, what the arena's
-finish_action ({"op": "submit", "answer": {}}) would have scored at that point (a bug fix keeps its edits).
+Episodes are scored as the arena's guide says (AGENTS.md, "Replies" and "Budgets"):
+
+- An episode that does not end by itself (step cap, completion or context budget) is still scored, through
+  finish_action ({"op": "submit", "answer": {}}): a bug fix keeps its edits. ``end_finish`` marks those rows.
+- ``completion_tokens`` covers the model's tokens and every observation after the first, so it is measured from
+  the API's usage as (prompt + completion) - first prompt; ``context_tokens`` covers the whole conversation.
+  A reply or observation that pushes either over its budget ends the episode before that reply counts.
+- --interface terminal drives the terminal environment (qe_arena/terminal_env.py) instead: actions are exec /
+  write_file / evaluate, finish_action is {"action_type": "evaluate"} and the step cap defaults to its 32. Its
+  commands run in a real shell, so this refuses to start unless the shell is uid-isolated, i.e. inside the
+  terminal image as root; see docs/DESIGN.md, "Terminal interface".
+- --strict: a reply that is not exactly one JSON object (json.loads of the stripped reply must give a dict;
+  prose, fences or a second object fail) ends the episode, which is then scored through finish_action at that
+  point. The episode still plays on under the lenient parser, so each row records both: ``reward`` (strict),
+  ``lenient_reward``, ``strict_end``, ``strict_end_step`` and ``finish_reward`` (the strict-end score).
 """
 
 from __future__ import annotations
@@ -36,8 +46,15 @@ from threading import Lock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from qe_arena import shell  # noqa: E402
 from qe_arena.environment import QEAction, QEEnvironment  # noqa: E402
 from qe_arena.tasks import DOMAIN_TASK_IDS, TASK_IDS, cell_names, parse_task_id  # noqa: E402
+from qe_arena.terminal_env import MAX_STEPS as TERMINAL_STEPS  # noqa: E402
+from qe_arena.terminal_env import TERMINAL_TASK_IDS, TerminalAction, TerminalEnvironment  # noqa: E402
+
+# Names, resolved per episode, so a test can substitute the environment class.
+INTERFACES = {"json": ("QEEnvironment", "QEAction", "op", "submit"),
+              "terminal": ("TerminalEnvironment", "TerminalAction", "action_type", "evaluate")}
 
 SYSTEM = ("Solve the task with the available tools. Each reply must be exactly one JSON action object, "
           "with no markdown. Action schema: ")
@@ -118,8 +135,10 @@ def parse_strict(text: str) -> dict | None:
     return value if isinstance(value, dict) else None
 
 
-def finish_reward(env: QEEnvironment) -> float:
-    """What finish_action would score now, on a copy so the lenient episode plays on unchanged."""
+def finish_reward(env) -> float:
+    """What finish_action would score now, without changing the episode, so the lenient episode plays on."""
+    if isinstance(env, TerminalEnvironment):
+        return env.peek_reward()  # a deep copy would share, and on evaluate delete, the live workspace
     probe = copy.deepcopy(env)
     obs = probe.step(QEAction(op="submit", answer={}))
     return float(obs.reward or 0.0)
@@ -132,10 +151,20 @@ def observation_text(obs) -> str:
 
 def run_episode(args, token: str, budget: Budget, task_id: str, seed: int, attempt: int,
                 corpus_name: str | None = None) -> dict:
-    env = QEEnvironment(corpus_pool=(corpus_name,) if corpus_name else None, fault_kind=args.fault_kind)
+    env_name, action_name, op_field, finish_op = INTERFACES[getattr(args, "interface", "json")]
+    env_class, action_class = globals()[env_name], globals()[action_name]
+    env = env_class(corpus_pool=(corpus_name,) if corpus_name else None, fault_kind=args.fault_kind)
+    try:
+        return _play(args, token, budget, task_id, seed, attempt, env, action_class, op_field, finish_op)
+    finally:
+        if hasattr(env, "close"):
+            env.close()
+
+
+def _play(args, token, budget, task_id, seed, attempt, env, action_class, op_field, finish_op) -> dict:
     started = time.time()
     obs = env.reset(seed=seed, task_id=task_id)
-    schema = json.dumps(QEAction.model_json_schema(), separators=(",", ":"))
+    schema = json.dumps(action_class.model_json_schema(), separators=(",", ":"))
     messages = [{"role": "system", "content": SYSTEM + schema},
                 {"role": "user", "content": observation_text(obs)}]
     record = {"task_id": task_id, "seed": seed, "attempt": attempt, "corpus": env._task.private["corpus"],
@@ -145,21 +174,30 @@ def run_episode(args, token: str, budget: Budget, task_id: str, seed: int, attem
               "strict_end": False, "strict_end_step": None, "finish_reward": None,
               "episode_completion_tokens": args.episode_completion_tokens,
               "episode_context_tokens": args.episode_context_tokens, "max_steps": args.max_steps,
-              "completion_tokens": 0, "prompt_tokens_last": 0, "prompt_tokens_max": 0, "end": "", "reward": 0.0}
+              "completion_tokens": 0, "generated_tokens": 0, "first_prompt_tokens": None,
+              "prompt_tokens_last": 0, "prompt_tokens_max": 0, "context_tokens_max": 0,
+              "end": "", "end_finish": False, "reward": 0.0}
     while True:
-        if record["completion_tokens"] >= args.episode_completion_tokens:
-            record["end"] = "completion_budget"
-            break
         reply = chat(args, token, messages)
         usage = reply.get("usage") or {}
-        record["completion_tokens"] += int(usage.get("completion_tokens", 0))
-        record["prompt_tokens_last"] = int(usage.get("prompt_tokens", 0))
-        record["prompt_tokens_max"] = max(record["prompt_tokens_max"], record["prompt_tokens_last"])
+        prompt_tokens, generated = int(usage.get("prompt_tokens", 0)), int(usage.get("completion_tokens", 0))
+        if record["first_prompt_tokens"] is None:
+            record["first_prompt_tokens"] = prompt_tokens
+        record["generated_tokens"] += generated
+        record["prompt_tokens_last"] = prompt_tokens
+        record["prompt_tokens_max"] = max(record["prompt_tokens_max"], prompt_tokens)
         if not budget.charge(int(usage.get("total_tokens", 0))):
-            record["end"] = "global_budget"
+            record["end"], record["reward"] = "global_budget", None  # our own ceiling, not an arena outcome
             break
-        if record["prompt_tokens_last"] > args.episode_context_tokens:
+        conversation = prompt_tokens + generated
+        record["context_tokens_max"] = max(record["context_tokens_max"], conversation)
+        # The arena's completion budget: the model's tokens plus every observation after the first.
+        record["completion_tokens"] = conversation - record["first_prompt_tokens"]
+        if conversation > args.episode_context_tokens:
             record["end"] = "context_budget"
+            break
+        if record["completion_tokens"] > args.episode_completion_tokens:
+            record["end"] = "completion_budget"
             break
         text = (reply["choices"][0]["message"].get("content") or "")
         messages.append({"role": "assistant", "content": text})
@@ -176,7 +214,7 @@ def run_episode(args, token: str, budget: Budget, task_id: str, seed: int, attem
             obs_text = json.dumps({"error": "invalid action: reply with exactly one JSON action object"})
         else:
             try:
-                obs = env.step(QEAction(**action))
+                obs = env.step(action_class(**action))
                 obs_text = observation_text(obs)
             except Exception as error:  # pydantic validation of a malformed action
                 record["invalid"] += 1
@@ -184,15 +222,17 @@ def run_episode(args, token: str, budget: Budget, task_id: str, seed: int, attem
                 obs = None
         if obs is not None and obs.done:
             record["reward"] = float(obs.reward or 0.0)
-            record["end"] = "submit" if action and action.get("op") == "submit" else "terminal"
+            record["end"] = "submit" if action and action.get(op_field) == finish_op else "terminal"
             break
         if record["steps"] >= args.max_steps:
             record["end"] = "step_cap"
             break
         messages.append({"role": "user", "content": obs_text})
+    if record["end"] in ("step_cap", "context_budget", "completion_budget"):
+        record["reward"], record["end_finish"] = finish_reward(env), True  # the arena still scores it
     record["lenient_reward"] = record["reward"]
     if args.strict and record["strict_end"]:
-        record["reward"] = 0.0
+        record["reward"] = record["finish_reward"]  # the episode ended there; finish_action scored it
     record["seconds"] = round(time.time() - started, 1)
     record["messages"] = messages
     return record
@@ -205,7 +245,9 @@ def main(argv=None) -> int:
     parser.add_argument("--thinking", choices=["on", "off"], default="off")
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--max-tokens", type=int, default=1024, help="per reply")
-    parser.add_argument("--max-steps", type=int, default=12)
+    parser.add_argument("--interface", choices=sorted(INTERFACES), default="json")
+    parser.add_argument("--max-steps", type=int, default=None,
+                        help="tool calls per episode (tool_calls_total); default 16, or 32 for the terminal")
     parser.add_argument("--episode-completion-tokens", type=int, default=4096)
     parser.add_argument("--episode-context-tokens", type=int, default=8192)
     parser.add_argument("--task-id", action="append",
@@ -225,12 +267,20 @@ def main(argv=None) -> int:
     parser.add_argument("--fault-kind", choices=["injected", "real"], default=None,
                         help="force the qe_bugfix fault source (default: the environment's own mix)")
     parser.add_argument("--strict", action="store_true",
-                        help="score as the arena: a reply that is not exactly one JSON object ends the episode, reward 0")
+                        help="score as the arena: a reply that is not exactly one JSON object ends the episode, "
+                             "which finish_action then scores")
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args(argv)
+    terminal = args.interface == "terminal"
+    if args.max_steps is None:
+        args.max_steps = TERMINAL_STEPS if terminal else 16
     tasks = (args.task_id or TASK_IDS) + (DOMAIN_TASK_IDS if args.domain_cells else [])
+    if terminal and not args.task_id:
+        tasks = [t for t in tasks if t in TERMINAL_TASK_IDS]
     for task_id in tasks:
         parse_task_id(task_id)
+        if terminal and task_id not in TERMINAL_TASK_IDS:
+            parser.error(f"{task_id} is not served by the terminal interface")
     if len(set(tasks)) != len(tasks):
         parser.error("a task is listed twice")
     names = {t: list(cell_names(t)) if args.each_corpus else [None] for t in tasks}  # a pool must match the cell
@@ -243,6 +293,9 @@ def main(argv=None) -> int:
     if not args.execute:
         print("dry run; add --execute to call the model")
         return 0
+    if terminal and shell.mode() != "uid":
+        raise SystemExit(f"--interface terminal runs the model's commands in a real shell; shell mode is "
+                         f"{shell.mode()!r}, not 'uid'. Run it inside the terminal image as root.")
     token = hf_token() if is_hf_router(args.base_url) else os.environ.get("OPENAI_API_KEY", "local")
     budget = Budget(args.max_total_tokens)
     args.output.parent.mkdir(parents=True, exist_ok=True)

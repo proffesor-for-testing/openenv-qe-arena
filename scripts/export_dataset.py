@@ -22,6 +22,7 @@ sys.path.insert(0, str(ROOT))
 
 from qe_arena import corpus  # noqa: E402
 from qe_arena.tasks import DOMAIN_TASK_IDS, TASK_IDS, make_task, task_domain  # noqa: E402
+from qe_arena.terminal_env import TERMINAL_TASK_IDS, instruction  # noqa: E402
 
 CARD = """---
 license: mit
@@ -34,6 +35,8 @@ configs:
     data_files: tasks.jsonl
   - config_name: domains
     data_files: domain_tasks.jsonl
+  - config_name: terminal
+    data_files: terminal_tasks.jsonl
 ---
 
 # OpenEnv QE Arena tasks
@@ -59,8 +62,19 @@ A task ID names its domain between the family and the level: `qe_mutant_kill-d2`
 cell, and `qe_mutant_kill-finance-d2` draws only finance-economics code. Every row's `domain` is the arena
 domain with spaces for hyphens.
 
+## Terminal interface
+
+The `terminal` config is the same QE work behind a terminal (the `openenv-qe-arena-terminal` image): the
+model runs bash commands in a real, isolated working directory (`exec`), writes files (`write_file`) and ends
+the episode with `evaluate`, which grades one file with the same deterministic graders: `module.py` for a bug
+fix, `answer.json` (`{{"tests": [{{"args": [...], "expected": ...}}]}}`) for mutant-kill. Rewards are 1 or 0:
+every hidden test passes, or every mutant is killed with exact expected values. Nothing the shell prints
+reaches the reward, and the hidden tests never exist on disk. Each row's `instruction` is the reset
+observation and `files` the working directory; bug-fix and mutant-kill d1-d3 in every domain are served.
+
 - Rows: {rows} ({seeds} seeds x {cells} task cells) in `tasks.jsonl`; {domain_rows} ({seeds} seeds x
-  {domain_cells} task cells) in `domain_tasks.jsonl`
+  {domain_cells} task cells) in `domain_tasks.jsonl`; {terminal_rows} ({seeds} seeds x {terminal_cells} task
+  cells) in `terminal_tasks.jsonl`
 - Corpus: {entries} small Python functions, {adapted} of them adapted from MIT-licensed QE projects and the rest
   original; origins and domains are in `manifest.json`.
 - Source commit: `{commit}`
@@ -81,11 +95,16 @@ def main() -> int:
     domain_data = "".join(json.dumps(r, sort_keys=True) + "\n" for r in domain_rows)
     (args.out / "tasks.jsonl").write_text(data)
     (args.out / "domain_tasks.jsonl").write_text(domain_data)
+    terminal_rows = export_terminal_rows(TERMINAL_TASK_IDS, seeds)
+    terminal_data = "".join(json.dumps(r, sort_keys=True) + "\n" for r in terminal_rows)
+    (args.out / "terminal_tasks.jsonl").write_text(terminal_data)
     manifest = {
         "rows": len(rows), "task_ids": TASK_IDS, "seeds": [args.seed_base, args.seed_base + args.seeds - 1],
         "tasks_sha256": hashlib.sha256(data.encode()).hexdigest(), "source_commit": commit,
         "domain_rows": len(domain_rows), "domain_task_ids": DOMAIN_TASK_IDS,
         "domain_tasks_sha256": hashlib.sha256(domain_data.encode()).hexdigest(),
+        "terminal_rows": len(terminal_rows), "terminal_task_ids": TERMINAL_TASK_IDS,
+        "terminal_tasks_sha256": hashlib.sha256(terminal_data.encode()).hexdigest(),
         "corpus": {name: {"entry": e.entry, "origin": e.origin, "domain": e.domain}
                    for name, e in sorted(corpus.ENTRIES.items())},
     }
@@ -93,11 +112,13 @@ def main() -> int:
     domains = sorted({task_domain(t) for t in DOMAIN_TASK_IDS})
     (args.out / "README.md").write_text(CARD.format(
         rows=len(rows), seeds=args.seeds, cells=len(TASK_IDS), domain_rows=len(domain_rows),
-        domain_cells=len(DOMAIN_TASK_IDS), domain_list=", ".join(domains) or "none yet",
+        domain_cells=len(DOMAIN_TASK_IDS), terminal_rows=len(terminal_rows), terminal_cells=len(TERMINAL_TASK_IDS),
+        domain_list=", ".join(domains) or "none yet",
         domain_tags="".join(f", {d}" for d in domains), entries=len(corpus.ENTRIES),
         adapted=sum(e.origin != "Original." for e in corpus.ENTRIES.values()), commit=commit))
     print(f"wrote {len(rows)} rows to {args.out}/tasks.jsonl (sha256 {manifest['tasks_sha256'][:16]}) and "
-          f"{len(domain_rows)} to domain_tasks.jsonl (sha256 {manifest['domain_tasks_sha256'][:16]})")
+          f"{len(domain_rows)} to domain_tasks.jsonl (sha256 {manifest['domain_tasks_sha256'][:16]}) and "
+          f"{len(terminal_rows)} to terminal_tasks.jsonl (sha256 {manifest['terminal_tasks_sha256'][:16]})")
     return 0
 
 
@@ -119,6 +140,21 @@ def export_rows(task_ids: list[str], seeds: range) -> list[dict]:
             if task.private.get("edit_budget") is not None:  # d4 only, so other rows stay byte-identical
                 row["edit_budget"] = task.private["edit_budget"]
             rows.append(row)
+    return rows
+
+
+def export_terminal_rows(task_ids: list[str], seeds: range) -> list[dict]:
+    """The terminal interface's reset observation (exec available, as in the isolated image) and files."""
+    rows = []
+    for task_id in task_ids:
+        for seed in seeds:
+            task = make_task(task_id, seed)
+            rows.append({
+                "task_id": task_id, "seed": seed, "split": "train", "domain": domain_label(task_id),
+                "family": task.family, "difficulty": task.difficulty, "interface": "terminal",
+                "instruction": instruction(task, sorted(task.files), True),
+                "files": json.dumps(task.files, sort_keys=True),
+            })
     return rows
 
 

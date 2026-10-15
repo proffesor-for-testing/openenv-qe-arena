@@ -24,8 +24,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from oracle import solve_actions  # noqa: E402
+from oracle import solve_actions, terminal_solve_actions  # noqa: E402
 from qe_arena.tasks import ALL_TASK_IDS, make_task  # noqa: E402
+
+TERMINAL_EXAMPLES = [{"action_type": "evaluate"}]
 
 FORBIDDEN = {"expected", "private", "original", "reference", "mutants", "seed", "inputs"}
 
@@ -57,21 +59,28 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", required=True, help="ws://host:port")
     parser.add_argument("--seeds", type=int, default=2)
+    parser.add_argument("--terminal", action="store_true", help="the terminal-interface server (Dockerfile.terminal)")
     args = parser.parse_args()
-    examples = json.loads((ROOT / "example-actions.json").read_text())
+    if args.terminal:
+        from qe_arena.terminal_env import TERMINAL_TASK_IDS  # noqa: PLC0415
+
+        task_ids, examples, solve = TERMINAL_TASK_IDS, TERMINAL_EXAMPLES, terminal_solve_actions
+    else:
+        task_ids, solve = ALL_TASK_IDS, solve_actions
+        examples = json.loads((ROOT / "example-actions.json").read_text())
     failures = 0
-    for task_id in ALL_TASK_IDS:
+    for task_id in task_ids:
         for seed in range(9_000_001, 9_000_001 + args.seeds):
             checks = {}
             reset_a, last = episode(args.url, task_id, seed, examples)
             checks["example_reward_0"] = last["done"] and last["reward"] == 0
-            reset_b, last = episode(args.url, task_id, seed, solve_actions(make_task(task_id, seed)))
+            reset_b, last = episode(args.url, task_id, seed, solve(make_task(task_id, seed)))
             checks["oracle_reward_1"] = last["done"] and last["reward"] == 1
             checks["seeded_reset_replay"] = reset_a["observation"] == reset_b["observation"]
             ok = all(checks.values())
             failures += not ok
             print(f"{'PASS' if ok else 'FAIL'} {task_id} seed={seed} {checks}")
-    print(f"{len(ALL_TASK_IDS) * args.seeds - failures}/{len(ALL_TASK_IDS) * args.seeds} task episodes passed")
+    print(f"{len(task_ids) * args.seeds - failures}/{len(task_ids) * args.seeds} task episodes passed")
     return 1 if failures else 0
 
 

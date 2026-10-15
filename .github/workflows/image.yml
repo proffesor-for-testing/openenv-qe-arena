@@ -108,3 +108,52 @@ jobs:
           digest=$(docker image inspect "$tag" --format '{{index .RepoDigests 0}}')
           echo "### Image" >> "$GITHUB_STEP_SUMMARY"
           echo "\`$digest\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # The terminal-interface image (Dockerfile.terminal). Its server runs as root so each episode's shell gets
+  # its own uid; the uid isolation tests need that root, so they run inside the built image.
+  terminal-image:
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/openenv-qe-arena-terminal
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Build (linux/amd64)
+        run: docker build --platform linux/amd64 -f Dockerfile.terminal -t qe-arena-terminal:ci .
+      - name: Check image limits
+        run: |
+          layers=$(docker image inspect qe-arena-terminal:ci --format '{{len .RootFS.Layers}}')
+          size=$(docker save qe-arena-terminal:ci | gzip -1 | wc -c)
+          echo "layers=$layers gzip_bytes=$size"
+          test "$layers" -lt 128
+          test "$size" -lt 2147483648
+      - name: Shell isolation tests (as root, inside the image)
+        run: |
+          docker run --rm -v "$PWD/tests:/app/tests:ro" -v "$PWD/scripts:/app/scripts:ro" qe-arena-terminal:ci \
+            sh -c 'pip install -q pytest==9.1.1 && python -m pytest -q -p no:cacheprovider /app/tests/test_shell_isolation.py'
+      - name: Validate the running container
+        run: |
+          python -m venv /tmp/v && /tmp/v/bin/pip install -q -r requirements.lock
+          /tmp/v/bin/python scripts/build_wasi_runtime.py --out runtime
+          docker run -d --name env --read-only --tmpfs /tmp -p 8000:8000 qe-arena-terminal:ci
+          for i in $(seq 1 30); do curl -sf localhost:8000/health && break; sleep 1; done
+          /tmp/v/bin/openenv validate --url http://127.0.0.1:8000
+          /tmp/v/bin/python scripts/smoke_ws.py --terminal --url ws://127.0.0.1:8000
+          docker logs env 2>&1 | grep -q "shell isolation mode: uid"
+          docker logs env | tail -20
+      - name: Push to GHCR
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          tag="$IMAGE:${GITHUB_SHA::12}"
+          docker tag qe-arena-terminal:ci "$tag" && docker push "$tag"
+          digest=$(docker image inspect "$tag" --format '{{index .RepoDigests 0}}')
+          echo "### Terminal image" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`$digest\`" >> "$GITHUB_STEP_SUMMARY"
