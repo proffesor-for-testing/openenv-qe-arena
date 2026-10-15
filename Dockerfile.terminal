@@ -1,0 +1,33 @@
+# The terminal-interface image (qe_arena.terminal_app): the same tasks and WASM graders as Dockerfile, behind
+# tbench2_env-shaped actions (exec / write_file / evaluate) with a real bash per episode.
+#
+# Unlike Dockerfile, the server runs as root: that is what lets qe_arena/shell.py run every episode's commands
+# as its own unprivileged uid (20000-20063). The sources and the WASI runtime are 0700 root, so an episode's
+# shell can read neither the corpus (the reference implementations) nor the graders. On a host that drops
+# CAP_SETUID the shell reports "disabled" at start-up and exec is refused; write_file and evaluate still work.
+FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS wasi-runtime
+WORKDIR /build
+COPY requirements-wasmtime.lock /build/requirements-wasmtime.lock
+RUN pip install --no-cache-dir --require-hashes -r /build/requirements-wasmtime.lock
+COPY scripts/build_wasi_runtime.py qe_arena/runtime_pins.json /build/
+RUN python /build/build_wasi_runtime.py --out /opt/qe-arena/wasi --pins /build/runtime_pins.json
+
+FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
+LABEL org.opencontainers.image.source="https://github.com/proffesor-for-testing/openenv-qe-arena"
+LABEL org.opencontainers.image.description="OpenEnv Arena training environment: QE tasks behind a terminal interface"
+LABEL org.opencontainers.image.licenses="MIT"
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates tini && rm -rf /var/lib/apt/lists/*
+COPY requirements.lock requirements-wasmtime.lock /app/
+RUN pip install --no-cache-dir --require-hashes -r /app/requirements-wasmtime.lock \
+    && pip install --no-cache-dir -r /app/requirements.lock
+COPY --from=wasi-runtime /opt/qe-arena/wasi /opt/qe-arena/wasi
+COPY qe_arena /app/qe_arena
+COPY openenv.terminal.yaml /app/openenv.yaml
+COPY THIRD_PARTY_NOTICES /app/THIRD_PARTY_NOTICES
+# The sources and runtime are root-only; the image's own world-writable dirs are locked (shell.SHARED_DIRS).
+RUN chmod 0700 /app /opt/qe-arena && chmod 0711 /var/tmp /run/lock
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 ENABLE_WEB_INTERFACE=false QE_ARENA_WASI_ROOT=/opt/qe-arena/wasi
+EXPOSE 8000
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["python", "-m", "uvicorn", "qe_arena.terminal_app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

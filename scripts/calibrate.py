@@ -17,6 +17,10 @@ Episodes are scored as the arena's guide says (AGENTS.md, "Replies" and "Budgets
 - ``completion_tokens`` covers the model's tokens and every observation after the first, so it is measured from
   the API's usage as (prompt + completion) - first prompt; ``context_tokens`` covers the whole conversation.
   A reply or observation that pushes either over its budget ends the episode before that reply counts.
+- --interface terminal drives the terminal environment (qe_arena/terminal_env.py) instead: actions are exec /
+  write_file / evaluate, finish_action is {"action_type": "evaluate"} and the step cap defaults to its 32. Its
+  commands run in a real shell, so this refuses to start unless the shell is uid-isolated, i.e. inside the
+  terminal image as root; see docs/DESIGN.md, "Terminal interface".
 - --strict: a reply that is not exactly one JSON object (json.loads of the stripped reply must give a dict;
   prose, fences or a second object fail) ends the episode, which is then scored through finish_action at that
   point. The episode still plays on under the lenient parser, so each row records both: ``reward`` (strict),
@@ -42,8 +46,15 @@ from threading import Lock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from qe_arena import shell  # noqa: E402
 from qe_arena.environment import QEAction, QEEnvironment  # noqa: E402
 from qe_arena.tasks import DOMAIN_TASK_IDS, TASK_IDS, cell_names, parse_task_id  # noqa: E402
+from qe_arena.terminal_env import MAX_STEPS as TERMINAL_STEPS  # noqa: E402
+from qe_arena.terminal_env import TERMINAL_TASK_IDS, TerminalAction, TerminalEnvironment  # noqa: E402
+
+# Names, resolved per episode, so a test can substitute the environment class.
+INTERFACES = {"json": ("QEEnvironment", "QEAction", "op", "submit"),
+              "terminal": ("TerminalEnvironment", "TerminalAction", "action_type", "evaluate")}
 
 SYSTEM = ("Solve the task with the available tools. Each reply must be exactly one JSON action object, "
           "with no markdown. Action schema: ")
@@ -124,8 +135,10 @@ def parse_strict(text: str) -> dict | None:
     return value if isinstance(value, dict) else None
 
 
-def finish_reward(env: QEEnvironment) -> float:
-    """What finish_action would score now, on a copy so the lenient episode plays on unchanged."""
+def finish_reward(env) -> float:
+    """What finish_action would score now, without changing the episode, so the lenient episode plays on."""
+    if isinstance(env, TerminalEnvironment):
+        return env.peek_reward()  # a deep copy would share, and on evaluate delete, the live workspace
     probe = copy.deepcopy(env)
     obs = probe.step(QEAction(op="submit", answer={}))
     return float(obs.reward or 0.0)
@@ -138,10 +151,20 @@ def observation_text(obs) -> str:
 
 def run_episode(args, token: str, budget: Budget, task_id: str, seed: int, attempt: int,
                 corpus_name: str | None = None) -> dict:
-    env = QEEnvironment(corpus_pool=(corpus_name,) if corpus_name else None, fault_kind=args.fault_kind)
+    env_name, action_name, op_field, finish_op = INTERFACES[getattr(args, "interface", "json")]
+    env_class, action_class = globals()[env_name], globals()[action_name]
+    env = env_class(corpus_pool=(corpus_name,) if corpus_name else None, fault_kind=args.fault_kind)
+    try:
+        return _play(args, token, budget, task_id, seed, attempt, env, action_class, op_field, finish_op)
+    finally:
+        if hasattr(env, "close"):
+            env.close()
+
+
+def _play(args, token, budget, task_id, seed, attempt, env, action_class, op_field, finish_op) -> dict:
     started = time.time()
     obs = env.reset(seed=seed, task_id=task_id)
-    schema = json.dumps(QEAction.model_json_schema(), separators=(",", ":"))
+    schema = json.dumps(action_class.model_json_schema(), separators=(",", ":"))
     messages = [{"role": "system", "content": SYSTEM + schema},
                 {"role": "user", "content": observation_text(obs)}]
     record = {"task_id": task_id, "seed": seed, "attempt": attempt, "corpus": env._task.private["corpus"],
@@ -191,7 +214,7 @@ def run_episode(args, token: str, budget: Budget, task_id: str, seed: int, attem
             obs_text = json.dumps({"error": "invalid action: reply with exactly one JSON action object"})
         else:
             try:
-                obs = env.step(QEAction(**action))
+                obs = env.step(action_class(**action))
                 obs_text = observation_text(obs)
             except Exception as error:  # pydantic validation of a malformed action
                 record["invalid"] += 1
@@ -199,7 +222,7 @@ def run_episode(args, token: str, budget: Budget, task_id: str, seed: int, attem
                 obs = None
         if obs is not None and obs.done:
             record["reward"] = float(obs.reward or 0.0)
-            record["end"] = "submit" if action and action.get("op") == "submit" else "terminal"
+            record["end"] = "submit" if action and action.get(op_field) == finish_op else "terminal"
             break
         if record["steps"] >= args.max_steps:
             record["end"] = "step_cap"
@@ -222,7 +245,9 @@ def main(argv=None) -> int:
     parser.add_argument("--thinking", choices=["on", "off"], default="off")
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--max-tokens", type=int, default=1024, help="per reply")
-    parser.add_argument("--max-steps", type=int, default=16, help="tool calls per episode (tool_calls_total)")
+    parser.add_argument("--interface", choices=sorted(INTERFACES), default="json")
+    parser.add_argument("--max-steps", type=int, default=None,
+                        help="tool calls per episode (tool_calls_total); default 16, or 32 for the terminal")
     parser.add_argument("--episode-completion-tokens", type=int, default=4096)
     parser.add_argument("--episode-context-tokens", type=int, default=8192)
     parser.add_argument("--task-id", action="append",
@@ -246,9 +271,16 @@ def main(argv=None) -> int:
                              "which finish_action then scores")
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args(argv)
+    terminal = args.interface == "terminal"
+    if args.max_steps is None:
+        args.max_steps = TERMINAL_STEPS if terminal else 16
     tasks = (args.task_id or TASK_IDS) + (DOMAIN_TASK_IDS if args.domain_cells else [])
+    if terminal and not args.task_id:
+        tasks = [t for t in tasks if t in TERMINAL_TASK_IDS]
     for task_id in tasks:
         parse_task_id(task_id)
+        if terminal and task_id not in TERMINAL_TASK_IDS:
+            parser.error(f"{task_id} is not served by the terminal interface")
     if len(set(tasks)) != len(tasks):
         parser.error("a task is listed twice")
     names = {t: list(cell_names(t)) if args.each_corpus else [None] for t in tasks}  # a pool must match the cell
@@ -261,6 +293,9 @@ def main(argv=None) -> int:
     if not args.execute:
         print("dry run; add --execute to call the model")
         return 0
+    if terminal and shell.mode() != "uid":
+        raise SystemExit(f"--interface terminal runs the model's commands in a real shell; shell mode is "
+                         f"{shell.mode()!r}, not 'uid'. Run it inside the terminal image as root.")
     token = hf_token() if is_hf_router(args.base_url) else os.environ.get("OPENAI_API_KEY", "local")
     budget = Budget(args.max_total_tokens)
     args.output.parent.mkdir(parents=True, exist_ok=True)

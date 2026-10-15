@@ -77,3 +77,53 @@ def test_a_submit_is_scored_by_the_environment_not_finish_action(monkeypatch):
     record, _ = run(monkeypatch, [(READ_ALL, 100, 10), (submit, 150, 10)], finish=0.9)
     assert record["end"] == "submit" and not record["end_finish"] and record["reward"] == 0.0
 
+
+def run_terminal(monkeypatch, tmp_path, replies, *, strict=False, max_steps=32):
+    """Like ``run``, against the terminal interface with the real graders (shell unsandboxed, test only)."""
+    from qe_arena import shell
+
+    monkeypatch.setenv(shell.ENV_FLAG, "1")
+    monkeypatch.setenv(shell.ROOT_ENV, str(tmp_path / "ws"))
+    shell._reset_mode_for_tests()
+    calls = []
+
+    def chat(args, token, messages):
+        text = replies[min(len(calls), len(replies) - 1)]
+        calls.append(len(messages))
+        return {"choices": [{"message": {"content": text}}],
+                "usage": {"prompt_tokens": 100 + 10 * len(calls), "completion_tokens": 10, "total_tokens": 0}}
+
+    monkeypatch.setattr(calibrate, "chat", chat)
+    args = SimpleNamespace(fault_kind=None, episode_completion_tokens=10**6, episode_context_tokens=10**6,
+                           max_steps=max_steps, strict=strict, interface="terminal")
+    try:
+        return calibrate.run_episode(args, "", calibrate.Budget(10**9), "qe_bugfix-d1", 11, 0)
+    finally:
+        shell._reset_mode_for_tests()
+
+
+def _fix_reply():
+    from qe_arena.tasks import make_task
+
+    original = make_task("qe_bugfix-d1", 11).private["original"]
+    return json.dumps({"action_type": "write_file", "file_path": "module.py", "content": original})
+
+
+def test_terminal_episode_is_scored_by_evaluate(monkeypatch, tmp_path):
+    replies = ['{"action_type": "exec", "command": "ls"}', _fix_reply(), '{"action_type": "evaluate"}']
+    record = run_terminal(monkeypatch, tmp_path, replies)
+    assert record["end"] == "submit" and record["reward"] == 1.0 and record["steps"] == 3
+
+
+def test_terminal_strict_end_probes_without_destroying_the_workspace(monkeypatch, tmp_path):
+    replies = [_fix_reply(), "Done.\n" + '{"action_type": "evaluate"}']
+    record = run_terminal(monkeypatch, tmp_path, replies, strict=True)
+    assert record["strict_end_step"] == 2 and record["finish_reward"] == 1.0  # the probe graded the live file
+    assert record["lenient_reward"] == 1.0 and record["end"] == "submit"  # and the episode played on intact
+    assert record["reward"] == 1.0
+
+
+def test_terminal_step_cap_is_scored_through_evaluate(monkeypatch, tmp_path):
+    replies = [_fix_reply(), '{"action_type": "exec", "command": "true"}']
+    record = run_terminal(monkeypatch, tmp_path, replies, max_steps=4)
+    assert record["end"] == "step_cap" and record["end_finish"] and record["reward"] == 1.0

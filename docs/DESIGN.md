@@ -234,6 +234,41 @@ check's results. Shown runs (all passing) use seeds disjoint from the graded one
 
 At most 12 steps per episode.
 
+### Terminal interface (`Dockerfile.terminal`, `qe_arena/terminal_env.py`)
+
+A second image serves the `qe_bugfix` d1–d3 and `qe_mutant_kill` cells of every domain behind the action shape of
+OpenEnv's `tbench2_env`, which the arena's evaluation probably uses:
+
+```json
+{"action_type": "exec", "command": "sed -n 1,40p module.py"}
+{"action_type": "write_file", "file_path": "module.py", "content": "<the whole file>"}
+{"action_type": "evaluate"}
+```
+
+- **Exploring is real; grading is not.** `exec` runs real bash in the episode's workspace (`qe_arena/shell.py`).
+  `evaluate` reads one file, `module.py` or `answer.json`, and grades it with the same WASM graders as the JSON
+  interface. Nothing else the shell does reaches the reward, and the hidden tests never exist on disk.
+- **All or nothing**, like `evaluate`: a fix passes every hidden test; an answer kills every mutant with exact
+  expected values. At 32 actions the episode is graded as it stands (the arena's `finish_action` is `evaluate`).
+- **Isolation is the operating system's.** The server runs as root only to give each episode its own uid
+  (20000–20062) and a 0700 workspace; commands, writes and the graded-file read run as that uid, under ulimits,
+  with a scrubbed environment and umask 077, and every process of the uid is killed after each command. `/app`
+  and the WASI runtime are 0700 root, so the corpus (the reference implementations) is unreadable. The shared
+  world-writable directories are locked, so the workspace is the only writable place. An unprivileged seccomp
+  filter allows only AF_UNIX sockets (no network, not even loopback to the server) and denies io_uring,
+  System V IPC and POSIX message queues. A uid whose cleanup cannot be verified is never reused. Tested as
+  root inside the image on native x86_64 and arm64 (`tests/test_shell_isolation.py`, CI job `terminal-image`).
+  Under amd64 emulation on an Apple-silicon Mac, seccomp is unavailable and the shell selects disabled mode.
+- **Fail closed.** If setuid is unavailable (a runtime that drops CAP_SETUID, board #213), the start-up log says
+  `shell isolation mode: disabled`, `exec` is refused, and `write_file` and `evaluate` still work on validated
+  relative paths. Calibration (`calibrate.py --interface terminal`) refuses to run anywhere but uid mode, so a
+  model's commands never run on a developer machine.
+- Not isolated, for want of privileges (no cgroups or namespaces): total disk use and inode count of a
+  workspace (only per file), total memory across an episode's processes (only per process), the argv of
+  programs a command starts (`/proc/<pid>/cmdline`; the command text itself travels in the private
+  environment), and abstract AF_UNIX sockets. The last two let concurrently running episodes cooperate if both
+  try; none of them reaches the grader, the hidden tests or the reference sources.
+
 ## Verifier integrity
 
 The oracle never runs in the same process as model-influenced code, and no code we grade ever runs natively.

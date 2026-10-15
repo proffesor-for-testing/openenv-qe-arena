@@ -6,6 +6,7 @@ reward channel pays 1.0 for a correct solution and 0 for doing nothing.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -51,3 +52,13 @@ def solve_actions(task: Task) -> list[dict]:
             {"test": p["victim"], "cause": p["cause"]}
         return actions + [{"op": "submit", "answer": answer}]
     return [{"op": "read", "path": "*"}, {"op": "submit", "answer": {"tests": kill_tests(task)}}]
+
+
+def terminal_solve_actions(task: Task) -> list[dict]:
+    """Terminal-interface actions that earn reward 1.0: look, write the graded file, evaluate."""
+    if task.family == "qe_bugfix":
+        write = {"action_type": "write_file", "file_path": MODULE, "content": task.private["original"]}
+    else:
+        write = {"action_type": "write_file", "file_path": "answer.json",
+                 "content": json.dumps({"tests": kill_tests(task)})}
+    return [{"action_type": "exec", "command": "ls"}, write, {"action_type": "evaluate"}]
