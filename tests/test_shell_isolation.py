@@ -295,10 +295,48 @@ def test_cleanup_does_not_trust_a_scan_that_missed_a_process(monkeypatch):
 
     monkeypatch.setattr(shell, "_uid_pids", scan_that_misses_once)
     try:
-        shell._kill_uid(uid)
+        assert shell._kill_uid(uid)
         assert sleeper.wait(timeout=5) == -9
     finally:
         monkeypatch.undo()
         if sleeper.poll() is None:
             sleeper.kill()
         ws.close()
+
+
+def test_an_empty_scan_never_counts_when_the_kill_helper_failed(monkeypatch):
+    # e.g. the episode killed or stopped the helper before its kill(-1)
+    monkeypatch.setattr(shell, "_kill_as", lambda uid: False)
+    monkeypatch.setattr(shell, "_uid_pids", lambda uid: [])
+    assert shell._kill_uid(shell.UID_POOL[0]) is False
+
+
+def test_a_stopped_kill_helper_times_out_and_fails(monkeypatch):
+    monkeypatch.setattr(shell, "KILL_HELPER_TIMEOUT_S", 0.3)
+    real_fork = os.fork
+
+    def fork_then_stop():
+        pid = real_fork()
+        if pid == 0:
+            os.kill(os.getpid(), __import__("signal").SIGSTOP)
+        return pid
+
+    monkeypatch.setattr(shell.os, "fork", fork_then_stop)
+    started = time.monotonic()
+    assert shell._kill_as(shell.UID_POOL[0]) is False
+    assert time.monotonic() - started < 3
+
+
+def test_a_failed_per_command_cleanup_quarantines_the_uid_at_close(monkeypatch):
+    ws = shell.Workspace({})
+    uid = ws.uid
+    try:
+        monkeypatch.setattr(shell, "_kill_uid", lambda u: False)
+        run(ws, "true")
+        monkeypatch.undo()
+        ws.close()
+        assert uid in shell._UIDS_QUARANTINED
+    finally:
+        monkeypatch.undo()
+        ws.close()
+        shell._UIDS_QUARANTINED.discard(uid)

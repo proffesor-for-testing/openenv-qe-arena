@@ -38,6 +38,7 @@ import sys
 import tempfile
 import threading
 import time
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -45,6 +46,7 @@ log = logging.getLogger(__name__)
 
 EXEC_TIMEOUT_S = 30.0
 IO_TIMEOUT_S = 10.0
+KILL_HELPER_TIMEOUT_S = 2.0
 EXIT_GRACE_S = 0.5  # after the command exits, how long background holders of its output may keep writing
 MAX_OUTPUT_BYTES = 8192  # about 2-3k tokens: a careless cat still costs budget, as in the eval
 MAX_COMMAND_BYTES = 16384
@@ -252,24 +254,51 @@ def _uid_pids(uid: int) -> list[int]:
     return pids
 
 
-_KILL_ALL = "import os, signal\ntry:\n    os.kill(-1, signal.SIGKILL)\nexcept ProcessLookupError:\n    pass\n"
+def _kill_as(uid: int) -> bool:
+    """Fork a child that becomes ``uid`` and sends kill(-1, SIGKILL); True only if it exited 0 in time.
+
+    kill(-1) reaches every process the uid may signal in one pass under the task-list lock, so a fork cannot
+    slip past it, and no pid is ever signalled as root. The child never execs: it changes uid and makes two
+    syscalls, and the kernel marks it non-dumpable when its uid changes, so the episode cannot ptrace it. The
+    episode can still kill or stop it; that is a failed attempt, never a success, and a stopped child is our
+    own unreaped child, which root may kill without any pid-reuse race."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)  # fork with threads: the child only makes syscalls
+        pid = os.fork()
+    if pid == 0:
+        code = 1
+        try:
+            os.setgroups([])
+            os.setresgid(uid, uid, uid)
+            os.setresuid(uid, uid, uid)
+            try:
+                os.kill(-1, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            code = 0
+        finally:
+            os._exit(code)
+    deadline = time.monotonic() + KILL_HELPER_TIMEOUT_S
+    while True:
+        done, status = os.waitpid(pid, os.WNOHANG)
+        if done:
+            return os.waitstatus_to_exitcode(status) == 0
+        if time.monotonic() >= deadline:
+            os.kill(pid, signal.SIGKILL)  # our own child, not yet reaped: its pid cannot have been reused
+            os.waitpid(pid, 0)
+            return False
+        time.sleep(0.005)
 
 
 def _kill_uid(uid: int) -> bool:
-    """SIGKILL every process of ``uid``; True once none is left.
-
-    A helper running as ``uid`` sends kill(-1), which the kernel delivers to every process that uid may
-    signal in one pass under the task-list lock: a fork cannot slip between a scan and the kill, and no
-    numeric pid (which could be recycled) is ever signalled as root. /proc then confirms nothing is left."""
+    """SIGKILL every process of ``uid``; True only when a kill(-1) as that uid completed and /proc then shows
+    nothing live. A scan alone never counts: it can miss a child forked while it ran."""
     for _ in range(20):
-        try:
-            subprocess.run([sys.executable, "-I", "-S", "-c", _KILL_ALL], user=uid, group=uid, extra_groups=[],
-                           env={}, cwd="/", stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                           stderr=subprocess.DEVNULL, timeout=IO_TIMEOUT_S, check=False)
-        except (OSError, subprocess.SubprocessError):
-            return False
-        if not _uid_pids(uid):
-            return True
+        if _kill_as(uid):
+            for _ in range(20):  # SIGKILL is queued; let the targets finish dying
+                if not _uid_pids(uid):
+                    return True
+                time.sleep(0.01)
         time.sleep(0.05)
     return False
 
@@ -328,6 +357,7 @@ class Workspace:
 
     def __init__(self, files: dict[str, str]):
         self._closed = True  # until fully built: close() then has nothing to undo
+        self._tainted = False  # a per-command cleanup failed: never release the uid as clean
         self.path: Path | None = None
         self.mode = mode()
         self.uid = _acquire_uid() if self.mode == "uid" else None
@@ -413,11 +443,13 @@ class Workspace:
         return bytes(kept), total, code, timed_out
 
     def _kill(self, proc: subprocess.Popen) -> None:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
-        if self.uid is not None and not _kill_uid(self.uid):  # background processes that left the group, too
+        if self.uid is None:  # unsandboxed (tests): the command's own group
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+        elif not _kill_uid(self.uid):  # every process of the uid, including any that left the group
+            self._tainted = True  # close() then quarantines the uid
             log.error("shell uid %s has processes that SIGKILL did not remove", self.uid)
         try:
             proc.wait(timeout=IO_TIMEOUT_S)
@@ -511,7 +543,7 @@ class Workspace:
         clean = True
         if self.uid is not None:
             try:
-                clean = _kill_uid(self.uid) and _sweep_uid_files(self.uid)
+                clean = _kill_uid(self.uid) and _sweep_uid_files(self.uid) and not self._tainted
             except Exception:  # noqa: BLE001 - an unexpected scan failure must still free the directory
                 log.exception("shell uid %s cleanup failed", self.uid)
                 clean = False
