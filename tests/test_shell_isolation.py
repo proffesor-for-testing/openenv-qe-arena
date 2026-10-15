@@ -322,17 +322,17 @@ def test_the_episode_cannot_signal_trace_or_read_the_kill_helper():
          f"import os, time; os.setgroups([]); os.setresgid({killer}, {killer}, {killer}); "
          f"os.setresuid({killer}, {ws.uid}, {killer}); time.sleep(30)"], env={"QE_SECRET": "s3cret"})
     pid = helper_like.pid
-    status = ""
-    for _ in range(100):  # probe only once the credentials have really switched
-        status = Path(f"/proc/{pid}/status").read_text()
-        if f"Uid:\t{killer}\t{ws.uid}\t{killer}" in status:
-            break
-        time.sleep(0.02)
-    fields = dict(line.split(":", 1) for line in status.splitlines() if ":" in line)
-    assert fields["Uid"].split() == [str(killer), str(ws.uid), str(killer), str(ws.uid)], status
-    assert fields["Gid"].split() == [str(killer)] * 4 and fields["Groups"].strip() == "", status
-    assert int(fields["CapEff"], 16) == 0 and int(fields["CapPrm"], 16) == 0, status
     try:
+        status = ""
+        for _ in range(100):  # probe only once the credentials have really switched
+            status = Path(f"/proc/{pid}/status").read_text()
+            if f"Uid:\t{killer}\t{ws.uid}\t{killer}" in status:
+                break
+            time.sleep(0.02)
+        fields = dict(line.split(":", 1) for line in status.splitlines() if ":" in line)
+        assert fields["Uid"].split() == [str(killer), str(ws.uid), str(killer), str(ws.uid)], status
+        assert fields["Gid"].split() == [str(killer)] * 4 and fields["Groups"].strip() == "", status
+        assert int(fields["CapEff"], 16) == 0 and int(fields["CapPrm"], 16) == 0, status
         result = run(ws, f"kill -STOP {pid}; kill -9 {pid}; cat /proc/{pid}/environ; head -c1 /proc/{pid}/mem; "
                          f"grep -q '^State:.*[RS]' /proc/{pid}/status && echo STILL_RUNNING; "
                          "python3 -c \"import ctypes; print('attach', ctypes.CDLL(None).ptrace(16, " + str(pid)
