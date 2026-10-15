@@ -259,6 +259,9 @@ _KILL_ALL = ("import os, signal, sys\n"
              "os.setgroups([])\n"
              "os.setresgid(killer, killer, killer)\n"
              "os.setresuid(killer, uid, killer)\n"
+             "status = dict(line.split(':', 1) for line in open('/proc/self/status') if ':' in line)\n"
+             "if any(int(status[k], 16) for k in ('CapEff', 'CapPrm', 'CapAmb')):\n"
+             "    sys.exit(3)  # e.g. SECBIT_NO_SETUID_FIXUP kept CAP_KILL: kill(-1) could reach root\n"
              "try:\n"
              "    os.kill(-1, signal.SIGKILL)\n"
              "except ProcessLookupError:\n"
@@ -284,7 +287,10 @@ def _kill_as(uid: int) -> bool:
         return proc.wait(timeout=KILL_HELPER_TIMEOUT_S) == 0
     except subprocess.TimeoutExpired:
         proc.kill()
-        proc.wait()
+        try:
+            proc.wait(timeout=KILL_HELPER_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            log.error("shell kill helper %s did not exit after SIGKILL", proc.pid)
         return False
 
 

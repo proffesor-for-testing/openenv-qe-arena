@@ -321,10 +321,19 @@ def test_the_episode_cannot_signal_trace_or_read_the_kill_helper():
         [sys.executable, "-I", "-S", "-c",
          f"import os, time; os.setgroups([]); os.setresgid({killer}, {killer}, {killer}); "
          f"os.setresuid({killer}, {ws.uid}, {killer}); time.sleep(30)"], env={"QE_SECRET": "s3cret"})
-    time.sleep(0.3)
     pid = helper_like.pid
+    status = ""
+    for _ in range(100):  # probe only once the credentials have really switched
+        status = Path(f"/proc/{pid}/status").read_text()
+        if f"Uid:\t{killer}\t{ws.uid}\t{killer}" in status:
+            break
+        time.sleep(0.02)
+    fields = dict(line.split(":", 1) for line in status.splitlines() if ":" in line)
+    assert fields["Uid"].split() == [str(killer), str(ws.uid), str(killer), str(ws.uid)], status
+    assert fields["Gid"].split() == [str(killer)] * 4 and fields["Groups"].strip() == "", status
+    assert int(fields["CapEff"], 16) == 0 and int(fields["CapPrm"], 16) == 0, status
     try:
-        result = run(ws, f"kill -STOP {pid}; kill -9 {pid}; cat /proc/{pid}/environ; "
+        result = run(ws, f"kill -STOP {pid}; kill -9 {pid}; cat /proc/{pid}/environ; head -c1 /proc/{pid}/mem; "
                          f"grep -q '^State:.*[RS]' /proc/{pid}/status && echo STILL_RUNNING; "
                          "python3 -c \"import ctypes; print('attach', ctypes.CDLL(None).ptrace(16, " + str(pid)
                          + ", 0, 0))\"")
@@ -370,3 +379,25 @@ def test_a_failed_per_command_cleanup_quarantines_the_uid_at_close(monkeypatch):
         monkeypatch.undo()
         ws.close()
         shell._UIDS_QUARANTINED.discard(uid)
+
+
+def test_the_kill_helper_refuses_to_broadcast_while_it_still_holds_capabilities():
+    """With SECBIT_NO_SETUID_FIXUP the uid switch keeps CAP_KILL, and kill(-1) would reach root: exit 3 instead."""
+    import ctypes
+    import subprocess
+
+    def keep_caps_across_setuid():
+        if ctypes.CDLL(None, use_errno=True).prctl(28, 1 << 2, 0, 0, 0) != 0:  # PR_SET_SECUREBITS
+            os._exit(99)
+
+    bystander = subprocess.Popen(["sleep", "30"])  # root-owned: must survive
+    try:
+        uid = shell.UID_POOL[0]
+        helper = subprocess.run([sys.executable, "-I", "-S", "-c", shell._KILL_ALL,
+                                 str(uid + shell.KILLER_UID_OFFSET), str(uid)],
+                                preexec_fn=keep_caps_across_setuid, env={}, timeout=10, check=False)
+        assert helper.returncode == 3
+        assert bystander.poll() is None
+    finally:
+        bystander.kill()
+        bystander.wait()
