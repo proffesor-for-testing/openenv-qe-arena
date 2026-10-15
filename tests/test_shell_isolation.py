@@ -274,3 +274,31 @@ def test_a_process_name_that_is_not_utf8_does_not_break_cleanup():
     finally:
         ws.close()
     assert ws.uid not in shell._UIDS_QUARANTINED
+
+
+
+def test_cleanup_does_not_trust_a_scan_that_missed_a_process(monkeypatch):
+    """A /proc scan can miss a child forked after the directory was read (the parent then exits); the kill
+    must reach every process of the uid anyway, not only the pids a scan returned."""
+    import subprocess
+
+    ws = shell.Workspace({})
+    uid = ws.uid
+    sleeper = subprocess.Popen(["sleep", "300"], user=uid, group=uid, extra_groups=[], cwd="/",
+                               start_new_session=True)
+    time.sleep(0.2)
+    real_scan, calls = shell._uid_pids, []
+
+    def scan_that_misses_once(u):
+        calls.append(u)
+        return [] if len(calls) == 1 else real_scan(u)
+
+    monkeypatch.setattr(shell, "_uid_pids", scan_that_misses_once)
+    try:
+        shell._kill_uid(uid)
+        assert sleeper.wait(timeout=5) == -9
+    finally:
+        monkeypatch.undo()
+        if sleeper.poll() is None:
+            sleeper.kill()
+        ws.close()

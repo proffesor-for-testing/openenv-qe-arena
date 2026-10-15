@@ -164,7 +164,7 @@ def _probe() -> str:
             if not Path(f"/proc/{pid}").exists() or os.stat(f"/proc/{pid}").st_uid != uid:
                 log.warning("shell probe failed: the detached process did not start")
                 return "disabled"
-            killed = _kill_uid(uid)  # CAP_KILL: it must be killable; tini then reaps it
+            killed = _kill_uid(uid)  # kill(-1) as the uid must reach it; tini then reaps it
             for _ in range(50):
                 if not Path(f"/proc/{pid}").exists():
                     break
@@ -252,21 +252,26 @@ def _uid_pids(uid: int) -> list[int]:
     return pids
 
 
+_KILL_ALL = "import os, signal\ntry:\n    os.kill(-1, signal.SIGKILL)\nexcept ProcessLookupError:\n    pass\n"
+
+
 def _kill_uid(uid: int) -> bool:
-    """SIGKILL every process owned by ``uid`` (Linux /proc); True once none is left."""
+    """SIGKILL every process of ``uid``; True once none is left.
+
+    A helper running as ``uid`` sends kill(-1), which the kernel delivers to every process that uid may
+    signal in one pass under the task-list lock: a fork cannot slip between a scan and the kill, and no
+    numeric pid (which could be recycled) is ever signalled as root. /proc then confirms nothing is left."""
     for _ in range(20):
-        pids = _uid_pids(uid)
-        if not pids:
+        try:
+            subprocess.run([sys.executable, "-I", "-S", "-c", _KILL_ALL], user=uid, group=uid, extra_groups=[],
+                           env={}, cwd="/", stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=IO_TIMEOUT_S, check=False)
+        except (OSError, subprocess.SubprocessError):
+            return False
+        if not _uid_pids(uid):
             return True
-        for pid in pids:
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except ProcessLookupError:
-                continue
-            except PermissionError:
-                return False
         time.sleep(0.05)
-    return not _uid_pids(uid)
+    return False
 
 
 def _sweep_uid_files(uid: int) -> bool:
