@@ -39,3 +39,7 @@ board: a within-run training signal has not been seen to move the score. One obs
 `completions/clipped_ratio` averaged 0.84 and rose from 0.76 to 0.93 across the run. Most completions reached the
 length cap, and more did as training went on. Whether that counts whole multi-turn episodes or single turns is not
 documented, so we do not read it as a defect yet.
+
+**Correction (2026-10-17):** "most completions reached the length cap" is wrong. In TRL the metric counts
+completions whose last token is not EOS, and at least 98% of solved completions count as clipped. See
+`result-v5r.md`, "Reading".

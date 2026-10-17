@@ -197,14 +197,12 @@ def test_prompt_states_the_rules_and_the_refusal_cap():
     assert f"The first {MAX_FREE_REFUSALS} refusals do not use a step; later ones do." in task.prompt
 
 
-def test_export_rows_keep_the_base_cells_byte_identical(tmp_path):
-    import json  # noqa: PLC0415
-    import subprocess  # noqa: PLC0415
+def test_export_rows_keep_the_base_cells_byte_identical():
+    # In process, default cells only: the full CLI export also builds the domain and terminal configs,
+    # which this test never reads, and on a 4-vCPU runner it passed the old 900 s subprocess limit.
+    from export_dataset import export_rows  # noqa: PLC0415
 
-    root = Path(__file__).resolve().parents[1]
-    subprocess.run([sys.executable, str(root / "scripts" / "export_dataset.py"), str(tmp_path), "--seeds", "1"],
-                   check=True, capture_output=True, timeout=900)
-    rows = [json.loads(line) for line in (tmp_path / "tasks.jsonl").read_text().splitlines()]
+    rows = export_rows(tasks.TASK_IDS, range(1_000_000, 1_000_001))
     assert {r["task_id"] for r in rows} == set(tasks.TASK_IDS)
     for row in rows:
         assert ("edit_budget" in row) == (row["task_id"] == D4)
