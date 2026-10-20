@@ -264,6 +264,8 @@ def main(argv=None) -> int:
     parser.add_argument("--each-corpus", action="store_true",
                         help="pin every episode group to one corpus function, for every function of the "
                              "task's domain (difficulty table)")
+    parser.add_argument("--family", action="append", default=None,
+                        help="with --each-corpus on qe_skill cells: screen only these families (repeatable)")
     parser.add_argument("--fault-kind", choices=["injected", "real"], default=None,
                         help="force the qe_bugfix fault source (default: the environment's own mix)")
     parser.add_argument("--strict", action="store_true",
@@ -286,7 +288,9 @@ def main(argv=None) -> int:
         parser.error("a task is listed twice")
 
     def pool_names(t: str) -> list:  # a pool must match the cell: corpus functions, or a qe_skill cell's families
-        return list(skills.family_names(t) if t in skills.SKILL_TASK_IDS else cell_names(t))
+        if t in skills.SKILL_TASK_IDS:
+            return [f for f in skills.family_names(t) if args.family is None or f in args.family]
+        return list(cell_names(t))
 
     names = {t: pool_names(t) if args.each_corpus else [None] for t in tasks}
     jobs = [(t, args.seed_base + s, a, n) for t in tasks for n in names[t]
