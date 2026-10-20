@@ -8,7 +8,8 @@ the bytes of the graded file, and the hidden tests never exist on disk.
 
 Rewards are all or nothing, like ``evaluate``: a bug fix passes every hidden test, a mutant-kill answer kills
 every mutant with exact expected values. The flaky family and qe_bugfix-d4 (whose edit budget needs the edit
-op) are not served here.
+op) are not served here. The qe_skill content tasks (``skills``) are served only here: their output file is
+read as data by named checks, never run.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import Action, Observation, State
 from pydantic import Field
 
-from . import sandbox, shell
+from . import sandbox, shell, skills
 from .sandbox import InfraError
 from .tasks import ALL_TASK_IDS, BUDGETED, MAX_TESTS, MODULE, REPLY_FORMAT, Task, grade_bugfix, grade_mutant_kill, \
     make_task, parse_task_id
@@ -33,6 +34,7 @@ MAX_ANSWER_BYTES = 8192
 TERMINAL_FAMILIES = ("qe_bugfix", "qe_mutant_kill")
 TERMINAL_TASK_IDS = [t for t in ALL_TASK_IDS
                      if parse_task_id(t)[0] in TERMINAL_FAMILIES and parse_task_id(t)[1] != BUDGETED]
+TERMINAL_TASK_IDS += skills.SKILL_TASK_IDS  # appended, so every earlier cell keeps its position
 
 
 class TerminalAction(Action):
@@ -64,19 +66,25 @@ def _description(task: Task) -> str:
     return "\n".join(lines)
 
 
-def instruction(task: Task, files: list[str], exec_available: bool) -> str:
+def instruction(task: Task | skills.SkillTask, files: list[str], exec_available: bool) -> str:
     """The reset observation. It never names the workspace path, so a seeded reset replays byte for byte."""
-    if task.family == "qe_bugfix":
+    if task.family == skills.FAMILY:
+        description = task.prompt
+        deliver = (f"evaluate grades {task.output} with hidden checks; it scores 1 only if every check passes "
+                   "and 0 otherwise.")
+    elif task.family == "qe_bugfix":
         deliver = (f"Fix {MODULE} in place (write_file replaces the whole file). evaluate grades {MODULE} "
                    "with the hidden tests.")
     else:
         deliver = (f'Write your tests to {ANSWER} as {{"tests": [{{"args": [...], "expected": ...}}]}}. '
                    f"evaluate grades {ANSWER}.")
+    if task.family != skills.FAMILY:
+        description = _description(task)
     shell_line = (f"Your working directory holds {', '.join(files)}. Commands run there in bash, with python3 and "
                   "git; there is no network." if exec_available else
                   f"Your working directory holds {', '.join(files)}. exec is unavailable on this host.")
     return "\n".join([
-        _description(task),
+        description,
         "",
         shell_line,
         deliver,
@@ -89,11 +97,15 @@ def instruction(task: Task, files: list[str], exec_available: bool) -> str:
     ])
 
 
-def graded_file(task: Task) -> str:
+def graded_file(task: Task | skills.SkillTask) -> str:
+    if task.family == skills.FAMILY:
+        return task.output
     return MODULE if task.family == "qe_bugfix" else ANSWER
 
 
-def task_first_file(task: Task) -> str:
+def task_first_file(task: Task | skills.SkillTask) -> str:
+    if task.family == skills.FAMILY:
+        return sorted(task.files)[0]
     return MODULE if task.family == "qe_bugfix" else "original.py"
 
 
@@ -101,7 +113,8 @@ class TerminalEnvironment(Environment[TerminalAction, TerminalObservation, State
     SUPPORTS_CONCURRENT_SESSIONS = True
 
     def __init__(self, corpus_pool: tuple[str, ...] | None = None, fault_kind: str | None = None):
-        """``corpus_pool`` and ``fault_kind`` are for calibration only; the server passes nothing."""
+        """``corpus_pool`` and ``fault_kind`` are for calibration only; the server passes nothing. For a qe_skill
+        cell, ``corpus_pool`` names families instead of corpus functions."""
         super().__init__()
         self._pool = corpus_pool
         self._fault_kind = fault_kind
@@ -114,13 +127,16 @@ class TerminalEnvironment(Environment[TerminalAction, TerminalObservation, State
 
     def reset(self, seed: int | None = None, episode_id: str | None = None, **kwargs: Any) -> TerminalObservation:
         task_id = kwargs.get("task_id", TERMINAL_TASK_IDS[0])
-        if task_id not in TERMINAL_TASK_IDS:
+        if task_id not in TERMINAL_TASK_IDS and not (task_id in skills.ALL_SKILL_IDS and self._pool):
             raise ValueError(f"task_id {task_id!r} is not served by the terminal interface")
         if seed is None:
             seed = secrets.randbelow(2**63)
         kind = self._fault_kind if task_id.startswith("qe_bugfix") else None
-        with sandbox.session(self._sandbox_session):
-            task = make_task(task_id, seed, pool=self._pool, fault_kind=kind)
+        if task_id in skills.ALL_SKILL_IDS:
+            task = skills.make_skill_task(task_id, seed, pool=self._pool)
+        else:
+            with sandbox.session(self._sandbox_session):
+                task = make_task(task_id, seed, pool=self._pool, fault_kind=kind)
         self._close_workspace()
         self._task = task
         self._workspace = shell.Workspace(task.files)
@@ -163,6 +179,8 @@ class TerminalEnvironment(Environment[TerminalAction, TerminalObservation, State
         task = self._task
         if text is None:
             return 0.0
+        if task.family == skills.FAMILY:
+            return skills.grade(task, text)
         if task.family == "qe_bugfix":
             return grade_bugfix(task, text)
         if len(text.encode("utf-8")) > MAX_ANSWER_BYTES:

@@ -56,7 +56,11 @@ def solve_actions(task: Task) -> list[dict]:
 
 def terminal_solve_actions(task: Task) -> list[dict]:
     """Terminal-interface actions that earn reward 1.0: look, write the graded file, evaluate."""
-    if task.family == "qe_bugfix":
+    from qe_arena import skills  # noqa: PLC0415
+
+    if task.family == skills.FAMILY:
+        write = {"action_type": "write_file", "file_path": task.output, "content": skills.solve(task)}
+    elif task.family == "qe_bugfix":
         write = {"action_type": "write_file", "file_path": MODULE, "content": task.private["original"]}
     else:
         write = {"action_type": "write_file", "file_path": "answer.json",

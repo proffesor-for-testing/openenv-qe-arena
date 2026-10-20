@@ -46,7 +46,7 @@ from threading import Lock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from qe_arena import shell  # noqa: E402
+from qe_arena import shell, skills  # noqa: E402
 from qe_arena.environment import QEAction, QEEnvironment  # noqa: E402
 from qe_arena.tasks import DOMAIN_TASK_IDS, TASK_IDS, cell_names, parse_task_id  # noqa: E402
 from qe_arena.terminal_env import MAX_STEPS as TERMINAL_STEPS  # noqa: E402
@@ -264,6 +264,8 @@ def main(argv=None) -> int:
     parser.add_argument("--each-corpus", action="store_true",
                         help="pin every episode group to one corpus function, for every function of the "
                              "task's domain (difficulty table)")
+    parser.add_argument("--family", action="append", default=None,
+                        help="with --each-corpus on qe_skill cells: screen only these families (repeatable)")
     parser.add_argument("--fault-kind", choices=["injected", "real"], default=None,
                         help="force the qe_bugfix fault source (default: the environment's own mix)")
     parser.add_argument("--strict", action="store_true",
@@ -278,12 +280,19 @@ def main(argv=None) -> int:
     if terminal and not args.task_id:
         tasks = [t for t in tasks if t in TERMINAL_TASK_IDS]
     for task_id in tasks:
-        parse_task_id(task_id)
-        if terminal and task_id not in TERMINAL_TASK_IDS:
+        if task_id not in skills.ALL_SKILL_IDS:
+            parse_task_id(task_id)
+        if terminal and task_id not in TERMINAL_TASK_IDS and not (task_id in skills.ALL_SKILL_IDS and args.each_corpus):
             parser.error(f"{task_id} is not served by the terminal interface")
     if len(set(tasks)) != len(tasks):
         parser.error("a task is listed twice")
-    names = {t: list(cell_names(t)) if args.each_corpus else [None] for t in tasks}  # a pool must match the cell
+
+    def pool_names(t: str) -> list:  # a pool must match the cell: corpus functions, or a qe_skill cell's families
+        if t in skills.ALL_SKILL_IDS:
+            return [f for f in skills.family_names(t) if args.family is None or f in args.family]
+        return list(cell_names(t))
+
+    names = {t: pool_names(t) if args.each_corpus else [None] for t in tasks}
     jobs = [(t, args.seed_base + s, a, n) for t in tasks for n in names[t]
             for s in range(args.seeds) for a in range(args.attempts)]
     pools = sum(len(v) for v in names.values())
