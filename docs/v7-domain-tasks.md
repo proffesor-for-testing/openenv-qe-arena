@@ -35,9 +35,12 @@ that contract (`qe_arena/terminal_env.py`), so v7 adds task families, not a new 
 
 ## What v7 adds
 
-A new family, `qe_skill`, with cells `qe_skill-<slug>-d<level>` (slugs `science`, `math`, `media`; levels 1–3). It is
-served only by the terminal interface and generated procedurally from `(task_id, seed)`, like every existing cell.
-New IDs are appended to `ALL_TASK_IDS`, so existing cells and their 24 + 4 golden pins stay byte-identical.
+A new family, `qe_skill`, with 9 cells `qe_skill-<slug>-d<level>` (slugs `science`, `math`, `media`; levels 1–3).
+Each seed draws one of the domain's four families, as a code cell draws one corpus function. Calibration screens one
+family at a time with `--each-corpus` (the pool names families), and families that fail calibration are removed
+from serving. The cells are served only by the terminal interface and generated from `(task_id, seed)`. They are
+appended to `TERMINAL_TASK_IDS`, so existing cells, their instructions and their golden pins stay byte-identical.
+Code: `qe_arena/skills/`.
 
 Each task:
 - writes **input files** into the workspace (CSV, JSON, SRT, plain text), never the reference;
@@ -99,7 +102,8 @@ Before calibration, one more check: the episode shell's `python3` in the termina
 The same tooling and regime as v5: `scripts/calibrate.py --interface terminal --strict`, Qwen/Qwen3.8-27B with
 thinking off through the HF router, run inside the terminal image as root on ruos (uid isolation is required).
 
-1. **Screen:** 12 families × 3 levels = 36 cells. 4 seeds × 4 attempts = 16 episodes per cell, 576 episodes in total.
+1. **Screen:** 12 families × 3 levels = 36 (cell, family) pools (`--each-corpus`). 4 seeds × 4 attempts = 16 episodes
+   per pool, 576 episodes in total.
    The v5 calibration averaged about 2,000 peak context tokens and 4.8 actions per episode, so a cap of
    `--max-total-tokens 8000000` should cover it. The cost depends on router pricing. **Dragan approves the cap before
    the run.**
@@ -114,8 +118,8 @@ thinking off through the HF router, run inside the terminal image as root on ruo
 
 - **Same image contract** with a new digest (the families are new code). The dataset is a new revision exported with
   the `qe_skill` rows.
-- **8 train cells, all content:** about 3 science, 3 math and 2 media, chosen from the kept cells, at most one cell
-  per family. Industrial and office cells are left out: they cannot raise the composite.
+- **8 of the 9 content cells**, each serving only its families that passed calibration. Industrial and office cells
+  are left out, because they cannot raise the composite.
 - **Predictions are committed before submission**, in the v5/v6 format:
   - P1: training signal, with reward rising and gradient share in a stated band;
   - P2: total 2–4;
