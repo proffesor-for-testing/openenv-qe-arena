@@ -46,7 +46,7 @@ from threading import Lock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from qe_arena import shell  # noqa: E402
+from qe_arena import shell, skills  # noqa: E402
 from qe_arena.environment import QEAction, QEEnvironment  # noqa: E402
 from qe_arena.tasks import DOMAIN_TASK_IDS, TASK_IDS, cell_names, parse_task_id  # noqa: E402
 from qe_arena.terminal_env import MAX_STEPS as TERMINAL_STEPS  # noqa: E402
@@ -278,12 +278,17 @@ def main(argv=None) -> int:
     if terminal and not args.task_id:
         tasks = [t for t in tasks if t in TERMINAL_TASK_IDS]
     for task_id in tasks:
-        parse_task_id(task_id)
+        if task_id not in skills.SKILL_TASK_IDS:
+            parse_task_id(task_id)
         if terminal and task_id not in TERMINAL_TASK_IDS:
             parser.error(f"{task_id} is not served by the terminal interface")
     if len(set(tasks)) != len(tasks):
         parser.error("a task is listed twice")
-    names = {t: list(cell_names(t)) if args.each_corpus else [None] for t in tasks}  # a pool must match the cell
+
+    def pool_names(t: str) -> list:  # a pool must match the cell: corpus functions, or a qe_skill cell's families
+        return list(skills.family_names(t) if t in skills.SKILL_TASK_IDS else cell_names(t))
+
+    names = {t: pool_names(t) if args.each_corpus else [None] for t in tasks}
     jobs = [(t, args.seed_base + s, a, n) for t in tasks for n in names[t]
             for s in range(args.seeds) for a in range(args.attempts)]
     pools = sum(len(v) for v in names.values())

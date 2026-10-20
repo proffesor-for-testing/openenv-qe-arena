@@ -59,7 +59,7 @@ def play(task_id: str, seed: int, actions: list[dict]):
 
 def test_served_cells_are_bugfix_d1_to_d3_and_mutant_kill_in_every_domain():
     families = {t.split("-")[0] for t in TERMINAL_TASK_IDS}
-    assert families == {"qe_bugfix", "qe_mutant_kill"}
+    assert families == {"qe_bugfix", "qe_mutant_kill", "qe_skill"}
     assert not any(t.endswith("-d4") for t in TERMINAL_TASK_IDS)
     with pytest.raises(ValueError):
         TerminalEnvironment().reset(seed=1, task_id="qe_flaky-d1")

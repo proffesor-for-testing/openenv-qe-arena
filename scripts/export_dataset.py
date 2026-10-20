@@ -20,7 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from qe_arena import corpus  # noqa: E402
+from qe_arena import corpus, skills  # noqa: E402
 from qe_arena.tasks import DOMAIN_TASK_IDS, TASK_IDS, make_task, task_domain  # noqa: E402
 from qe_arena.terminal_env import TERMINAL_TASK_IDS, instruction  # noqa: E402
 
@@ -124,7 +124,8 @@ def main() -> int:
 
 def domain_label(task_id: str) -> str:
     """The row's `domain`: the arena domain with spaces, which keeps "software engineering" as it was."""
-    return task_domain(task_id).replace("-", " ")
+    domain = skills.parse_skill_id(task_id)[0] if task_id in skills.SKILL_TASK_IDS else task_domain(task_id)
+    return domain.replace("-", " ")
 
 
 def export_rows(task_ids: list[str], seeds: range) -> list[dict]:
@@ -148,7 +149,7 @@ def export_terminal_rows(task_ids: list[str], seeds: range) -> list[dict]:
     rows = []
     for task_id in task_ids:
         for seed in seeds:
-            task = make_task(task_id, seed)
+            task = skills.make_skill_task(task_id, seed) if task_id in skills.SKILL_TASK_IDS else make_task(task_id, seed)
             rows.append({
                 "task_id": task_id, "seed": seed, "split": "train", "domain": domain_label(task_id),
                 "family": task.family, "difficulty": task.difficulty, "interface": "terminal",
