@@ -133,7 +133,19 @@ def _relative(value: Any, reference: float, rel: float) -> bool:
 
 
 # S2 calibration: a linear calibration curve and the unknowns read off it.
+INVERTED_MARGIN = 2e-4  # 20x the slope tolerance: regressing the wrong way round must miss by at least this
+
+
 def _calibration_build(level: int, rng: random.Random) -> Built:
+    """A near-perfect fit makes the inverted-axes slope differ from the right one by only 1 - r^2; redraw those."""
+    while True:
+        built = _calibration_once(level, rng)
+        wrong = json.loads(_calibration_solve(built.files, level, "inverted_axes"))
+        if abs(wrong["slope"] - built.reference["slope"]) >= INVERTED_MARGIN * abs(built.reference["slope"]):
+            return built
+
+
+def _calibration_once(level: int, rng: random.Random) -> Built:
     top = rng.choice((5, 10, 20, 25, 50))
     count = rng.randint(6, 8)
     concs = [round(top * k / (count - 1), 3) for k in range(count)]
