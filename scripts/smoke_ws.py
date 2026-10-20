@@ -25,6 +25,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from oracle import solve_actions, terminal_solve_actions  # noqa: E402
+from qe_arena import skills  # noqa: E402
 from qe_arena.tasks import ALL_TASK_IDS, make_task  # noqa: E402
 
 TERMINAL_EXAMPLES = [{"action_type": "evaluate"}]
@@ -74,7 +75,8 @@ def main() -> int:
             checks = {}
             reset_a, last = episode(args.url, task_id, seed, examples)
             checks["example_reward_0"] = last["done"] and last["reward"] == 0
-            reset_b, last = episode(args.url, task_id, seed, solve(make_task(task_id, seed)))
+            build = skills.make_skill_task if task_id in skills.ALL_SKILL_IDS else make_task
+            reset_b, last = episode(args.url, task_id, seed, solve(build(task_id, seed)))
             checks["oracle_reward_1"] = last["done"] and last["reward"] == 1
             checks["seeded_reset_replay"] = reset_a["observation"] == reset_b["observation"]
             ok = all(checks.values())
