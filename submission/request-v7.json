@@ -1,0 +1,227 @@
+{
+  "dataset": "Profa-QE/openenv-qe-arena-tasks",
+  "example_actions": [
+    {
+      "action_type": "evaluate"
+    }
+  ],
+  "finish_action": {
+    "action_type": "evaluate"
+  },
+  "image": "ghcr.io/proffesor-for-testing/openenv-qe-arena-terminal@sha256:9307e4e603d45b4b9800dcb820811516ea64313562fbb2082fb0f147c5eed85b",
+  "name": "QE Arena v7: science, math and media content tasks in a terminal (Profa-QE)",
+  "schema": {
+    "action": {
+      "additionalProperties": false,
+      "properties": {
+        "action_type": {
+          "description": "exec: run a bash command in the working directory and see its output. write_file: write a whole file. evaluate: end the episode; the hidden tests grade your file.",
+          "enum": [
+            "exec",
+            "write_file",
+            "evaluate"
+          ],
+          "title": "Action Type",
+          "type": "string"
+        },
+        "command": {
+          "default": "",
+          "description": "exec: the bash command.",
+          "title": "Command",
+          "type": "string"
+        },
+        "content": {
+          "default": "",
+          "description": "write_file: the complete new file content.",
+          "title": "Content",
+          "type": "string"
+        },
+        "file_path": {
+          "default": "",
+          "description": "write_file: the file to write, relative to the working directory.",
+          "title": "File Path",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "description": "Additional metadata for the action",
+          "title": "Metadata",
+          "type": "object"
+        }
+      },
+      "required": [
+        "action_type"
+      ],
+      "title": "TerminalAction",
+      "type": "object"
+    },
+    "observation": {
+      "additionalProperties": false,
+      "properties": {
+        "done": {
+          "default": false,
+          "description": "Whether the episode has terminated",
+          "title": "Done",
+          "type": "boolean"
+        },
+        "error": {
+          "default": "",
+          "title": "Error",
+          "type": "string"
+        },
+        "instruction": {
+          "default": "",
+          "title": "Instruction",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "description": "Additional metadata for the observation",
+          "title": "Metadata",
+          "type": "object"
+        },
+        "output": {
+          "default": "",
+          "title": "Output",
+          "type": "string"
+        },
+        "reward": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Reward signal from the last action",
+          "title": "Reward"
+        },
+        "success": {
+          "default": false,
+          "title": "Success",
+          "type": "boolean"
+        }
+      },
+      "title": "TerminalObservation",
+      "type": "object"
+    }
+  },
+  "server_port": 8000,
+  "source": "https://github.com/proffesor-for-testing/openenv-qe-arena",
+  "submission_id": "profa-qe-arena-v7",
+  "tasks": [
+    {
+      "completion_tokens": 4096,
+      "context_tokens": 8192,
+      "cpu_floor_vcpus": 1,
+      "memory_gib": 2,
+      "reset_wall_s": 180,
+      "rollout_wall_s": 900,
+      "split": "train",
+      "task_id": "qe_skill-science-d2",
+      "tool_calls_per_minute": 60,
+      "tool_calls_total": 32,
+      "tool_wall_s": 120,
+      "verifier_wall_s": 120,
+      "workspace_gib": 10
+    },
+    {
+      "completion_tokens": 4096,
+      "context_tokens": 8192,
+      "cpu_floor_vcpus": 1,
+      "memory_gib": 2,
+      "reset_wall_s": 180,
+      "rollout_wall_s": 900,
+      "split": "train",
+      "task_id": "qe_skill-science-d3",
+      "tool_calls_per_minute": 60,
+      "tool_calls_total": 32,
+      "tool_wall_s": 120,
+      "verifier_wall_s": 120,
+      "workspace_gib": 10
+    },
+    {
+      "completion_tokens": 4096,
+      "context_tokens": 8192,
+      "cpu_floor_vcpus": 1,
+      "memory_gib": 2,
+      "reset_wall_s": 180,
+      "rollout_wall_s": 900,
+      "split": "train",
+      "task_id": "qe_skill-math-d1",
+      "tool_calls_per_minute": 60,
+      "tool_calls_total": 32,
+      "tool_wall_s": 120,
+      "verifier_wall_s": 120,
+      "workspace_gib": 10
+    },
+    {
+      "completion_tokens": 4096,
+      "context_tokens": 8192,
+      "cpu_floor_vcpus": 1,
+      "memory_gib": 2,
+      "reset_wall_s": 180,
+      "rollout_wall_s": 900,
+      "split": "train",
+      "task_id": "qe_skill-math-d2",
+      "tool_calls_per_minute": 60,
+      "tool_calls_total": 32,
+      "tool_wall_s": 120,
+      "verifier_wall_s": 120,
+      "workspace_gib": 10
+    },
+    {
+      "completion_tokens": 4096,
+      "context_tokens": 8192,
+      "cpu_floor_vcpus": 1,
+      "memory_gib": 2,
+      "reset_wall_s": 180,
+      "rollout_wall_s": 900,
+      "split": "train",
+      "task_id": "qe_skill-math-d3",
+      "tool_calls_per_minute": 60,
+      "tool_calls_total": 32,
+      "tool_wall_s": 120,
+      "verifier_wall_s": 120,
+      "workspace_gib": 10
+    },
+    {
+      "completion_tokens": 4096,
+      "context_tokens": 8192,
+      "cpu_floor_vcpus": 1,
+      "memory_gib": 2,
+      "reset_wall_s": 180,
+      "rollout_wall_s": 900,
+      "split": "train",
+      "task_id": "qe_skill-media-d1",
+      "tool_calls_per_minute": 60,
+      "tool_calls_total": 32,
+      "tool_wall_s": 120,
+      "verifier_wall_s": 120,
+      "workspace_gib": 10
+    },
+    {
+      "completion_tokens": 4096,
+      "context_tokens": 8192,
+      "cpu_floor_vcpus": 1,
+      "memory_gib": 2,
+      "reset_wall_s": 180,
+      "rollout_wall_s": 900,
+      "split": "train",
+      "task_id": "qe_skill-media-d2",
+      "tool_calls_per_minute": 60,
+      "tool_calls_total": 32,
+      "tool_wall_s": 120,
+      "verifier_wall_s": 120,
+      "workspace_gib": 10
+    }
+  ]
+}
