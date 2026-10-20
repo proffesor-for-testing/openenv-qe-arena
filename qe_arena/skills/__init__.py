@@ -70,12 +70,26 @@ def _families() -> dict[str, tuple[Family, ...]]:
 
 
 FAMILIES = _families()
-SKILL_TASK_IDS = [f"{FAMILY}-{SLUGS[domain]}-d{level}" for domain in FAMILIES for level in LEVELS]
+ALL_SKILL_IDS = [f"{FAMILY}-{SLUGS[domain]}-d{level}" for domain in FAMILIES for level in LEVELS]
+
+# What an episode may draw, per cell: the families whose strict untrained solve rate fell in 4-12 of 16 in the v7
+# calibration (2026-10-20, runs/v7-cal; subtitles after its one adjustment round). Cells with no such family are
+# not served. Calibration reaches any (cell, family) through ``pool``.
+SERVED = {
+    "qe_skill-science-d2": ("units", "calibration", "decay", "dilution"),
+    "qe_skill-science-d3": ("units", "decay", "dilution"),
+    "qe_skill-math-d1": ("linear", "counting", "congruences", "falsify"),
+    "qe_skill-math-d2": ("counting", "congruences"),
+    "qe_skill-math-d3": ("linear", "counting", "congruences"),
+    "qe_skill-media-d1": ("timecode", "catalogue", "assets"),
+    "qe_skill-media-d2": ("subtitles", "timecode", "catalogue", "assets"),
+}
+SKILL_TASK_IDS = [task_id for task_id in ALL_SKILL_IDS if task_id in SERVED]
 
 
 def parse_skill_id(task_id: str) -> tuple[str, int]:
-    """(domain, level) of a served qe_skill task ID."""
-    if type(task_id) is not str or task_id not in SKILL_TASK_IDS:
+    """(domain, level) of a qe_skill task ID (served, or reachable by calibration through a pool)."""
+    if type(task_id) is not str or task_id not in ALL_SKILL_IDS:
         raise ValueError(f"invalid task_id: {task_id!r}")
     _, slug, level = task_id.split("-")
     return BY_SLUG[slug], int(level[1:])
@@ -109,6 +123,10 @@ def make_skill_task(task_id: str, seed: int, *, pool: tuple[str, ...] | None = N
         if not pool or any(name not in {f.name for f in fams} for name in pool):
             raise ValueError(f"pool must name {domain} families: {[f.name for f in fams]}")
         fams = tuple(f for f in fams if f.name in pool)
+    elif task_id in SERVED:
+        fams = tuple(f for f in fams if f.name in SERVED[task_id])
+    else:
+        raise ValueError(f"{task_id} is not served (no family passed calibration); calibration must name a pool")
     rng = random.Random(f"{task_id}:{seed}")
     fam = rng.choice(fams)
     for _ in range(MAX_ATTEMPTS):

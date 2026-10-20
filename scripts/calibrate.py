@@ -280,15 +280,15 @@ def main(argv=None) -> int:
     if terminal and not args.task_id:
         tasks = [t for t in tasks if t in TERMINAL_TASK_IDS]
     for task_id in tasks:
-        if task_id not in skills.SKILL_TASK_IDS:
+        if task_id not in skills.ALL_SKILL_IDS:
             parse_task_id(task_id)
-        if terminal and task_id not in TERMINAL_TASK_IDS:
+        if terminal and task_id not in TERMINAL_TASK_IDS and not (task_id in skills.ALL_SKILL_IDS and args.each_corpus):
             parser.error(f"{task_id} is not served by the terminal interface")
     if len(set(tasks)) != len(tasks):
         parser.error("a task is listed twice")
 
     def pool_names(t: str) -> list:  # a pool must match the cell: corpus functions, or a qe_skill cell's families
-        if t in skills.SKILL_TASK_IDS:
+        if t in skills.ALL_SKILL_IDS:
             return [f for f in skills.family_names(t) if args.family is None or f in args.family]
         return list(cell_names(t))
 

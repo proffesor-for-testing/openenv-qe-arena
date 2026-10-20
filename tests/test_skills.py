@@ -15,7 +15,8 @@ from qe_arena import shell, skills
 from qe_arena.terminal_env import MAX_STEPS, TERMINAL_TASK_IDS, TerminalAction, TerminalEnvironment, instruction
 
 SEEDS = range(200)
-CELLS = skills.SKILL_TASK_IDS
+CELLS = skills.ALL_SKILL_IDS  # every (cell, family) is tested through a pool, served or not
+POOLS = [(t, f) for t in CELLS for f in skills.family_names(t)]
 
 
 @pytest.fixture(autouse=True)
@@ -27,23 +28,33 @@ def unsandboxed(monkeypatch, tmp_path):
     shell._reset_mode_for_tests()
 
 
-def test_every_domain_cell_is_served_by_the_terminal_and_appended_after_the_code_cells():
+def test_served_cells_follow_calibration_and_are_appended_after_the_code_cells():
     assert CELLS == [f"qe_skill-{slug}-d{level}" for slug in ("science", "math", "media") for level in (1, 2, 3)]
-    assert TERMINAL_TASK_IDS[-len(CELLS):] == CELLS
+    served = skills.SKILL_TASK_IDS
+    assert served == [t for t in CELLS if t in skills.SERVED] and len(served) == 7
+    assert TERMINAL_TASK_IDS[-len(served):] == served
+    for task_id in served:
+        kinds = {skills.make_skill_task(task_id, s).kind for s in range(120)}
+        assert kinds == set(skills.SERVED[task_id]), task_id
+    for task_id in set(CELLS) - set(served):
+        with pytest.raises(ValueError):
+            skills.make_skill_task(task_id, 1)
+        with pytest.raises(ValueError):
+            TerminalEnvironment().reset(seed=1, task_id=task_id)
 
 
-@pytest.mark.parametrize("task_id", CELLS)
-def test_the_oracle_earns_one_on_every_seed(task_id):
+@pytest.mark.parametrize(("task_id", "family"), POOLS)
+def test_the_oracle_earns_one_on_every_seed(task_id, family):
     for seed in SEEDS:
-        task = skills.make_skill_task(task_id, seed)
+        task = skills.make_skill_task(task_id, seed, pool=(family,))
         assert skills.grade(task, skills.solve(task)) == 1.0, (task.kind, seed)
 
 
-@pytest.mark.parametrize("task_id", CELLS)
-def test_every_applicable_trap_scores_zero_on_every_seed(task_id):
+@pytest.mark.parametrize(("task_id", "family"), POOLS)
+def test_every_applicable_trap_scores_zero_on_every_seed(task_id, family):
     seen = set()
     for seed in SEEDS:
-        task = skills.make_skill_task(task_id, seed)
+        task = skills.make_skill_task(task_id, seed, pool=(family,))
         for trap, levels in task.private["family"].traps.items():
             if task.difficulty in levels:
                 seen.add((task.kind, trap))
@@ -51,10 +62,10 @@ def test_every_applicable_trap_scores_zero_on_every_seed(task_id):
     assert seen, "a cell with no traps tests nothing"
 
 
-@pytest.mark.parametrize("task_id", CELLS)
-def test_empty_copied_and_malformed_outputs_score_zero(task_id):
+@pytest.mark.parametrize(("task_id", "family"), POOLS)
+def test_empty_copied_and_malformed_outputs_score_zero(task_id, family):
     for seed in range(40):
-        task = skills.make_skill_task(task_id, seed)
+        task = skills.make_skill_task(task_id, seed, pool=(family,))
         good = skills.solve(task)
         bad = [None, "", " ", "{}", "[]", "null", good[: len(good) // 2], good + "\n{}" if good.startswith("{") else "x",
                "x" * (skills.MAX_OUTPUT_BYTES + 1), *task.files.values()]
@@ -63,7 +74,7 @@ def test_empty_copied_and_malformed_outputs_score_zero(task_id):
 
 
 def test_non_finite_numbers_and_booleans_never_pass_a_numeric_check():
-    task = next(t for t in (skills.make_skill_task("qe_skill-science-d1", s) for s in SEEDS) if t.kind == "units")
+    task = skills.make_skill_task("qe_skill-science-d1", 0, pool=("units",))
     out = json.loads(skills.solve(task))
     sample = next(iter(out["means"]))
     for value in ("NaN", "Infinity", "true", '"1.0"'):
@@ -73,7 +84,7 @@ def test_non_finite_numbers_and_booleans_never_pass_a_numeric_check():
 
 
 def test_numeric_answers_pass_inside_the_stated_rounding_and_fail_outside_it():
-    task = next(t for t in (skills.make_skill_task("qe_skill-science-d2", s) for s in SEEDS) if t.kind == "units")
+    task = skills.make_skill_task("qe_skill-science-d2", 0, pool=("units",))
     out = json.loads(skills.solve(task))
     sample = next(iter(out["means"]))
     for delta, expected in ((0.0004, 1.0), (-0.0004, 1.0), (0.002, 0.0)):
@@ -82,13 +93,13 @@ def test_numeric_answers_pass_inside_the_stated_rounding_and_fail_outside_it():
 
 
 def test_fractions_must_be_reduced_strings_and_srt_times_allow_one_millisecond():
-    task = next(t for t in (skills.make_skill_task("qe_skill-math-d1", s) for s in SEEDS) if t.kind == "linear")
+    task = skills.make_skill_task("qe_skill-math-d1", 0, pool=("linear",))
     out = json.loads(skills.solve(task))
     first = out["x"][0]
     num, _, den = first.partition("/")
     for wrong in (" " + first, "+" + first.lstrip("-"), f"{int(num) * 2}/{int(den or 1) * 2}", first + ".0"):
         assert skills.grade(task, json.dumps(dict(out, x=[wrong, *out["x"][1:]]))) == 0, wrong
-    task = next(t for t in (skills.make_skill_task("qe_skill-media-d1", s) for s in SEEDS) if t.kind == "subtitles")
+    task = skills.make_skill_task("qe_skill-media-d1", 0, pool=("subtitles",))
     text = skills.solve(task)
     first = text.split("\n")[1]
     end_ms = int(first[-3:])
@@ -100,16 +111,16 @@ def test_fractions_must_be_reduced_strings_and_srt_times_allow_one_millisecond()
 
 
 def test_same_seed_rebuilds_the_same_task_and_seeds_differ():
-    for task_id in CELLS:
+    for task_id in skills.SKILL_TASK_IDS:
         a, b = skills.make_skill_task(task_id, 5), skills.make_skill_task(task_id, 5)
         assert (a.kind, a.files, a.prompt, a.output) == (b.kind, b.files, b.prompt, b.output)
         assert a.files != skills.make_skill_task(task_id, 6).files or a.kind != skills.make_skill_task(task_id, 6).kind
 
 
 def test_the_reference_never_reaches_the_workspace_or_the_instruction():
-    for task_id in CELLS:
+    for task_id, family in POOLS:
         for seed in range(30):
-            task = skills.make_skill_task(task_id, seed)
+            task = skills.make_skill_task(task_id, seed, pool=(family,))
             answer = skills.solve(task)
             assert task.output not in task.files
             visible = instruction(task, sorted(task.files), True) + "".join(task.files.values())
@@ -128,7 +139,7 @@ def test_a_pool_restricts_a_cell_to_named_families_and_rejects_others():
         skills.make_skill_task("qe_skill-office-d1", 1)
 
 
-@pytest.mark.parametrize("task_id", CELLS)
+@pytest.mark.parametrize("task_id", skills.SKILL_TASK_IDS)
 def test_the_terminal_episode_grades_the_written_output_file(task_id):
     for seed in (3, 11):
         env = TerminalEnvironment()

@@ -150,3 +150,43 @@ Meanwhile the daily slot can still take a free draw (a v6 or v5 replicate), each
   existing cells, so it would need new pins and a separate decision.
 - **Grading outside WASM is new for us.** It reads data only, but it needs its own review: parser limits, no `eval`,
   no YAML or pickle.
+
+## Calibration result (2026-10-20)
+
+The screen ran on ruos in the v7 terminal image, in uid mode: 576 strict episodes, Qwen/Qwen3.8-27B with thinking off,
+seeds 700000+, 0 errors, 3.85M tokens. A subtitles re-screen followed: 48 episodes, seeds 710000+, 0.54M tokens.
+Total: 4.39M tokens of the approved 8M. The raw rows are in ruos `~/projects/v7-cal/` (`runs/` is gitignored).
+
+Strict solves out of 16 per (family, level):
+
+| Family | d1 | d2 | d3 |
+|---|---|---|---|
+| science units | 13 | **8** | **7** |
+| science calibration | 15 | **12** | 14 |
+| science decay | 15 | **8** | **12** |
+| science dilution | 14 | **10** | **8** |
+| math linear | **12** | 15 | **9** |
+| math counting | **6** | **6** | **7** |
+| math congruences | **7** | **12** | **11** |
+| math falsify | **9** | 3 | 0 |
+| media subtitles (first version) | 14 | 13 | 15 |
+| media subtitles (after adjustment) | 16 | **9** | 3 |
+| media timecode | **12** | **11** | 2 |
+| media catalogue | **10** | **11** | 13 |
+| media assets | **11** | **12** | 13 |
+
+Bold marks a kept combination. Episodes ending on the completion or context budget were at most 2 of 16 everywhere.
+
+**One change to the keep rule, decided by Dragan after seeing the data.** The rule above also capped protocol failures
+(strict ends) at 15%. Most strict ends were one habit: a multi-line `python3 -c "..."` command with raw newlines inside
+the JSON string. Lenient parsing scored those episodes 1.0 (compare board #262). That failure is already in the
+strict solve rate as a 0, and it is the kind of habit training can fix, so it was dropped as a separate gate. A
+combination is kept on strict solves 4–12 of 16 and budget ends under 25%. With the protocol cap in place, 16
+combinations would have been kept instead of 26.
+
+**Adjustment round:** subtitles was the only family with no level in the band. It got one harder version (d1 sort,
+d2 gap, d3 minimum duration before the gap rule) and was re-screened. d2 entered the band. d3 landed at 3 of 16,
+one under the band, and there is no second round.
+
+**Served (`qe_arena/skills/__init__.py` `SERVED`):** 7 cells. science d2 and d3, math d1 to d3, and media d1 and d2.
+science d1 (every family too easy) and media d3 (three families too easy, timecode at 2 of 16) are not served.

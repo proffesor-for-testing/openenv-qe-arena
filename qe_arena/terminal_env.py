@@ -127,12 +127,12 @@ class TerminalEnvironment(Environment[TerminalAction, TerminalObservation, State
 
     def reset(self, seed: int | None = None, episode_id: str | None = None, **kwargs: Any) -> TerminalObservation:
         task_id = kwargs.get("task_id", TERMINAL_TASK_IDS[0])
-        if task_id not in TERMINAL_TASK_IDS:
+        if task_id not in TERMINAL_TASK_IDS and not (task_id in skills.ALL_SKILL_IDS and self._pool):
             raise ValueError(f"task_id {task_id!r} is not served by the terminal interface")
         if seed is None:
             seed = secrets.randbelow(2**63)
         kind = self._fault_kind if task_id.startswith("qe_bugfix") else None
-        if task_id in skills.SKILL_TASK_IDS:
+        if task_id in skills.ALL_SKILL_IDS:
             task = skills.make_skill_task(task_id, seed, pool=self._pool)
         else:
             with sandbox.session(self._sandbox_session):
