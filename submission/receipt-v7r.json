@@ -1,0 +1,12 @@
+{
+  "accepted_at": "2026-10-22T08:48:42.252425+00:00",
+  "arena_state": "validated",
+  "created_at": "2026-10-22T08:48:41.789381+00:00",
+  "post_attempted": true,
+  "reconciled_at": "2026-10-22T08:50:42.791977+00:00",
+  "request_sha256": "cb5e4b918e2467437f9b2ed97b991aa2731a2e1ad425aff94d6ecf3930935b82",
+  "run_id": "1c6db4c10fe1d0559ddf934c",
+  "slot_state": "used",
+  "state": "recorded",
+  "submission_id": "profa-qe-arena-v7r"
+}
