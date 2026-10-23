@@ -75,6 +75,9 @@ ALL_SKILL_IDS = [f"{FAMILY}-{SLUGS[domain]}-d{level}" for domain in FAMILIES for
 # What an episode may draw, per cell: the families whose strict untrained solve rate fell in 4-12 of 16 in the v7
 # calibration (2026-10-20, runs/v7-cal; subtitles after its one adjustment round). Cells with no such family are
 # not served. Calibration reaches any (cell, family) through ``pool``.
+# v8 adds media-d3 from the same calibration, below that band on purpose: subtitles 3 and timecode 2 of 16, the two
+# media families still unsolved most of the time (catalogue and assets, 13 of 16, stay out). It is last in
+# ALL_SKILL_IDS, so every earlier cell keeps its position.
 SERVED = {
     "qe_skill-science-d2": ("units", "calibration", "decay", "dilution"),
     "qe_skill-science-d3": ("units", "decay", "dilution"),
@@ -83,6 +86,7 @@ SERVED = {
     "qe_skill-math-d3": ("linear", "counting", "congruences"),
     "qe_skill-media-d1": ("timecode", "catalogue", "assets"),
     "qe_skill-media-d2": ("subtitles", "timecode", "catalogue", "assets"),
+    "qe_skill-media-d3": ("subtitles", "timecode"),
 }
 SKILL_TASK_IDS = [task_id for task_id in ALL_SKILL_IDS if task_id in SERVED]
 

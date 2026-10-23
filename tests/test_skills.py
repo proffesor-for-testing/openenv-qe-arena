@@ -31,7 +31,7 @@ def unsandboxed(monkeypatch, tmp_path):
 def test_served_cells_follow_calibration_and_are_appended_after_the_code_cells():
     assert CELLS == [f"qe_skill-{slug}-d{level}" for slug in ("science", "math", "media") for level in (1, 2, 3)]
     served = skills.SKILL_TASK_IDS
-    assert served == [t for t in CELLS if t in skills.SERVED] and len(served) == 7
+    assert served == [t for t in CELLS if t in skills.SERVED] and len(served) == 8
     assert TERMINAL_TASK_IDS[-len(served):] == served
     for task_id in served:
         kinds = {skills.make_skill_task(task_id, s).kind for s in range(120)}
