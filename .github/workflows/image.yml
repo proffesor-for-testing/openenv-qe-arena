@@ -89,6 +89,11 @@ jobs:
           test "$layers" -lt 128
           test "$user" = "10001"
           test "$size" -lt 2147483648
+      - name: Verify application, pip and OS trust stores
+        run: |
+          docker run --rm --network none --entrypoint python \
+            -v "$PWD/scripts/check_trust_stores.py:/tmp/check_trust_stores.py:ro" \
+            qe-arena:ci /tmp/check_trust_stores.py
       - name: Validate the running container
         run: |
           python -m venv /tmp/v && /tmp/v/bin/pip install -q -r requirements.lock
@@ -138,6 +143,11 @@ jobs:
         run: |
           docker run --rm -v "$PWD/tests:/app/tests:ro" -v "$PWD/scripts:/app/scripts:ro" qe-arena-terminal:ci \
             sh -c 'pip install -q pytest==9.1.1 && python -m pytest -q -p no:cacheprovider /app/tests/test_shell_isolation.py'
+      - name: Verify application, pip and OS trust stores
+        run: |
+          docker run --rm --network none --entrypoint python \
+            -v "$PWD/scripts/check_trust_stores.py:/tmp/check_trust_stores.py:ro" \
+            qe-arena-terminal:ci /tmp/check_trust_stores.py
       - name: Validate the running container
         run: |
           python -m venv /tmp/v && /tmp/v/bin/pip install -q -r requirements.lock
