@@ -34,7 +34,7 @@ The v7 and v7r metrics were lost in the 10-19 to 10-21 outage (board #342, #343)
 - **Cause:** the cells were calibrated to 4–12 of 16 untrained strict solves, and the model learned them within a
   few visits. The run was healthy early and nearly idle late.
 - **Clipped ratio:** mean 0.95, while the mean completion length was 495 tokens. This is the TRL "last token not
-  EOS" flag already explained for v5 (board #383), not truncation.
+  EOS" flag already explained for v5, not truncation (rUv's metaharness PR #383 reached the same reading).
 
 ### P2 to P5
 
