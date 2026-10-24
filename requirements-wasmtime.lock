@@ -14,3 +14,8 @@ wasmtime==47.0.1 \
     --hash=sha256:4e46a4a29092a2ac1001159d5673e2a23996f4474261c791401867b1630429f4 \
     --hash=sha256:812058e7b40b73defa1d5118c25faa674920b7833c0a22cf79f0ff4eadee0c32 \
     --hash=sha256:fab6ee0e87354f14ef228fa71b40841dd3c2c713f6efce636af234b4e3e6edcc
+
+# pip vendors its own CA bundle: patch it before the next network install.
+# https://pip.pypa.io/en/stable/news/#v26-2-2
+pip==26.2.2 \
+    --hash=sha256:fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70
