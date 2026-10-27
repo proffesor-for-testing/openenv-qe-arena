@@ -1,0 +1,202 @@
+[
+  {
+    "path": "nwis/05331000.rdb.gz",
+    "url": "https://waterservices.usgs.gov/nwis/dv/?format=rdb&sites=05331000&parameterCd=00060&statCd=00003&startDT=2014-10-01&endDT=2026-10-26",
+    "publisher": "U.S. Geological Survey",
+    "dataset": "NWIS daily values, discharge (00060), daily mean, site 05331000",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105).",
+    "retrieved": "2026-10-27",
+    "bytes": 147047,
+    "sha256": "197932ed525d03691d6b3d3e7424e0186d0c540453819283f55fcf73dfc92476"
+  },
+  {
+    "path": "nwis/15515500.rdb.gz",
+    "url": "https://waterservices.usgs.gov/nwis/dv/?format=rdb&sites=15515500&parameterCd=00060&statCd=00003&startDT=2014-10-01&endDT=2026-10-26",
+    "publisher": "U.S. Geological Survey",
+    "dataset": "NWIS daily values, discharge (00060), daily mean, site 15515500",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105).",
+    "retrieved": "2026-10-27",
+    "bytes": 150293,
+    "sha256": "4516ed45ed627dddd0c5017e060cd9f7e661903e393b4aa2eae0d7ed901aa33b"
+  },
+  {
+    "path": "nwis/01646500.rdb.gz",
+    "url": "https://waterservices.usgs.gov/nwis/dv/?format=rdb&sites=01646500&parameterCd=00060&statCd=00003&startDT=2014-10-01&endDT=2026-10-26",
+    "publisher": "U.S. Geological Survey",
+    "dataset": "NWIS daily values, discharge (00060), daily mean, site 01646500",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105).",
+    "retrieved": "2026-10-27",
+    "bytes": 144807,
+    "sha256": "fd50458f57e27663d769f2f6fb79eb9ae5bb26b4099533acd9ff3b0952a28854"
+  },
+  {
+    "path": "nwis/12340500.rdb.gz",
+    "url": "https://waterservices.usgs.gov/nwis/dv/?format=rdb&sites=12340500&parameterCd=00060&statCd=00003&startDT=2014-10-01&endDT=2026-10-26",
+    "publisher": "U.S. Geological Survey",
+    "dataset": "NWIS daily values, discharge (00060), daily mean, site 12340500",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105).",
+    "retrieved": "2026-10-27",
+    "bytes": 143983,
+    "sha256": "b0282f265822a0b449386971bd79487cdd7f39c9560d45953e079943f144b511"
+  },
+  {
+    "path": "nwis/06191500.rdb.gz",
+    "url": "https://waterservices.usgs.gov/nwis/dv/?format=rdb&sites=06191500&parameterCd=00060&statCd=00003&startDT=2014-10-01&endDT=2026-10-26",
+    "publisher": "U.S. Geological Survey",
+    "dataset": "NWIS daily values, discharge (00060), daily mean, site 06191500",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105).",
+    "retrieved": "2026-10-27",
+    "bytes": 142433,
+    "sha256": "4e0f8afb3bb65502df3f34c539c3432a7c456b14878d3ffa16178d5ba0ff3d36"
+  },
+  {
+    "path": "nwis/14105700.rdb.gz",
+    "url": "https://waterservices.usgs.gov/nwis/dv/?format=rdb&sites=14105700&parameterCd=00060&statCd=00003&startDT=2014-10-01&endDT=2026-10-26",
+    "publisher": "U.S. Geological Survey",
+    "dataset": "NWIS daily values, discharge (00060), daily mean, site 14105700",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105).",
+    "retrieved": "2026-10-27",
+    "bytes": 151053,
+    "sha256": "05e5fb8da9d2a1464fa1d970cebbafab28b653484d645448fa00a68f8eca55fc"
+  },
+  {
+    "path": "nwis/08313000.rdb.gz",
+    "url": "https://waterservices.usgs.gov/nwis/dv/?format=rdb&sites=08313000&parameterCd=00060&statCd=00003&startDT=2014-10-01&endDT=2026-10-26",
+    "publisher": "U.S. Geological Survey",
+    "dataset": "NWIS daily values, discharge (00060), daily mean, site 08313000",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105).",
+    "retrieved": "2026-10-27",
+    "bytes": 139892,
+    "sha256": "0ab97161e8ef150e07c2c633cb477e81228ee624631474d0bf2de7e382951d3e"
+  },
+  {
+    "path": "nwis/02087500.rdb.gz",
+    "url": "https://waterservices.usgs.gov/nwis/dv/?format=rdb&sites=02087500&parameterCd=00060&statCd=00003&startDT=2014-10-01&endDT=2026-10-26",
+    "publisher": "U.S. Geological Survey",
+    "dataset": "NWIS daily values, discharge (00060), daily mean, site 02087500",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105).",
+    "retrieved": "2026-10-27",
+    "bytes": 139948,
+    "sha256": "229e7f527d83d149c27984762690f578fcf204144fe4ba9223ac988646a0d6a7"
+  },
+  {
+    "path": "nwis/04264331.rdb.gz",
+    "url": "https://waterservices.usgs.gov/nwis/dv/?format=rdb&sites=04264331&parameterCd=00060&statCd=00003&startDT=2014-10-01&endDT=2026-10-26",
+    "publisher": "U.S. Geological Survey",
+    "dataset": "NWIS daily values, discharge (00060), daily mean, site 04264331",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105).",
+    "retrieved": "2026-10-27",
+    "bytes": 150726,
+    "sha256": "336368c7c3cf003aeb32723dfbfd432af6f961be31f75d13bb9876838ed022b9"
+  },
+  {
+    "path": "nwis/03193000.rdb.gz",
+    "url": "https://waterservices.usgs.gov/nwis/dv/?format=rdb&sites=03193000&parameterCd=00060&statCd=00003&startDT=2014-10-01&endDT=2026-10-26",
+    "publisher": "U.S. Geological Survey",
+    "dataset": "NWIS daily values, discharge (00060), daily mean, site 03193000",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105).",
+    "retrieved": "2026-10-27",
+    "bytes": 144803,
+    "sha256": "3335d7a82304722262fb075b024c63979658119ece88a51895cdd3d912ceaafd"
+  },
+  {
+    "path": "kev/known_exploited_vulnerabilities.csv.gz",
+    "url": "https://www.cisa.gov/sites/default/files/csv/known_exploited_vulnerabilities.csv",
+    "publisher": "Cybersecurity and Infrastructure Security Agency",
+    "dataset": "Known Exploited Vulnerabilities Catalog",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105).",
+    "retrieved": "2026-10-27",
+    "bytes": 1076530,
+    "sha256": "27b30175923a233bdd5eb3851168d888213bf3bde7ed190d2949cb6c5a078b1c"
+  },
+  {
+    "path": "treasury/par_yield_curve_2018.csv.gz",
+    "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2018/all?type=daily_treasury_yield_curve&field_tdr_date_value=2018&page&_format=csv",
+    "publisher": "U.S. Department of the Treasury",
+    "dataset": "Daily Treasury Par Yield Curve Rates, 2018",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105).",
+    "retrieved": "2026-10-27",
+    "bytes": 16978,
+    "sha256": "e8375524a7a8d3e8091bbe7690d0378b9365be09efff5b18b8eefddc25f718d3"
+  },
+  {
+    "path": "treasury/par_yield_curve_2019.csv.gz",
+    "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2019/all?type=daily_treasury_yield_curve&field_tdr_date_value=2019&page&_format=csv",
+    "publisher": "U.S. Department of the Treasury",
+    "dataset": "Daily Treasury Par Yield Curve Rates, 2019",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105).",
+    "retrieved": "2026-10-27",
+    "bytes": 17841,
+    "sha256": "83fc47c17325e222c45fd3a1eb26c69ae01f62d33b793030b4b8b350ca0a290b"
+  },
+  {
+    "path": "treasury/par_yield_curve_2020.csv.gz",
+    "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2020/all?type=daily_treasury_yield_curve&field_tdr_date_value=2020&page&_format=csv",
+    "publisher": "U.S. Department of the Treasury",
+    "dataset": "Daily Treasury Par Yield Curve Rates, 2020",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105).",
+    "retrieved": "2026-10-27",
+    "bytes": 17912,
+    "sha256": "edcf1c8be9622f3cd92eb7de1847aefc3977e2118e2ff9af67f46614a5c306a7"
+  },
+  {
+    "path": "treasury/par_yield_curve_2021.csv.gz",
+    "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2021/all?type=daily_treasury_yield_curve&field_tdr_date_value=2021&page&_format=csv",
+    "publisher": "U.S. Department of the Treasury",
+    "dataset": "Daily Treasury Par Yield Curve Rates, 2021",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105).",
+    "retrieved": "2026-10-27",
+    "bytes": 17912,
+    "sha256": "1be57e49c63a99f6002431a1030c8fbe539b71066c3eaf14f9f58ddc34492cea"
+  },
+  {
+    "path": "treasury/par_yield_curve_2022.csv.gz",
+    "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2022/all?type=daily_treasury_yield_curve&field_tdr_date_value=2022&page&_format=csv",
+    "publisher": "U.S. Department of the Treasury",
+    "dataset": "Daily Treasury Par Yield Curve Rates, 2022",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105).",
+    "retrieved": "2026-10-27",
+    "bytes": 18226,
+    "sha256": "c33cb2758e5e34c2c23b7ab759d18681091860f3f9e5960112859f64f31cd814"
+  },
+  {
+    "path": "treasury/par_yield_curve_2023.csv.gz",
+    "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2023/all?type=daily_treasury_yield_curve&field_tdr_date_value=2023&page&_format=csv",
+    "publisher": "U.S. Department of the Treasury",
+    "dataset": "Daily Treasury Par Yield Curve Rates, 2023",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105).",
+    "retrieved": "2026-10-27",
+    "bytes": 19098,
+    "sha256": "edb7f3904e11dcaa502cdcc03ad9b1b16c893802d166ce9bc5fa1118251249d4"
+  },
+  {
+    "path": "treasury/par_yield_curve_2024.csv.gz",
+    "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2024/all?type=daily_treasury_yield_curve&field_tdr_date_value=2024&page&_format=csv",
+    "publisher": "U.S. Department of the Treasury",
+    "dataset": "Daily Treasury Par Yield Curve Rates, 2024",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105).",
+    "retrieved": "2026-10-27",
+    "bytes": 19098,
+    "sha256": "6775840b76cd7fd41121f61d6f6c60184eca6b2ba49954ec7372c463cbeef34d"
+  },
+  {
+    "path": "treasury/par_yield_curve_2025.csv.gz",
+    "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2025/all?type=daily_treasury_yield_curve&field_tdr_date_value=2025&page&_format=csv",
+    "publisher": "U.S. Department of the Treasury",
+    "dataset": "Daily Treasury Par Yield Curve Rates, 2025",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105).",
+    "retrieved": "2026-10-27",
+    "bytes": 20155,
+    "sha256": "cf2fa3da7f160384b63d2ead698532b1d76cd9f789ce4911e2304db85b14e6d5"
+  },
+  {
+    "path": "treasury/par_yield_curve_2026.csv.gz",
+    "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2026/all?type=daily_treasury_yield_curve&field_tdr_date_value=2026&page&_format=csv",
+    "publisher": "U.S. Department of the Treasury",
+    "dataset": "Daily Treasury Par Yield Curve Rates, 2026",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105).",
+    "retrieved": "2026-10-27",
+    "bytes": 16715,
+    "sha256": "8022b43b26fb97f5d15b78bd88a39df61248beaf6a466952b93444ab061571f5"
+  }
+]
