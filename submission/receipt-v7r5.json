@@ -1,0 +1,13 @@
+{
+  "accepted_at": "2026-10-27T09:21:31.641737+00:00",
+  "arena_state": "validated",
+  "created_at": "2026-10-27T09:21:31.097221+00:00",
+  "next_action": "Reconcile this same ID using the own-submission status endpoint; no retry was sent.",
+  "post_attempted": true,
+  "reconciled_at": "2026-10-27T09:33:58.480263+00:00",
+  "request_sha256": "e8eea61afd7d97ddcc2ddc60466863ac29c0bcfbb5e56e869acbc0a2ba4152af",
+  "run_id": "3279d7039bfd4411e0bc6e31",
+  "slot_state": "used",
+  "state": "unknown",
+  "submission_id": "profa-qe-arena-v7r5"
+}
