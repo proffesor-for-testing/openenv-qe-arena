@@ -1,6 +1,6 @@
 # v9 design: desk tasks on real public data
 
-Status: in progress on branch `feat/v9-desk`, started 2026-10-27 on Dragan's "start option B". Three families are built
+Status: in progress on branch `feat/v9-desk`, started 2026-10-27 on Dragan's "start option B". Four families are built
 and tested; nothing is calibrated, served or submitted. Session cognitum-d0.
 
 ## Why v9
@@ -57,7 +57,7 @@ reuse.
 | cybersecurity | `kev` | CISA Known Exploited Vulnerabilities catalogue, 1,758 entries | vendor exposure report: window, ransomware, overdue, median days to due, top CWE with numeric tie-break | **built, tested** |
 | finance-economics | `yields` | US Treasury daily par yield curve files, 2018–2026 as published (newest first, MM/DD/YYYY, columns change by year, blank tenors) | inversion spells of a tenor spread in bp across files, skipped days, minimum spell length | **built, tested** |
 | office-white-collar | `calendar` | synthetic ICS export (RRULE, EXDATE, time zones) | meeting hours per person and week, conflicts | planned |
-| mathematics-or-formal-reasoning | `ledger` | synthetic file of exact quantities (fractions, repeating decimals, mixed units) | exact totals as reduced fractions, per-group | planned |
+| mathematics-or-formal-reasoning | `ledger` | synthetic 650–850-row ledger: six notations (integer, decimal, fraction, mixed number, repeating decimal, scientific), corrections, void rows | exact per-group totals as reduced fractions | **built, tested** |
 | industrial-physical-systems | `quakes` or `grid` | USGS earthquake catalogue or EIA-930 hourly demand | event declustering or demand peaks with timezone and gap rules | planned |
 | cybersecurity | `authlog` | synthetic sshd/auth.log | brute-force windows, lockouts, successful-after-failure | planned |
 | natural-science | a second family | NOAA GML greenhouse-gas monthly series | de-seasonalised trend with missing-value codes | planned |

@@ -30,7 +30,8 @@ def unsandboxed(monkeypatch, tmp_path):
 
 def test_served_cells_follow_calibration_and_are_appended_after_the_code_cells():
     v7 = [f"qe_skill-{slug}-d{level}" for slug in ("science", "math", "media") for level in (1, 2, 3)]
-    assert CELLS == v7 + ["qe_skill-science-d4", "qe_skill-security-d4", "qe_skill-finance-d4"]  # desk cells appended after the v7 ones
+    desk = ["qe_skill-science-d4", "qe_skill-math-d4", "qe_skill-security-d4", "qe_skill-finance-d4"]
+    assert CELLS == v7 + desk  # desk cells appended after the v7 ones
     served = skills.SKILL_TASK_IDS
     assert served == [t for t in CELLS if t in skills.SERVED] and len(served) == 8
     assert TERMINAL_TASK_IDS[-len(served):] == served

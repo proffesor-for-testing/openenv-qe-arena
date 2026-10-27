@@ -8,7 +8,9 @@ import json
 from pathlib import Path
 
 from qe_arena import skills
-from qe_arena.skills import desk_finance, desk_science, desk_security
+from fractions import Fraction
+
+from qe_arena.skills import desk_finance, desk_math, desk_science, desk_security
 
 DATA = Path(skills.__file__).resolve().parent / "data"
 
@@ -32,13 +34,13 @@ def test_pinned_data_matches_its_provenance_and_names_a_licence():
 
 
 def test_desk_cells_are_not_served_before_calibration():
-    for cell in ("qe_skill-science-d4", "qe_skill-security-d4", "qe_skill-finance-d4"):
+    for cell in ("qe_skill-science-d4", "qe_skill-math-d4", "qe_skill-security-d4", "qe_skill-finance-d4"):
         assert cell in skills.ALL_SKILL_IDS and cell not in skills.SKILL_TASK_IDS
 
 
 def test_desk_briefs_are_long_and_the_inputs_too_big_to_print():
     for cell, kind in (("qe_skill-science-d4", "streamflow"), ("qe_skill-security-d4", "kev"),
-                       ("qe_skill-finance-d4", "yields")):
+                       ("qe_skill-finance-d4", "yields"), ("qe_skill-math-d4", "ledger")):
         for seed in range(10):
             task = _task(cell, kind, seed)
             assert len(task.prompt) > 1200, (kind, seed)
@@ -120,3 +122,21 @@ def test_yields_spread_is_whole_basis_points_and_zero_is_not_inverted():
              "request.json": json.dumps({"long_tenor": "10 Yr", "short_tenor": "2 Yr", "min_spell_days": 1})}
     assert desk_finance._yields_solve(files, 4, None).splitlines()[1:] == [
         "2020-01-01,2020-01-01,1,-10,2020-01-01", "2020-01-03,2020-01-03,1,-10,2020-01-03"]
+
+
+def test_ledger_reads_every_notation_exactly():
+    cases = {"12": 12, "-3.75": Fraction(-15, 4), "7/12": Fraction(7, 12), "2 3/4": Fraction(11, 4),
+             "-2 3/4": Fraction(-11, 4), "0.1(6)": Fraction(1, 6), "1.(142857)": Fraction(8, 7),
+             "-0.(3)": Fraction(-1, 3), "125e-3": Fraction(1, 8)}
+    for text, value in cases.items():
+        assert desk_math._parse(text) == value, text
+    assert desk_math._format(Fraction(-17, 6)) == "-17/6" and desk_math._format(Fraction(4)) == "4"
+
+
+def test_ledger_totals_must_be_exact_reduced_strings():
+    task = _task("qe_skill-math-d4", "ledger", 1)
+    header, first, *rest = skills.solve(task).splitlines()
+    group, entries, total = first.split(",")
+    value = Fraction(total)
+    for text in (f"{value.numerator * 2}/{value.denominator * 2}", repr(float(value)), f"+{total}"):
+        assert skills.grade(task, "\n".join([header, f"{group},{entries},{text}", *rest]) + "\n") == 0.0, text
