@@ -1,6 +1,6 @@
 # v9 design: desk tasks on real public data
 
-Status: in progress on branch `feat/v9-desk`, started 2026-10-27 on Dragan's "start option B". Four families are built
+Status: in progress on branch `feat/v9-desk`, started 2026-10-27 on Dragan's "start option B". Six families are built
 and tested; nothing is calibrated, served or submitted. Session cognitum-d0.
 
 ## Why v9
@@ -56,10 +56,10 @@ reuse.
 | natural-science | `streamflow` | USGS NWIS daily discharge, 10 gauges, WY2015–2026 (A, A:e, A:R, P, Ice) | per water year: approved days, mean, N-day low flow, peak date; unit conversion; completeness rule | **built, tested** |
 | cybersecurity | `kev` | CISA Known Exploited Vulnerabilities catalogue, 1,758 entries | vendor exposure report: window, ransomware, overdue, median days to due, top CWE with numeric tie-break | **built, tested** |
 | finance-economics | `yields` | US Treasury daily par yield curve files, 2018–2026 as published (newest first, MM/DD/YYYY, columns change by year, blank tenors) | inversion spells of a tenor spread in bp across files, skipped days, minimum spell length | **built, tested** |
-| office-white-collar | `calendar` | synthetic ICS export (RRULE, EXDATE, time zones) | meeting hours per person and week, conflicts | planned |
+| office-white-collar | `calendar` | synthetic ICS export: VTIMEZONE, folded ATTENDEE lines, weekly/daily RRULE with INTERVAL/BYDAY/COUNT/UNTIL, EXDATE in local or UTC form, all-day, cancelled, declined; range spans the US/EU daylight-saving gap | meeting hours per person and ISO week (2 decimals), overlapping pairs | **built, tested** |
 | mathematics-or-formal-reasoning | `ledger` | synthetic 650–850-row ledger: six notations (integer, decimal, fraction, mixed number, repeating decimal, scientific), corrections, void rows | exact per-group totals as reduced fractions | **built, tested** |
 | industrial-physical-systems | `quakes` or `grid` | USGS earthquake catalogue or EIA-930 hourly demand | event declustering or demand peaks with timezone and gap rules | planned |
-| cybersecurity | `authlog` | synthetic sshd/auth.log | brute-force windows, lockouts, successful-after-failure | planned |
+| cybersecurity | `authlog` | synthetic sshd auth.log across New Year: year-less timestamps, invalid-user pairs, pam_unix shadows, "message repeated N times", IPv6 | sources with threshold failures in a sliding window, total failures, success at or after the burst | **built, tested** |
 | natural-science | a second family | NOAA GML greenhouse-gas monthly series | de-seasonalised trend with missing-value codes | planned |
 
 Media and software are left out: media is banked at 1 and has never reached 2 on the board, and software's only
@@ -72,7 +72,7 @@ trap scores 0 on every seed; empty, copied and malformed outputs score 0; nothin
 instruction; seeds rebuild identically. `tests/test_skills_desk.py` adds: pinned data matches its provenance;
 desk cells are not served before calibration; briefs are long and inputs too big to print; stated rounding is
 accepted and anything beyond it rejected; incomplete years must stay empty; row order and header rules; Ice and
-provisional values are never approved; vendor names are trimmed; CWE ties go to the lowest number.
+provisional values are never approved; vendor names are trimmed; CWE ties go to the lowest number. `tests/test_skills_desk_synthetic.py` covers the two synthetic families: ICS unfolding, quoted parameters, COUNT with EXDATE, inclusive UNTIL, wall-clock time across daylight saving, report-zone weeks, touching meetings; year rollover, invalid-user and pam lines, repeated messages, the inclusive sliding window; and that every listed trap binds on at least 95% of raw builds, before any retry.
 
 ## Calibration plan
 
