@@ -1,6 +1,6 @@
 # v9 design: desk tasks on real public data
 
-Status: in progress on branch `feat/v9-desk`, started 2026-10-27 on Dragan's "start option B". Six families are built
+Status: in progress on branch `feat/v9-desk`, started 2026-10-27 on Dragan's "start option B". All eight families are built
 and tested; nothing is calibrated, served or submitted. Session cognitum-d0.
 
 ## Why v9
@@ -58,9 +58,9 @@ reuse.
 | finance-economics | `yields` | US Treasury daily par yield curve files, 2018–2026 as published (newest first, MM/DD/YYYY, columns change by year, blank tenors) | inversion spells of a tenor spread in bp across files, skipped days, minimum spell length | **built, tested** |
 | office-white-collar | `calendar` | synthetic ICS export: VTIMEZONE, folded ATTENDEE lines, weekly/daily RRULE with INTERVAL/BYDAY/COUNT/UNTIL, EXDATE in local or UTC form, all-day, cancelled, declined; range spans the US/EU daylight-saving gap | meeting hours per person and ISO week (2 decimals), overlapping pairs | **built, tested** |
 | mathematics-or-formal-reasoning | `ledger` | synthetic 650–850-row ledger: six notations (integer, decimal, fraction, mixed number, repeating decimal, scientific), corrections, void rows | exact per-group totals as reduced fractions | **built, tested** |
-| industrial-physical-systems | `quakes` or `grid` | USGS earthquake catalogue or EIA-930 hourly demand | event declustering or demand peaks with timezone and gap rules | planned |
+| industrial-physical-systems | `quakes` | USGS ComCat FDSN CSV, 4 slices (N. California, Nevada; Apr–Oct 2026), 606–1,259 events each, reviewed and automatic, md/ml/mw/mwr, blasts | mainshock declustering: status, type, magType and magnitude-floor filters, half-open window, explicit window table, haversine, largest-mainshock attribution | **built, tested** |
 | cybersecurity | `authlog` | synthetic sshd auth.log across New Year: year-less timestamps, invalid-user pairs, pam_unix shadows, "message repeated N times", IPv6 | sources with threshold failures in a sliding window, total failures, success at or after the burst | **built, tested** |
-| natural-science | a second family | NOAA GML greenhouse-gas monthly series | de-seasonalised trend with missing-value codes | planned |
+| natural-science | `ghg` | NOAA GML in-situ monthly means as published: CO2 at BRW, MLO, SMO, SPO; CH4 at BRW, MLO | annual means and amplitude: fill value, QC flag, day-count rule, completeness, growth from the previous calendar year only | **built, tested** |
 
 Media and software are left out: media is banked at 1 and has never reached 2 on the board, and software's only
 solves look like background noise.

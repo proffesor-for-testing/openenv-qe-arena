@@ -198,5 +198,105 @@
     "retrieved": "2026-10-27",
     "bytes": 16715,
     "sha256": "8022b43b26fb97f5d15b78bd88a39df61248beaf6a466952b93444ab061571f5"
+  },
+  {
+    "path": "quakes/northern_california_2026a.csv.gz",
+    "url": "https://earthquake.usgs.gov/fdsnws/event/1/query?format=csv&orderby=time&starttime=2026-04-01&endtime=2026-07-15&minlatitude=36.5&maxlatitude=39.5&minlongitude=-123.5&maxlongitude=-120.5&minmagnitude=1.5",
+    "publisher": "U.S. Geological Survey",
+    "dataset": "ANSS ComCat earthquake catalogue (FDSN event CSV), M1.5+, northern_california_2026a",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105).",
+    "retrieved": "2026-10-28",
+    "bytes": 137882,
+    "sha256": "a9114e5021085ce80b3b5fd8bcb6c4ec3f9c35b488b1c06624844c9508e1caef"
+  },
+  {
+    "path": "quakes/northern_california_2026b.csv.gz",
+    "url": "https://earthquake.usgs.gov/fdsnws/event/1/query?format=csv&orderby=time&starttime=2026-07-15&endtime=2026-10-27&minlatitude=36.5&maxlatitude=39.5&minlongitude=-123.5&maxlongitude=-120.5&minmagnitude=1.5",
+    "publisher": "U.S. Geological Survey",
+    "dataset": "ANSS ComCat earthquake catalogue (FDSN event CSV), M1.5+, northern_california_2026b",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105).",
+    "retrieved": "2026-10-28",
+    "bytes": 146068,
+    "sha256": "f1c4452267bc35905cc3f4e1fef26f1ad512dd69eb424e629d754a214a1bf39a"
+  },
+  {
+    "path": "quakes/nevada_2026a.csv.gz",
+    "url": "https://earthquake.usgs.gov/fdsnws/event/1/query?format=csv&orderby=time&starttime=2026-04-01&endtime=2026-07-15&minlatitude=36.0&maxlatitude=41.0&minlongitude=-120.0&maxlongitude=-114.0&minmagnitude=1.5",
+    "publisher": "U.S. Geological Survey",
+    "dataset": "ANSS ComCat earthquake catalogue (FDSN event CSV), M1.5+, nevada_2026a",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105).",
+    "retrieved": "2026-10-28",
+    "bytes": 243095,
+    "sha256": "ac1df0494fe7e0f3956cbdecb4d9c3d99d0ade479db6b0ce09772592bc1a58ba"
+  },
+  {
+    "path": "quakes/nevada_2026b.csv.gz",
+    "url": "https://earthquake.usgs.gov/fdsnws/event/1/query?format=csv&orderby=time&starttime=2026-07-15&endtime=2026-10-27&minlatitude=36.0&maxlatitude=41.0&minlongitude=-120.0&maxlongitude=-114.0&minmagnitude=1.5",
+    "publisher": "U.S. Geological Survey",
+    "dataset": "ANSS ComCat earthquake catalogue (FDSN event CSV), M1.5+, nevada_2026b",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105).",
+    "retrieved": "2026-10-28",
+    "bytes": 117647,
+    "sha256": "cd0a1e8453c62059cfe90da60cfda9ef4a5cf87d553dac66d51e99b4bde6fdce"
+  },
+  {
+    "path": "gml/co2_brw_monthly.txt.gz",
+    "url": "https://gml.noaa.gov/aftp/data/trace_gases/co2/in-situ/surface/txt/co2_brw_surface-insitu_1_ccgg_MonthlyData.txt",
+    "publisher": "NOAA Global Monitoring Laboratory",
+    "dataset": "In-situ CO2 monthly means, BRW observatory",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105). NOAA Global Monitoring Laboratory data are made freely available to the public; GML asks users to give fair credit and to cite the data providers (file header, 'USE OF NOAA GML DATA').",
+    "retrieved": "2026-10-28",
+    "bytes": 86729,
+    "sha256": "712bc4275063b09843796ff9910dcbd219d40457f8bf46cffa091112cc13163d"
+  },
+  {
+    "path": "gml/co2_mlo_monthly.txt.gz",
+    "url": "https://gml.noaa.gov/aftp/data/trace_gases/co2/in-situ/surface/txt/co2_mlo_surface-insitu_1_ccgg_MonthlyData.txt",
+    "publisher": "NOAA Global Monitoring Laboratory",
+    "dataset": "In-situ CO2 monthly means, MLO observatory",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105). NOAA Global Monitoring Laboratory data are made freely available to the public; GML asks users to give fair credit and to cite the data providers (file header, 'USE OF NOAA GML DATA').",
+    "retrieved": "2026-10-28",
+    "bytes": 87824,
+    "sha256": "190242fb69e05f08f33bc98f3ac245113ef7844c6ec95b776bad59f9946486e5"
+  },
+  {
+    "path": "gml/co2_smo_monthly.txt.gz",
+    "url": "https://gml.noaa.gov/aftp/data/trace_gases/co2/in-situ/surface/txt/co2_smo_surface-insitu_1_ccgg_MonthlyData.txt",
+    "publisher": "NOAA Global Monitoring Laboratory",
+    "dataset": "In-situ CO2 monthly means, SMO observatory",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105). NOAA Global Monitoring Laboratory data are made freely available to the public; GML asks users to give fair credit and to cite the data providers (file header, 'USE OF NOAA GML DATA').",
+    "retrieved": "2026-10-28",
+    "bytes": 82800,
+    "sha256": "1c1a2cc6befbb385bc555b9e1bfa09e04aec3fbe45061e000cb124963f91d2c9"
+  },
+  {
+    "path": "gml/co2_spo_monthly.txt.gz",
+    "url": "https://gml.noaa.gov/aftp/data/trace_gases/co2/in-situ/surface/txt/co2_spo_surface-insitu_1_ccgg_MonthlyData.txt",
+    "publisher": "NOAA Global Monitoring Laboratory",
+    "dataset": "In-situ CO2 monthly means, SPO observatory",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105). NOAA Global Monitoring Laboratory data are made freely available to the public; GML asks users to give fair credit and to cite the data providers (file header, 'USE OF NOAA GML DATA').",
+    "retrieved": "2026-10-28",
+    "bytes": 83454,
+    "sha256": "627246df504d2f2f16c8f8cac465b9300b437ffa93e82998edc437c498b86d3d"
+  },
+  {
+    "path": "gml/ch4_brw_monthly.txt.gz",
+    "url": "https://gml.noaa.gov/aftp/data/trace_gases/ch4/in-situ/surface/txt/ch4_brw_surface-insitu_1_ccgg_MonthlyData.txt",
+    "publisher": "NOAA Global Monitoring Laboratory",
+    "dataset": "In-situ CH4 monthly means, BRW observatory",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105). NOAA Global Monitoring Laboratory data are made freely available to the public; GML asks users to give fair credit and to cite the data providers (file header, 'USE OF NOAA GML DATA').",
+    "retrieved": "2026-10-28",
+    "bytes": 69447,
+    "sha256": "cba916ac66d7bb1e5ae5b7f6d4a8fb6881a1a9a7916fe189f55ab316f92e374a"
+  },
+  {
+    "path": "gml/ch4_mlo_monthly.txt.gz",
+    "url": "https://gml.noaa.gov/aftp/data/trace_gases/ch4/in-situ/surface/txt/ch4_mlo_surface-insitu_1_ccgg_MonthlyData.txt",
+    "publisher": "NOAA Global Monitoring Laboratory",
+    "dataset": "In-situ CH4 monthly means, MLO observatory",
+    "licence": "Public domain: a work of the United States Government (17 U.S.C. 105). NOAA Global Monitoring Laboratory data are made freely available to the public; GML asks users to give fair credit and to cite the data providers (file header, 'USE OF NOAA GML DATA').",
+    "retrieved": "2026-10-28",
+    "bytes": 69068,
+    "sha256": "d3df24a16f65da7f0ee653421e10de32a4e083bfce18f8e603a26015b5ddea68"
   }
 ]

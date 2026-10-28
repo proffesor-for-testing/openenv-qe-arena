@@ -62,13 +62,13 @@ class SkillTask:
 
 
 def _families() -> dict[str, tuple[Family, ...]]:
-    from . import (desk_authlog, desk_finance, desk_math, desk_office, desk_science, desk_security,  # noqa: PLC0415
-                   formal, media, science)
+    from . import (desk_authlog, desk_finance, desk_ghg, desk_industrial, desk_math, desk_office,  # noqa: PLC0415
+                   desk_science, desk_security, formal, media, science)
 
     by_domain: dict[str, list[Family]] = {}
     # Order matters: a new domain's desk cell is appended after the existing ones, so modules are only appended.
     for module in (science, formal, media, desk_science, desk_security, desk_finance, desk_math, desk_office,
-                   desk_authlog):
+                   desk_authlog, desk_industrial, desk_ghg):
         for family in module.FAMILIES:
             by_domain.setdefault(family.domain, []).append(family)
     return {domain: tuple(fams) for domain, fams in by_domain.items()}
