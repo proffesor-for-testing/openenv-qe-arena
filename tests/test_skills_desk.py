@@ -33,9 +33,11 @@ def test_pinned_data_matches_its_provenance_and_names_a_licence():
         assert record["licence"] and record["url"].startswith("https://")
 
 
-def test_desk_cells_are_not_served_before_calibration():
-    for cell in ("qe_skill-science-d4", "qe_skill-math-d4", "qe_skill-security-d4", "qe_skill-finance-d4",
-                 "qe_skill-office-d4", "qe_skill-industrial-d4"):
+def test_only_calibrated_desk_families_are_served():
+    # 2026-10-28 calibration: ghg, ledger and quakes kept; every other desk cell and family stays unserved.
+    assert {c: skills.SERVED[c] for c in skills.SERVED if c.endswith("-d4")} == {
+        "qe_skill-science-d4": ("ghg",), "qe_skill-math-d4": ("ledger",), "qe_skill-industrial-d4": ("quakes",)}
+    for cell in ("qe_skill-security-d4", "qe_skill-finance-d4", "qe_skill-office-d4"):
         assert cell in skills.ALL_SKILL_IDS and cell not in skills.SKILL_TASK_IDS
 
 

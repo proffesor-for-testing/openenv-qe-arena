@@ -103,6 +103,13 @@ SERVED = {
     "qe_skill-media-d1": ("timecode", "catalogue", "assets"),
     "qe_skill-media-d2": ("subtitles", "timecode", "catalogue", "assets"),
     "qe_skill-media-d3": ("subtitles", "timecode"),
+    # v9 desk tier (2026-10-28, runs/v9-cal on ruos): the families that, after the one adjustment round, solved 4-12
+    # of 16 strict episodes with at most 3 of 16 ending on the token budget. ghg 8/16 (3 budget ends), ledger 6/16
+    # (2), quakes 9/16 (3). Out: streamflow 7/16 but 5 budget ends in both screens; authlog 0 and calendar 0 after
+    # adjustment; kev 16/16 and yields 15/16 too easy (an adjustment may only make a family easier).
+    "qe_skill-science-d4": ("ghg",),
+    "qe_skill-math-d4": ("ledger",),
+    "qe_skill-industrial-d4": ("quakes",),
 }
 SKILL_TASK_IDS = [task_id for task_id in ALL_SKILL_IDS if task_id in SERVED]
 

@@ -34,7 +34,7 @@ def test_served_cells_follow_calibration_and_are_appended_after_the_code_cells()
             "qe_skill-office-d4", "qe_skill-industrial-d4"]
     assert CELLS == v7 + desk  # desk cells appended after the v7 ones
     served = skills.SKILL_TASK_IDS
-    assert served == [t for t in CELLS if t in skills.SERVED] and len(served) == 8
+    assert served == [t for t in CELLS if t in skills.SERVED] and len(served) == 11
     assert TERMINAL_TASK_IDS[-len(served):] == served
     for task_id in served:
         kinds = {skills.make_skill_task(task_id, s).kind for s in range(120)}

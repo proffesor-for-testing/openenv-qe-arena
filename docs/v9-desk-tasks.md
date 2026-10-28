@@ -1,7 +1,8 @@
 # v9 design: desk tasks on real public data
 
 Status: in progress on branch `feat/v9-desk`, started 2026-10-27 on Dragan's "start option B". All eight families are built
-and tested; nothing is calibrated, served or submitted. Session cognitum-d0.
+and tested, and calibrated on 2026-10-28: three are served (ghg, ledger, quakes). Nothing is submitted.
+Sessions cognitum-d0 and cognitum-e3.
 
 ## Why v9
 
@@ -81,6 +82,34 @@ thinking off through the HF router, in the terminal image, uid mode on ruos): 16
 a family when it solves 4–12 of 16 with budget endings under 25%, one adjustment round, then drop. Desk episodes
 are longer than v7's, so the token cap needs re-estimating once all families exist; about 3–6M tokens for 8
 families is the first guess. **Dragan approves the cap before the run.**
+
+## Calibration result (2026-10-28)
+
+Run on ruos in the terminal image (`qe-arena-terminal:v9-cal`, uid mode), Qwen/Qwen3.8-27B through the HF router
+(novita), thinking off, strict, 4 seeds x 4 attempts per family, arena budgets (4,096 completion and 8,192 context
+tokens per episode). Dragan set the cap at $5 for the whole calibration.
+
+| Family | Cell | Screen (solved, budget ends) | After adjustment | Verdict |
+|---|---|---|---|---|
+| streamflow | science-d4 | 9/16, 5 | 7/16, 5 | out: budget ends above 3/16 in both runs |
+| ghg | science-d4 | 7/16, 7 | 8/16, 3 | **served** |
+| ledger | math-d4 | 1/16, 7 | 6/16, 2 | **served** |
+| kev | security-d4 | 16/16, 0 | not rerun | out: too easy |
+| authlog | security-d4 | 0/16, 16 | 0/16, 15 | out |
+| yields | finance-d4 | 15/16, 1 | not rerun | out: too easy |
+| calendar | office-d4 | 0/16, 16 | 0/16, 16 | out |
+| quakes | industrial-d4 | 0/16, 16 | 9/16, 3 | **served** |
+
+- **Screen:** 128 episodes, 2.09M tokens (112k generated), about $1.17.
+- **Adjustment:** 96 episodes, 1.76M tokens (101k generated), about $1.00. Total about $2.17.
+- **The screen's main finding:** 75 of 128 episodes ended on the completion budget. That budget counts every
+  observation, and a single 40-line peek at a wide file could spend all of it.
+- **The one adjustment round, easier only:**
+  - Every desk brief now ends with `DESK_BUDGET_NOTE`, which states that rule.
+  - quakes serves only the 10 catalogue columns the task needs.
+  - ledger dropped repeating decimals.
+- **Keep rule, as in v7:** 4-12 of 16 solved, and at most 3 of 16 ending on the budget. kev and yields were above the
+  band, and an adjustment may only make a family easier, so they stay built but unserved.
 
 ## Request
 
