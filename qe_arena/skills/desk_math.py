@@ -52,7 +52,7 @@ def _format(value: Fraction) -> str:
 
 
 def _quantity(rng: random.Random) -> str:
-    kind = rng.randrange(6)
+    kind = rng.choice((0, 1, 2, 3, 5))  # no repeating decimals (kind 4) since the 2026-10-28 adjustment: 1/16
     sign = "-" if rng.random() < 0.15 else ""
     if kind == 0:
         return f"{sign}{rng.randint(1, 500)}"
@@ -93,8 +93,7 @@ def _ledger_build(level: int, rng: random.Random) -> Built:
         "entry_id entirely (including its group and status). Only the last row of each entry_id counts.",
         "- After applying corrections, ignore entries whose status is VOID. posted and reconciled both count.",
         "- quantity is written in one of several notations: an integer (12), a decimal (3.75), a fraction (7/12), "
-        "a mixed number (2 3/4, meaning 2 + 3/4), a repeating decimal (0.1(6) means 0.1666..., the digits in "
-        "parentheses repeat forever) or scientific notation (125e-3). Any of them may be negative.",
+        "a mixed number (2 3/4, meaning 2 + 3/4) or scientific notation (125e-3). Any of them may be negative.",
         "- Compute every total exactly. Write it as a reduced fraction numerator/denominator with a positive "
         "denominator (for example -17/6), or as a plain integer when the denominator is 1.",
         "- entries is the number of counted entries in the group.",
@@ -154,7 +153,6 @@ def _ledger_check(reference: list[dict[str, str]], text: str) -> list[bool]:
 
 FAMILIES = (
     Family("ledger", DOMAIN, _ledger_build, _ledger_check, _ledger_solve,
-           {trap: (LEVEL,) for trap in ("first_row_wins", "keep_void", "repeating_truncated", "mixed_concat",
-                                        "float_sum", "unreduced")},
+           {trap: (LEVEL,) for trap in ("first_row_wins", "keep_void", "mixed_concat", "float_sum", "unreduced")},
            levels=(LEVEL,)),
 )

@@ -55,9 +55,22 @@ def _slices() -> list[str]:
     return sorted(path.name.split(".")[0] for path in DATA.glob("*.csv.gz"))
 
 
+# The columns the task needs, in ComCat's own order. Serving all 22 made one 40-line peek cost 8 KiB of output, which
+# spent the whole completion budget on the first step in all 16 screen episodes (2026-10-28 adjustment).
+SERVED_COLUMNS = ("time", "latitude", "longitude", "depth", "mag", "magType", "id", "place", "type", "status")
+
+
 @lru_cache(maxsize=None)
 def _snapshot(name: str) -> str:
-    return gzip.decompress((DATA / f"{name}.csv.gz").read_bytes()).decode("utf-8")
+    """The pinned slice as published, cut to SERVED_COLUMNS; rows, order, quoting and values are unchanged."""
+    raw = gzip.decompress((DATA / f"{name}.csv.gz").read_bytes()).decode("utf-8")
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\n")
+    reader = csv.DictReader(io.StringIO(raw))
+    writer.writerow(SERVED_COLUMNS)
+    for row in reader:
+        writer.writerow([row[c] for c in SERVED_COLUMNS])
+    return out.getvalue()
 
 
 def _seconds(text: str) -> float:

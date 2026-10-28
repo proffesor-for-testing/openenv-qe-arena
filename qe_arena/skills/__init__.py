@@ -25,6 +25,12 @@ LEVELS = (1, 2, 3)
 DESK_LEVEL = 4  # v9 desk tier: real public data, a long brief and a CSV contract (desk_*.py)
 MAX_OUTPUT_BYTES = 65536
 MAX_ATTEMPTS = 64  # generation retries per seed before a family gives up
+# Appended to every desk brief (v9 calibration adjustment, 2026-10-28). The first screen ended 75 of 128 desk
+# episodes with neither submission nor score when a single `sed -n 1,40p` of a wide input spent the whole
+# 4,096-token completion budget, which counts every observation. The note states that rule; it does not do the work.
+DESK_BUDGET_NOTE = ("Budget: every command's output counts against this task's small token budget (about 4,000 "
+                    "tokens in all), so never print a whole file or more than a few lines of it; inspect with "
+                    "head -c, wc, cut or a short script and print only what you need.")
 
 
 @dataclass
@@ -154,7 +160,8 @@ def make_skill_task(task_id: str, seed: int, *, pool: tuple[str, ...] | None = N
     else:
         raise RuntimeError(f"{fam.name} could not build a trap-free task for {task_id} seed {seed}")
     return SkillTask(task_id=task_id, family=FAMILY, difficulty=level, seed=seed, domain=domain, kind=fam.name,
-                     prompt=built.statement, files=built.files, output=built.output,
+                     prompt=f"{built.statement}\n\n{DESK_BUDGET_NOTE}" if level == DESK_LEVEL else built.statement,
+                     files=built.files, output=built.output,
                      private={"reference": built.reference, "family": fam, "corpus": fam.name})  # calibration's key
 
 
