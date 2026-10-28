@@ -63,9 +63,12 @@ class SkillTask:
 
 def _families() -> dict[str, tuple[Family, ...]]:
     from . import desk_finance, desk_math, desk_science, desk_security, formal, media, science  # noqa: PLC0415
+    from . import desk_ghg, desk_industrial  # noqa: PLC0415 - v9 real-data desk families (quakes, ghg)
 
     by_domain: dict[str, list[Family]] = {}
-    for module in (science, formal, media, desk_science, desk_security, desk_finance, desk_math):
+    modules = (science, formal, media, desk_science, desk_security, desk_finance, desk_math)
+    modules += (desk_industrial, desk_ghg)  # appended: industrial-d4 is a new cell, ghg joins science-d4
+    for module in modules:
         for family in module.FAMILIES:
             by_domain.setdefault(family.domain, []).append(family)
     return {domain: tuple(fams) for domain, fams in by_domain.items()}

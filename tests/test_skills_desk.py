@@ -34,13 +34,17 @@ def test_pinned_data_matches_its_provenance_and_names_a_licence():
 
 
 def test_desk_cells_are_not_served_before_calibration():
-    for cell in ("qe_skill-science-d4", "qe_skill-math-d4", "qe_skill-security-d4", "qe_skill-finance-d4"):
+    cells = ("qe_skill-science-d4", "qe_skill-math-d4", "qe_skill-security-d4", "qe_skill-finance-d4")
+    cells += ("qe_skill-industrial-d4",)  # v9 real data: quakes
+    for cell in cells:
         assert cell in skills.ALL_SKILL_IDS and cell not in skills.SKILL_TASK_IDS
 
 
 def test_desk_briefs_are_long_and_the_inputs_too_big_to_print():
-    for cell, kind in (("qe_skill-science-d4", "streamflow"), ("qe_skill-security-d4", "kev"),
-                       ("qe_skill-finance-d4", "yields"), ("qe_skill-math-d4", "ledger")):
+    kinds = (("qe_skill-science-d4", "streamflow"), ("qe_skill-security-d4", "kev"),
+             ("qe_skill-finance-d4", "yields"), ("qe_skill-math-d4", "ledger"))
+    kinds += (("qe_skill-industrial-d4", "quakes"), ("qe_skill-science-d4", "ghg"))  # v9 real data
+    for cell, kind in kinds:
         for seed in range(10):
             task = _task(cell, kind, seed)
             assert len(task.prompt) > 1200, (kind, seed)

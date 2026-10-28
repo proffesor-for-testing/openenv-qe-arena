@@ -27,6 +27,20 @@ KEV_URL = "https://www.cisa.gov/sites/default/files/csv/known_exploited_vulnerab
 TREASURY_YEARS = range(2018, 2027)
 TREASURY_URL = ("https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/"
                 "{year}/all?type=daily_treasury_yield_curve&field_tdr_date_value={year}&page&_format=csv")
+# USGS ComCat slices with recent automatic solutions, mixed magnitude types and non-earthquake events.
+QUAKE_SLICES = {
+    "northern_california_2026a": ("2026-04-01", "2026-07-15", 36.5, 39.5, -123.5, -120.5),
+    "northern_california_2026b": ("2026-07-15", "2026-10-27", 36.5, 39.5, -123.5, -120.5),
+    "nevada_2026a": ("2026-04-01", "2026-07-15", 36.0, 41.0, -120.0, -114.0),
+    "nevada_2026b": ("2026-07-15", "2026-10-27", 36.0, 41.0, -120.0, -114.0),
+}
+QUAKE_URL = ("https://earthquake.usgs.gov/fdsnws/event/1/query?format=csv&orderby=time&starttime={0}&endtime={1}"
+             "&minlatitude={2}&maxlatitude={3}&minlongitude={4}&maxlongitude={5}&minmagnitude=1.5")
+GML_SERIES = (("co2", "brw"), ("co2", "mlo"), ("co2", "smo"), ("co2", "spo"), ("ch4", "brw"), ("ch4", "mlo"))
+GML_URL = ("https://gml.noaa.gov/aftp/data/trace_gases/{gas}/in-situ/surface/txt/"
+           "{gas}_{site}_surface-insitu_1_ccgg_MonthlyData.txt")
+GML_TERMS = (US_GOV + " NOAA Global Monitoring Laboratory data are made freely available to the public; GML asks "
+             "users to give fair credit and to cite the data providers (file header, 'USE OF NOAA GML DATA').")
 
 
 def sources() -> list[dict[str, str]]:
@@ -39,6 +53,13 @@ def sources() -> list[dict[str, str]]:
     out += [{"path": f"treasury/par_yield_curve_{year}.csv.gz", "url": TREASURY_URL.format(year=year),
              "publisher": "U.S. Department of the Treasury",
              "dataset": f"Daily Treasury Par Yield Curve Rates, {year}", "licence": US_GOV} for year in TREASURY_YEARS]
+    out += [{"path": f"quakes/{name}.csv.gz", "url": QUAKE_URL.format(*box), "publisher": "U.S. Geological Survey",
+             "dataset": f"ANSS ComCat earthquake catalogue (FDSN event CSV), M1.5+, {name}", "licence": US_GOV}
+            for name, box in QUAKE_SLICES.items()]
+    out += [{"path": f"gml/{gas}_{site}_monthly.txt.gz", "url": GML_URL.format(gas=gas, site=site),
+             "publisher": "NOAA Global Monitoring Laboratory",
+             "dataset": f"In-situ {gas.upper()} monthly means, {site.upper()} observatory", "licence": GML_TERMS}
+            for gas, site in GML_SERIES]
     return out
 
 
