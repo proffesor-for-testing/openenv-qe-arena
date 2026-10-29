@@ -22,8 +22,15 @@ from ..domains import BY_SLUG, SLUGS
 
 FAMILY = "qe_skill"
 LEVELS = (1, 2, 3)
+DESK_LEVEL = 4  # v9 desk tier: real public data, a long brief and a CSV contract (desk_*.py)
 MAX_OUTPUT_BYTES = 65536
 MAX_ATTEMPTS = 64  # generation retries per seed before a family gives up
+# Appended to every desk brief (v9 calibration adjustment, 2026-10-28). The first screen ended 75 of 128 desk
+# episodes with neither submission nor score when a single `sed -n 1,40p` of a wide input spent the whole
+# 4,096-token completion budget, which counts every observation. The note states that rule; it does not do the work.
+DESK_BUDGET_NOTE = ("Budget: every command's output counts against this task's small token budget (about 4,000 "
+                    "tokens in all), so never print a whole file or more than a few lines of it; inspect with "
+                    "head -c, wc, cut or a short script and print only what you need.")
 
 
 @dataclass
@@ -43,6 +50,7 @@ class Family:
     check: Callable[[Any, str], list[bool]]
     solve: Callable[[dict[str, str], int, str | None], str]
     traps: dict[str, tuple[int, ...]]  # trap name -> levels where it applies
+    levels: tuple[int, ...] = LEVELS
 
 
 @dataclass
@@ -60,17 +68,25 @@ class SkillTask:
 
 
 def _families() -> dict[str, tuple[Family, ...]]:
-    from . import formal, media, science  # noqa: PLC0415 - the modules import Built and Family from here
+    from . import (desk_authlog, desk_finance, desk_ghg, desk_industrial, desk_math, desk_office,  # noqa: PLC0415
+                   desk_science, desk_security, formal, media, science)
 
     by_domain: dict[str, list[Family]] = {}
-    for module in (science, formal, media):
+    # Order matters: a new domain's desk cell is appended after the existing ones, so modules are only appended.
+    for module in (science, formal, media, desk_science, desk_security, desk_finance, desk_math, desk_office,
+                   desk_authlog, desk_industrial, desk_ghg):
         for family in module.FAMILIES:
             by_domain.setdefault(family.domain, []).append(family)
     return {domain: tuple(fams) for domain, fams in by_domain.items()}
 
 
 FAMILIES = _families()
-ALL_SKILL_IDS = [f"{FAMILY}-{SLUGS[domain]}-d{level}" for domain in FAMILIES for level in LEVELS]
+# The v7 cells first, in their original order, then one desk cell per domain that has a desk family, so every
+# earlier cell keeps its ID and position.
+ALL_SKILL_IDS = [f"{FAMILY}-{SLUGS[domain]}-d{level}" for domain, fams in FAMILIES.items()
+                 if any(f.levels == LEVELS for f in fams) for level in LEVELS]
+ALL_SKILL_IDS += [f"{FAMILY}-{SLUGS[domain]}-d{DESK_LEVEL}" for domain, fams in FAMILIES.items()
+                  if any(DESK_LEVEL in f.levels for f in fams)]
 
 # What an episode may draw, per cell: the families whose strict untrained solve rate fell in 4-12 of 16 in the v7
 # calibration (2026-10-20, runs/v7-cal; subtitles after its one adjustment round). Cells with no such family are
@@ -87,6 +103,13 @@ SERVED = {
     "qe_skill-media-d1": ("timecode", "catalogue", "assets"),
     "qe_skill-media-d2": ("subtitles", "timecode", "catalogue", "assets"),
     "qe_skill-media-d3": ("subtitles", "timecode"),
+    # v9 desk tier (2026-10-28, runs/v9-cal on ruos): the families that, after the one adjustment round, solved 4-12
+    # of 16 strict episodes with at most 3 of 16 ending on the token budget. ghg 8/16 (3 budget ends), ledger 6/16
+    # (2), quakes 9/16 (3). Out: streamflow 7/16 but 5 budget ends in both screens; authlog 0 and calendar 0 after
+    # adjustment; kev 16/16 and yields 15/16 too easy (an adjustment may only make a family easier).
+    "qe_skill-science-d4": ("ghg",),
+    "qe_skill-math-d4": ("ledger",),
+    "qe_skill-industrial-d4": ("quakes",),
 }
 SKILL_TASK_IDS = [task_id for task_id in ALL_SKILL_IDS if task_id in SERVED]
 
@@ -99,8 +122,12 @@ def parse_skill_id(task_id: str) -> tuple[str, int]:
     return BY_SLUG[slug], int(level[1:])
 
 
+def _level_families(domain: str, level: int) -> tuple[Family, ...]:
+    return tuple(f for f in FAMILIES[domain] if level in f.levels)
+
+
 def family_names(task_id: str) -> tuple[str, ...]:
-    return tuple(f.name for f in FAMILIES[parse_skill_id(task_id)[0]])
+    return tuple(f.name for f in _level_families(*parse_skill_id(task_id)))
 
 
 def family(domain: str, name: str) -> Family:
@@ -122,7 +149,7 @@ def make_skill_task(task_id: str, seed: int, *, pool: tuple[str, ...] | None = N
     domain, level = parse_skill_id(task_id)
     if type(seed) is not int or not 0 <= seed < 2**64:
         raise ValueError("seed must be an unsigned 64 bit integer")
-    fams = FAMILIES[domain]
+    fams = _level_families(domain, level)
     if pool is not None:
         if not pool or any(name not in {f.name for f in fams} for name in pool):
             raise ValueError(f"pool must name {domain} families: {[f.name for f in fams]}")
@@ -140,7 +167,8 @@ def make_skill_task(task_id: str, seed: int, *, pool: tuple[str, ...] | None = N
     else:
         raise RuntimeError(f"{fam.name} could not build a trap-free task for {task_id} seed {seed}")
     return SkillTask(task_id=task_id, family=FAMILY, difficulty=level, seed=seed, domain=domain, kind=fam.name,
-                     prompt=built.statement, files=built.files, output=built.output,
+                     prompt=f"{built.statement}\n\n{DESK_BUDGET_NOTE}" if level == DESK_LEVEL else built.statement,
+                     files=built.files, output=built.output,
                      private={"reference": built.reference, "family": fam, "corpus": fam.name})  # calibration's key
 
 
