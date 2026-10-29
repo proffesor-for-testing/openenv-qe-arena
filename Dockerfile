@@ -3,14 +3,14 @@
 # (unchecked-hash pycs, sorted order) and packs a byte-reproducible python314.zip; it exits non-zero
 # unless both python.wasm and the zip match qe_arena/runtime_pins.json. Base images are pinned by the
 # digest of their multi-arch index; wasmtime installs with --require-hashes.
-FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS wasi-runtime
+FROM python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 AS wasi-runtime
 WORKDIR /build
 COPY requirements-wasmtime.lock /build/requirements-wasmtime.lock
 RUN pip install --no-cache-dir --require-hashes -r /build/requirements-wasmtime.lock
 COPY scripts/build_wasi_runtime.py qe_arena/runtime_pins.json /build/
 RUN python /build/build_wasi_runtime.py --out /opt/qe-arena/wasi --pins /build/runtime_pins.json
 
-FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
+FROM python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704
 LABEL org.opencontainers.image.source="https://github.com/proffesor-for-testing/openenv-qe-arena"
 LABEL org.opencontainers.image.description="OpenEnv Arena training environment: QE bug repair and mutation-kill tasks"
 LABEL org.opencontainers.image.licenses="MIT"

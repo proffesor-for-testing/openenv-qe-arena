@@ -5,14 +5,14 @@
 # as its own unprivileged uid (20000-20063). The sources and the WASI runtime are 0700 root, so an episode's
 # shell can read neither the corpus (the reference implementations) nor the graders. On a host that drops
 # CAP_SETUID the shell reports "disabled" at start-up and exec is refused; write_file and evaluate still work.
-FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS wasi-runtime
+FROM python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 AS wasi-runtime
 WORKDIR /build
 COPY requirements-wasmtime.lock /build/requirements-wasmtime.lock
 RUN pip install --no-cache-dir --require-hashes -r /build/requirements-wasmtime.lock
 COPY scripts/build_wasi_runtime.py qe_arena/runtime_pins.json /build/
 RUN python /build/build_wasi_runtime.py --out /opt/qe-arena/wasi --pins /build/runtime_pins.json
 
-FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
+FROM python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704
 LABEL org.opencontainers.image.source="https://github.com/proffesor-for-testing/openenv-qe-arena"
 LABEL org.opencontainers.image.description="OpenEnv Arena training environment: QE tasks behind a terminal interface"
 LABEL org.opencontainers.image.licenses="MIT"
